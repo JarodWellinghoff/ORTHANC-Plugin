@@ -1,0 +1,36 @@
+C:\Users\M297802\Desktop\ORTHANC Plugin
+├───docker-compose.yml
+├───orthanc.json
+├───src/
+│   ├───python/
+│   │   ├───calculation_wrapper.py
+│   │   ├───ct_sliding_window.py
+│   │   ├───database_manager.py
+│   │   ├───dicom_parser.py
+│   │   ├───fake_data_manager.py
+│   │   ├───hello.py
+│   │   ├───main.py
+│   │   ├───patient_specific_calculation.py
+│   │   ├───progress_tracker.py
+│   │   ├───results_storage.py
+│   │   ├───stress_test_manager.py
+│   │   └───websocket_server.py
+│   ├───scripts/
+│   │   ├───fake_data_helper.sh
+│   │   └───stress_test_runner.sh
+│   ├───sql/
+│   │   ├───analysis.sql
+│   │   └───dicom.sql
+│   ├───static/
+│   │   ├───css/
+│   │   │   └───dashboard.css
+│   │   └───js/
+│   │       ├───dashboard.js
+│   │       ├───extend-explorer.js
+│   │       ├───lookup.js
+│   │       ├───series.js
+│   │       └───study.js
+│   └───templates/
+│       └───dashboard.html
+├───ssl
+└───tree.txt

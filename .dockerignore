@@ -1,0 +1,87 @@
+# .dockerignore
+
+# Version control
+
+.git/
+.gitignore
+
+# Documentation
+
+README.md
+docs/
+\*.md
+
+# Development files
+
+.env\*
+!.env.example
+
+# IDE files
+
+.vscode/
+.idea/
+_.swp
+_.swo
+
+# Test files
+
+tests/
+\*.test.py
+conftest.py
+
+# Python cache
+
+**pycache**/
+_.pyc
+_.pyo
+\*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Development tools
+
+.pre-commit-config.yaml
+.flake8
+.mypy.ini
+
+# Build artifacts
+
+build/
+dist/
+\*.egg-info/
+
+# Logs
+
+\*.log
+
+# OS files
+
+.DS_Store
+Thumbs.db
+
+# Temporary files
+
+tmp/
+temp/
+\*.tmp
+
+# Large data files
+
+_.mat
+_.csv
+\*.xlsx
+data/
+
+# Development Docker files
+
+docker-compose.dev.yml
+Dockerfile.dev
+
+# Scripts
+scripts/
+
+# Old files
+old/
+OLD/
+flatten/

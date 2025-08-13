@@ -1,0 +1,32 @@
+{
+  "Name": "orthanc-python",
+  "RemoteAccessAllowed": true,
+  "AuthenticationEnabled": true,
+  "DicomPort": 4242,
+  "DicomAet": "ORTHANC",
+  "RegisteredUsers": {
+    "demo": "demo"
+  },
+  "HttpPort": 8042,
+  "LogLevel": "TRACE",
+  "Plugins": [
+    "/usr/local/share/orthanc/plugins/libOrthancPython.so",
+    "/usr/local/share/orthanc/plugins/libOrthancOHIF.so",
+    "/usr/local/share/orthanc/plugins/libOrthancDicomWeb.so"
+  ],
+  "OHIF": {
+    "DataSource": "dicom-web"
+  },
+  "PythonScript": "/src/python/main.py",
+  "PythonVerbose": true,
+  "DicomCheckCalledAeTitle": false,
+  "DicomAlwaysAllowEcho": true,
+  "DicomAlwaysAllowStore": true,
+  "DicomAlwaysAllowFind": true,
+  "DicomAlwaysAllowMove": true,
+  "DicomServerEnabled": true,
+  "DicomModalities": {
+    "SLICER": ["SLICER", "localhost", 11113]
+  },
+  "StorageDirectory": "/var/lib/orthanc/db/"
+}

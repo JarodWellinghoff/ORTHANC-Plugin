@@ -1,0 +1,116 @@
+services:
+  postgres:
+    image: postgres:13
+    container_name: orthanc-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: pgpassword
+      POSTGRES_DB: orthanc
+    ports:
+      - "5433:5432" # PostgreSQL port
+    volumes:
+      - D:/docker/postgres-data:/var/lib/postgresql/data
+    networks:
+      - orthanc-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio
+    container_name: orthanc-minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000" # S3 API
+      - "9001:9001" # Web console
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio12345 # change in prod
+    volumes:
+      - D:/docker/minio-data:/data
+    networks:
+      - orthanc-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  orthanc:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: orthanc-server
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    ports:
+      - "4242:4242" # DICOM port
+      - "8042:8042" # HTTP API port
+      - "8765:8765" # WebSocket port for real-time updates
+    volumes:
+      - ./src:/src
+      - ./orthanc:/etc/orthanc
+      - D:/docker/orthanc-data:/var/lib/orthanc/db
+    environment:
+      ORTHANC__STABLE_AGE: 10
+      VERBOSE_ENABLED: "true"
+      VERBOSE_STARTUP: "true"
+      PYTHONDONTWRITEBYTECODE: 1
+      PYTHONUNBUFFERED: 1
+      DEBUG_MODE: "true" # Flag to enable debugging
+      AUTO_ANALYZE: "true"
+      # WebSocket configuration
+      WEBSOCKET_HOST: "0.0.0.0"
+      WEBSOCKET_PORT: "8765"
+      WEBSOCKET_ENABLED: "true"
+      # MinIO connection settings
+      MINIO_ENDPOINT: "minio:9000"
+      MINIO_ACCESS_KEY: "minio"
+      MINIO_SECRET_KEY: "minio12345"
+      MINIO_SECURE: "false"
+    networks:
+      - orthanc-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8042/system"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Optional: WebSocket monitoring service for debugging
+  websocket-monitor:
+    image: python:3.9-slim
+    container_name: websocket-monitor
+    depends_on:
+      - orthanc
+    volumes:
+      - ./monitoring:/app
+    working_dir: /app
+    command: >
+      sh -c "
+        pip install websockets asyncio &&
+        python websocket_monitor.py ws://orthanc:8765
+      "
+    networks:
+      - orthanc-net
+    restart: unless-stopped
+    profiles:
+      - monitoring # Use with: docker-compose --profile monitoring up
+
+volumes:
+  postgres-data:
+  orthanc-data:
+  minio-data:
+
+networks:
+  orthanc-net:
+    driver: bridge
+    name: orthanc-network

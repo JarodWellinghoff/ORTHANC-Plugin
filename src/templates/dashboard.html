@@ -1,0 +1,721 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>CHO Analysis Results Dashboard</title>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.26.0/plotly.min.js"></script>
+    <script src="static/js/dashboard.js"></script>
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+    <link rel="stylesheet" href="/static/css/dashboard.css" />
+  </head>
+  <body>
+    <div class="header">
+      <div>
+        <h1><i class="fas fa-chart-line"></i> CHO Analysis Dashboard</h1>
+        <p>Advanced filtering and analysis of CT image quality metrics</p>
+      </div>
+      <span id="status" class="status-indicator"></span>
+    </div>
+
+    <div class="container">
+      <div class="stats-row" id="stats-row">
+        <div class="stat-card">
+          <div class="stat-value" id="total-series">-</div>
+          <div class="stat-label">Total Results</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="complete-series">-</div>
+          <div class="stat-label">Detectability Results</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="partial-series">-</div>
+          <div class="stat-label">Global Noise Results</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="pending-series">-</div>
+          <div class="stat-label">Errors</div>
+        </div>
+      </div>
+      <div class="controls-card">
+        <div class="quick-filters">
+          <div class="search-group">
+            <i class="fas fa-search" style="color: #718096"></i>
+            <input
+              type="text"
+              id="patient-search"
+              class="search-input"
+              placeholder="Search by patient name or ID..." />
+          </div>
+
+          <div class="action-buttons">
+            <button class="btn btn-secondary" onclick="toggleAdvancedFilters()">
+              <i class="fas fa-filter"></i> Advanced Filters
+            </button>
+            <button class="btn btn-secondary" onclick="clearAllFilters()">
+              <i class="fas fa-times"></i> Clear Filters
+            </button>
+            <button class="btn btn-primary" onclick="loadData()">
+              <i class="fas fa-sync-alt"></i> Refresh
+            </button>
+            <button class="btn btn-success" onclick="exportToCSV()">
+              <i class="fas fa-download"></i> Export CSV
+            </button>
+          </div>
+        </div>
+
+        <div class="filter-section">
+          <div class="filter-header" onclick="toggleAdvancedFilters()">
+            <h3>
+              <i class="fas fa-sliders-h"></i>
+              Advanced Filters
+            </h3>
+            <i class="fas fa-chevron-down filter-toggle" id="filter-toggle"></i>
+          </div>
+          <div class="filter-content" id="filter-content">
+            <div class="filter-grid">
+              <div class="filter-group">
+                <label for="institute-filter">
+                  <i class="fas fa-hospital"></i> Institute
+                </label>
+                <select id="institute-filter">
+                  <option value="">All Institutes</option>
+                </select>
+              </div>
+
+              <div class="filter-group">
+                <label for="scanner-station-filter">
+                  <i class="fas fa-desktop"></i> Station Name
+                </label>
+                <select id="scanner-station-filter">
+                  <option value="">All Stations</option>
+                </select>
+              </div>
+
+              <div class="filter-group">
+                <label for="protocol-filter">
+                  <i class="fas fa-file-medical"></i> Protocol Name
+                </label>
+                <select id="protocol-filter">
+                  <option value="">All Protocols</option>
+                </select>
+              </div>
+
+              <div class="filter-group">
+                <label for="scanner-model-filter">
+                  <i class="fas fa-microchip"></i> Scanner Model
+                </label>
+                <select id="scanner-model-filter">
+                  <option value="">All Models</option>
+                </select>
+              </div>
+
+              <div class="filter-group">
+                <label>
+                  <i class="fas fa-calendar-alt"></i> Exam Date Range
+                </label>
+                <div class="date-range-group">
+                  <input type="date" id="exam-date-from" placeholder="From" />
+                  <input type="date" id="exam-date-to" placeholder="To" />
+                </div>
+              </div>
+
+              <div class="filter-group">
+                <label> <i class="fas fa-user"></i> Patient Age Range </label>
+                <div class="age-range-group">
+                  <input
+                    type="number"
+                    id="age-min"
+                    placeholder="Min Age"
+                    min="0"
+                    max="120" />
+                  <input
+                    type="number"
+                    id="age-max"
+                    placeholder="Max Age"
+                    min="0"
+                    max="120" />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="applied-filters" id="applied-filters">
+          <div class="filter-tags" id="filter-tags">
+            <strong style="color: #4a5568; margin-right: 8px"
+              >Active Filters:</strong
+            >
+          </div>
+        </div>
+      </div>
+
+      <!-- <div class="stats-row" id="stats-row">
+        <div class="stat-card">
+          <div class="stat-value" id="filtered-total-series">-</div>
+          <div class="stat-label">Filtered Results</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="filtered-complete-series">-</div>
+          <div class="stat-label">Detectability Results</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="filtered-partial-series">-</div>
+          <div class="stat-label">Global Noise Results</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="filtered-pending-series">-</div>
+          <div class="stat-label">Errors</div>
+        </div>
+      </div> -->
+
+      <!-- Series Summary View -->
+      <div id="summary-container" class="table-container">
+        <!-- <div class="table-header">
+          <div class="table-info">
+            <span id="summary-info" class="table-info-text">Loading...</span>
+          </div>
+          <div class="table-controls">
+            <div class="page-size-selector">
+              <label for="summary-page-size">Show:</label>
+              <select id="summary-page-size" onchange="changeSummaryPageSize()">
+                <option value="10">10</option>
+                <option value="25" selected>25</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+              </select>
+              <span>per page</span>
+            </div>
+          </div>
+        </div> -->
+
+        <table id="summary-table">
+          <thead>
+            <tr>
+              <th><i class="fas fa-user"></i> Patient</th>
+              <!-- <th><i class="fas fa-id-card"></i> Patient ID</th> -->
+              <th><i class="fas fa-hospital"></i> Institute</th>
+              <th><i class="fas fa-microchip"></i> Scanner Model</th>
+              <th><i class="fas fa-desktop"></i> Station</th>
+              <th><i class="fas fa-file-medical"></i> Protocol</th>
+              <th><i class="fas fa-chart-bar"></i> Status</th>
+              <th><i class="fas fa-calendar"></i> Last Analysis</th>
+              <th><i class="fas fa-cogs"></i> Actions</th>
+            </tr>
+          </thead>
+          <tbody id="summary-body">
+            <tr>
+              <td colspan="8" class="loading">
+                <i class="fas fa-spinner fa-spin"></i> Loading series summary...
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="pagination-container" id="summary-pagination">
+          <div class="pagination-info">
+            <span id="summary-pagination-info">Showing 0 - 0 of 0 entries</span>
+          </div>
+          <div style="display: flex; gap: 20px">
+            <div class="table-controls">
+              <div class="page-size-selector">
+                <label for="summary-page-size">Show:</label>
+                <select
+                  id="summary-page-size"
+                  onchange="changeSummaryPageSize()">
+                  <option value="10">10</option>
+                  <option value="25" selected>25</option>
+                  <option value="50">50</option>
+                  <option value="100">100</option>
+                </select>
+                <span>per page</span>
+              </div>
+            </div>
+            <div class="pagination-controls">
+              <button
+                class="pagination-btn"
+                id="summary-first-page"
+                onclick="goToSummaryPage(1)"
+                disabled>
+                <i class="fas fa-angle-double-left"></i>
+              </button>
+              <button
+                class="pagination-btn"
+                id="summary-prev-page"
+                onclick="prevSummaryPage()"
+                disabled>
+                <i class="fas fa-angle-left"></i>
+              </button>
+              <div class="pagination-pages" id="summary-page-numbers">
+                <!-- Page numbers will be inserted here -->
+              </div>
+              <button
+                class="pagination-btn"
+                id="summary-next-page"
+                onclick="nextSummaryPage()"
+                disabled>
+                <i class="fas fa-angle-right"></i>
+              </button>
+              <button
+                class="pagination-btn"
+                id="summary-last-page"
+                onclick="goToSummaryPage('last')"
+                disabled>
+                <i class="fas fa-angle-double-right"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Detailed Results View -->
+      <div
+        id="detailed-container"
+        class="table-container"
+        style="display: none">
+        <div class="table-header">
+          <div class="table-info">
+            <span id="detailed-info" class="table-info-text">Loading...</span>
+          </div>
+          <div class="table-controls">
+            <div class="page-size-selector">
+              <label for="detailed-page-size">Show:</label>
+              <select
+                id="detailed-page-size"
+                onchange="changeDetailedPageSize()">
+                <option value="10">10</option>
+                <option value="25" selected>25</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+              </select>
+              <span>per page</span>
+            </div>
+          </div>
+        </div>
+
+        <table id="results-table">
+          <thead>
+            <tr>
+              <th><i class="fas fa-flask"></i> Type</th>
+              <th><i class="fas fa-user"></i> Patient</th>
+              <th><i class="fas fa-radiation"></i> CTDI (mGy)</th>
+              <th><i class="fas fa-shield-alt"></i> SSDE (mGy)</th>
+              <th><i class="fas fa-wave-square"></i> Noise (HU)</th>
+              <th><i class="fas fa-clock"></i> Time (s)</th>
+              <th><i class="fas fa-calendar"></i> Created</th>
+              <th><i class="fas fa-cogs"></i> Actions</th>
+            </tr>
+          </thead>
+          <tbody id="results-body">
+            <tr>
+              <td colspan="8" class="loading">
+                <i class="fas fa-spinner fa-spin"></i> Loading detailed
+                results...
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="pagination-container" id="detailed-pagination">
+          <div class="pagination-info">
+            <span id="detailed-pagination-info"
+              >Showing 0 - 0 of 0 entries</span
+            >
+          </div>
+          <div class="pagination-controls">
+            <button
+              class="pagination-btn"
+              id="detailed-first-page"
+              onclick="goToDetailedPage(1)"
+              disabled>
+              <i class="fas fa-angle-double-left"></i>
+            </button>
+            <button
+              class="pagination-btn"
+              id="detailed-prev-page"
+              onclick="prevDetailedPage()"
+              disabled>
+              <i class="fas fa-angle-left"></i>
+            </button>
+            <div class="pagination-pages" id="detailed-page-numbers">
+              <!-- Page numbers will be inserted here -->
+            </div>
+            <button
+              class="pagination-btn"
+              id="detailed-next-page"
+              onclick="nextDetailedPage()"
+              disabled>
+              <i class="fas fa-angle-right"></i>
+            </button>
+            <button
+              class="pagination-btn"
+              id="detailed-last-page"
+              onclick="goToDetailedPage('last')"
+              disabled>
+              <i class="fas fa-angle-double-right"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Results Detail Modal -->
+    <div id="detailsModal" class="modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2><i class="fas fa-chart-line"></i> Detailed CHO Results</h2>
+          <button class="close">&times;</button>
+        </div>
+        <div class="modal-body-container">
+          <div id="plots-container" class="plots-container">
+            <div
+              class="plot-container"
+              id="dw-ctdivol-v-location-plot-container-details">
+              <div
+                class="plot-div"
+                id="dw-ctdivol-v-location-plot-details"></div>
+            </div>
+            <div
+              class="plot-container"
+              id="noise-level-cho-detectability-v-location-sparse-plot-container-details">
+              <div
+                class="plot-div"
+                id="noise-level-cho-detectability-v-location-sparse-plot-details"></div>
+            </div>
+            <div
+              class="plot-container"
+              id="nps-v-spatial-frequency-plot-container-details">
+              <div
+                class="plot-div"
+                id="nps-v-spatial-frequency-plot-details"></div>
+            </div>
+          </div>
+
+          <div class="metadata-container">
+            <div class="metadata-section">
+              <h3 class="metadata-title">Analysis Summary</h3>
+              <div
+                id="metadata-table-details"
+                class="metadata-table-container"></div>
+            </div>
+            <div class="metadata-section">
+              <h3 class="metadata-title">Raw Data (JSON)</h3>
+              <div id="details-content-details" class="json-viewer"></div>
+            </div>
+          </div>
+        </div>
+        <div
+          style="
+            text-align: right;
+            margin: 20px;
+            display: flex;
+            justify-content: flex-end;
+          ">
+          <button id="export-individual-result" class="btn btn-success">
+            <i class="fas fa-download"></i> Export Results
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- CHO Analysis Modal -->
+    <div id="cho-analysis-modal" class="modal cho-modal">
+      <div class="modal-content cho-modal-content">
+        <div class="modal-header cho-modal-header">
+          <h2>CHO Analysis Configuration</h2>
+          <button class="close cho-close">&times;</button>
+        </div>
+        <div class="cho-modal-body">
+          <!-- Test Selection -->
+          <div id="cho-test-selection" class="cho-section">
+            <h3>Analysis Type</h3>
+            <div class="cho-radio-group">
+              <label>
+                <input
+                  type="radio"
+                  name="cho-test-type"
+                  value="global"
+                  checked />
+                <span>Global Noise Analysis</span>
+                <small>Fast analysis for noise characteristics</small>
+              </label>
+              <label>
+                <input type="radio" name="cho-test-type" value="full" />
+                <span>Full CHO Analysis</span>
+                <small>Comprehensive analysis with lesion detectability</small>
+              </label>
+            </div>
+          </div>
+
+          <!-- Common Parameters -->
+          <div id="cho-common-params" class="cho-section">
+            <h3>Common Parameters</h3>
+            <div class="cho-param-grid">
+              <div class="cho-param">
+                <label for="cho-resamples">Number of Resamples:</label>
+                <input
+                  type="number"
+                  id="cho-resamples"
+                  value="500"
+                  min="100"
+                  max="2000"
+                  step="100" />
+              </div>
+              <div class="cho-param">
+                <label for="cho-internal-noise">Internal Noise:</label>
+                <input
+                  type="number"
+                  id="cho-internal-noise"
+                  value="2.25"
+                  min="0"
+                  max="10"
+                  step="0.25" />
+              </div>
+              <div class="cho-param">
+                <label for="cho-resampling-method">Resampling Method:</label>
+                <select id="cho-resampling-method">
+                  <option value="Bootstrap">Bootstrap</option>
+                  <option value="Shuffle">Shuffle</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Global Noise Specific Parameters -->
+          <div id="cho-global-params" class="cho-section cho-params-global">
+            <h3>Global Noise Parameters</h3>
+            <div class="cho-param-grid">
+              <div class="cho-param">
+                <label for="cho-roi-size">ROI Size (cm):</label>
+                <input
+                  type="number"
+                  id="cho-roi-size"
+                  value="6"
+                  min="3"
+                  max="15"
+                  step="1" />
+              </div>
+              <div class="cho-param">
+                <label for="cho-threshold-low">Lower Threshold (HU):</label>
+                <input
+                  type="number"
+                  id="cho-threshold-low"
+                  value="0"
+                  min="-100"
+                  max="100"
+                  step="10" />
+              </div>
+              <div class="cho-param">
+                <label for="cho-threshold-high">Upper Threshold (HU):</label>
+                <input
+                  type="number"
+                  id="cho-threshold-high"
+                  value="150"
+                  min="100"
+                  max="300"
+                  step="10" />
+              </div>
+            </div>
+          </div>
+
+          <!-- Full Analysis Specific Parameters -->
+          <div
+            id="cho-full-params"
+            class="cho-section cho-params-full"
+            style="display: none">
+            <h3>Full Analysis Parameters</h3>
+            <div class="cho-param-grid">
+              <div class="cho-param">
+                <label for="cho-window-length">Window Length (cm):</label>
+                <input
+                  type="number"
+                  id="cho-window-length"
+                  value="15"
+                  min="10"
+                  max="25"
+                  step="2.5" />
+              </div>
+              <div class="cho-param">
+                <label for="cho-step-size">Step Size (cm):</label>
+                <input
+                  type="number"
+                  id="cho-step-size"
+                  value="5"
+                  min="2.5"
+                  max="10"
+                  step="2.5" />
+              </div>
+              <div class="cho-param">
+                <label for="cho-channel-type">Channel Type:</label>
+                <select id="cho-channel-type">
+                  <option value="Gabor">Gabor</option>
+                  <option value="Laguerre-Gauss">Laguerre-Gauss</option>
+                </select>
+              </div>
+              <div class="cho-param">
+                <label for="cho-lesion-set">Lesion Set:</label>
+                <select id="cho-lesion-set">
+                  <option value="standard">
+                    Standard (-30, -30, -10, -30, -50 HU)
+                  </option>
+                  <option value="low-contrast">
+                    Low Contrast (-10, -15, -20 HU)
+                  </option>
+                  <option value="high-contrast">
+                    High Contrast (-50, -75, -100 HU)
+                  </option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Progress Section -->
+          <div
+            id="cho-progress-section"
+            class="cho-section"
+            style="display: none">
+            <h3>Analysis Progress</h3>
+            <div class="cho-progress-container">
+              <div class="cho-progress-bar">
+                <div id="cho-progress-fill" class="cho-progress-fill"></div>
+              </div>
+              <div id="cho-progress-text" class="cho-progress-text">0%</div>
+            </div>
+            <div id="cho-progress-message" class="cho-progress-message">
+              Initializing...
+            </div>
+            <div id="cho-progress-stage" class="cho-progress-stage">
+              <div class="cho-stage-indicators">
+                <div class="cho-stage-indicator" data-stage="initialization">
+                  Init
+                </div>
+                <div class="cho-stage-indicator" data-stage="loading">Load</div>
+                <div class="cho-stage-indicator" data-stage="preprocessing">
+                  Prep
+                </div>
+                <div class="cho-stage-indicator" data-stage="analysis">
+                  Analysis
+                </div>
+                <div class="cho-stage-indicator" data-stage="finalizing">
+                  Final
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Results Section -->
+          <div
+            id="cho-results-section"
+            class="cho-section"
+            style="display: none">
+            <h3>Cached Results</h3>
+            <div id="cho-results-content" class="cho-results-content">
+              <div class="modal-body-container">
+                <div id="plots-container-results" class="plots-container">
+                  <div
+                    class="plot-container"
+                    id="dw-ctdivol-v-location-plot-container-results">
+                    <div
+                      class="plot-div"
+                      id="dw-ctdivol-v-location-plot-results"></div>
+                  </div>
+                  <div
+                    class="plot-container"
+                    id="noise-level-cho-detectability-v-location-sparse-plot-container-results">
+                    <div
+                      class="plot-div"
+                      id="noise-level-cho-detectability-v-location-sparse-plot-results"></div>
+                  </div>
+                  <div
+                    class="plot-container"
+                    id="nps-v-spatial-frequency-plot-container-results">
+                    <div
+                      class="plot-div"
+                      id="nps-v-spatial-frequency-plot-results"></div>
+                  </div>
+                </div>
+
+                <div class="metadata-container">
+                  <div class="metadata-section">
+                    <h3 class="metadata-title">Analysis Summary</h3>
+                    <div
+                      id="metadata-table-results"
+                      class="metadata-table-container"></div>
+                  </div>
+                  <div class="metadata-section">
+                    <h3 class="metadata-title">Raw Data (JSON)</h3>
+                    <div id="details-content-results" class="json-viewer"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <!-- <div class="cho-results-actions">
+              <button id="cho-save-results" class="cho-btn cho-btn-primary">
+                Save Results to Database
+              </button>
+              <button
+                id="cho-discard-results"
+                class="cho-btn cho-btn-secondary">
+                Discard Results
+              </button>
+            </div> -->
+          </div>
+        </div>
+
+        <div class="cho-modal-footer">
+          <button id="cho-start-analysis" class="cho-btn cho-btn-primary">
+            Start Analysis
+          </button>
+
+          <div class="cho-results-actions">
+            <button id="cho-save-results" class="cho-btn cho-btn-primary">
+              Save Cached Results to Database
+            </button>
+            <button id="cho-discard-results" class="cho-btn cho-btn-secondary">
+              Discard Cached Results
+            </button>
+          </div>
+          <!-- <button id="cho-cancel" class="cho-btn cho-btn-secondary">
+            Cancel
+          </button> -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Confirmation Modal for Delete -->
+    <div id="confirmationModal" class="modal">
+      <div class="modal-content" style="width: fit-content; max-width: 90%">
+        <div class="modal-header">
+          <h3>Confirm Delete</h3>
+          <button class="close" onclick="$('#confirmationModal').hide()">
+            &times;
+          </button>
+        </div>
+        <div style="padding: 24px">
+          <p>Are you sure you want to delete this CHO analysis result?</p>
+          <p
+            id="delete-series-info-series"
+            style="font-style: italic; color: #718096"></p>
+          <p
+            id="delete-series-info-type"
+            style="font-style: italic; color: #718096"></p>
+          <p
+            id="delete-series-info-patient"
+            style="font-style: italic; color: #718096"></p>
+          <div
+            style="
+              display: flex;
+              gap: 12px;
+              justify-content: flex-end;
+              margin-top: 20px;
+            ">
+            <button id="cancel-delete" class="btn btn-secondary">Cancel</button>
+            <button id="confirm-delete" class="btn btn-delete">Delete</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
