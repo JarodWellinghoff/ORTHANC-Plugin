@@ -120,7 +120,7 @@ services:
       - ./src/data:/src/data
       - ./src/sql:/src/sql
     ports:
-      - "5353:4242" # DICOM
+      - "4040:4242" # DICOM
     environment:
       ORTHANC__Name: "save-images"
       ORTHANC__DicomAet: "SAVE_IMAGES"
