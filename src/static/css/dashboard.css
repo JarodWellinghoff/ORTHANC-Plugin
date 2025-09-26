@@ -569,6 +569,26 @@ tr:hover td:last-child {
   color: #4a5568;
 }
 
+.status-headers-only {
+  background: linear-gradient(135deg, #e2e8f0, #cbd5e0);
+  color: #4a5568;
+  border: 1px solid #a0aec0;
+  font-weight: 500;
+}
+
+.status-headers-only::before {
+  content: "📋 ";
+  font-size: 12px;
+}
+
+/* Update stats card for headers only */
+.stat-card:nth-child(4) .stat-value {
+  color: #4a5568;
+}
+
+.stat-card:nth-child(4) .stat-label {
+  color: #718096;
+}
 .action-btn-container {
   display: flex;
 }

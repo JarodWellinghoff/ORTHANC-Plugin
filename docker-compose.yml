@@ -89,6 +89,7 @@ services:
       - ./src/python:/src/python
       - ./src/data:/src/data
       - ./src/sql:/src/sql
+      - ./orthanc:/etc/orthanc
     ports:
       - "5342:4242" # DICOM
     environment:
@@ -104,6 +105,7 @@ services:
       - ./src/python:/src/python
       - ./src/data:/src/data
       - ./src/sql:/src/sql
+      - ./orthanc:/etc/orthanc
     ports:
       - "5353:4242" # DICOM
     environment:
@@ -119,6 +121,7 @@ services:
       - ./src/python:/src/python
       - ./src/data:/src/data
       - ./src/sql:/src/sql
+      - ./orthanc:/etc/orthanc
     ports:
       - "4040:4242" # DICOM
     environment:

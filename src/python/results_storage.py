@@ -666,8 +666,6 @@ class CHOResultsStorage:
                     results.get('ssde')
                 ))
                 
-                result_id = cursor.fetchone()[0]
-                
                 self.postgres_connection.commit()
                 print(f"Successfully saved CHO results for series {series.get('series_instance_uid')}")
                 success = True
@@ -1224,6 +1222,124 @@ class CHOResultsStorage:
         except Exception as e:
             self.postgres_connection.rollback()
             raise e
+        
+    def save_dicom_headers_only(self, patient, study, scanner, series, ct):
+        """Save DICOM metadata without analysis results"""
+        return self.save_results(patient, study, scanner, series, ct, results={'processing_time': 0.0})
+        # if not self.connect_postgres() or self.postgres_connection is None:
+        #     return False
+            
+        # try:
+        #     with self.postgres_connection.cursor() as cursor:
+        #         # Insert/get patient
+        #         patient_id = self._get_or_create_patient(cursor, patient)
+        #         if patient_id is None:
+        #             return False
+                    
+        #         # Insert/get scanner
+        #         scanner_id = self._get_or_create_scanner(cursor, scanner)
+        #         if scanner_id is None:
+        #             return False
+                    
+        #         # Insert/get study
+        #         study_id = self._get_or_create_study(cursor, study, patient_id)
+        #         if study_id is None:
+        #             return False
+                    
+        #         # Insert/get series
+        #         series_id = self._get_or_create_series(cursor, series, study_id, scanner_id)
+        #         if series_id is None:
+        #             return False
+                    
+        #         # Insert/get CT technique
+        #         ct_id = self._save_ct_technique(cursor, ct, series_id)
+        #         if ct_id is None:
+        #             return False
+                    
+        #         # Insert headers-only record in analysis.results
+        #         cursor.execute("""
+        #             INSERT INTO analysis.results (
+        #                 series_id_fk, average_frequency, average_index_of_detectability,
+        #                 average_noise_level, cho_detectability, ctdivol, ctdivol_avg,
+        #                 dlp, dlp_ssde, dw, dw_avg, location, location_sparse,
+        #                 noise_level, nps, peak_frequency, percent_10_frequency,
+        #                 processing_time, spatial_frequency, spatial_resolution, ssde
+        #             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        #             ON CONFLICT (series_id_fk) DO UPDATE SET
+        #                 average_frequency = COALESCE(EXCLUDED.average_frequency, analysis.results.average_frequency),
+        #                 average_index_of_detectability = COALESCE(EXCLUDED.average_index_of_detectability, analysis.results.average_index_of_detectability),
+        #                 average_noise_level = COALESCE(EXCLUDED.average_noise_level, analysis.results.average_noise_level),
+        #                 cho_detectability = COALESCE(EXCLUDED.cho_detectability, analysis.results.cho_detectability),
+        #                 ctdivol = COALESCE(EXCLUDED.ctdivol, analysis.results.ctdivol),
+        #                 ctdivol_avg = COALESCE(EXCLUDED.ctdivol_avg, analysis.results.ctdivol_avg),
+        #                 dlp = COALESCE(EXCLUDED.dlp, analysis.results.dlp),
+        #                 dlp_ssde = COALESCE(EXCLUDED.dlp_ssde, analysis.results.dlp_ssde),
+        #                 dw = COALESCE(EXCLUDED.dw, analysis.results.dw),
+        #                 dw_avg = COALESCE(EXCLUDED.dw_avg, analysis.results.dw_avg),
+        #                 location = COALESCE(EXCLUDED.location, analysis.results.location),
+        #                 location_sparse = COALESCE(EXCLUDED.location_sparse, analysis.results.location_sparse),
+        #                 noise_level = COALESCE(EXCLUDED.noise_level, analysis.results.noise_level),
+        #                 nps = COALESCE(EXCLUDED.nps, analysis.results.nps),
+        #                 peak_frequency = COALESCE(EXCLUDED.peak_frequency, analysis.results.peak_frequency),
+        #                 percent_10_frequency = COALESCE(EXCLUDED.percent_10_frequency, analysis.results.percent_10_frequency),
+        #                 processing_time = EXCLUDED.processing_time,
+        #                 spatial_frequency = COALESCE(EXCLUDED.spatial_frequency, analysis.results.spatial_frequency),
+        #                 spatial_resolution = COALESCE(EXCLUDED.spatial_resolution, analysis.results.spatial_resolution),
+        #                 ssde = COALESCE(EXCLUDED.ssde, analysis.results.ssde)
+        #             RETURNING id
+        #         """, (
+        #             series_id,
+        #            None,
+        #             None,
+        #             None,
+        #             None,
+        #             None,
+        #             None,
+        #             None,
+        #             None,
+        #             None,
+        #             None,
+        #             None,
+        #             None,
+        #             None,
+        #             None,
+        #             None,
+        #             None,
+        #             0.0,
+        #             None,
+        #             None,
+        #             None
+        #         ))
+        #         # cursor.execute("""
+        #         #     INSERT INTO analysis.results (
+        #         #         series_id_fk, ct_technique_id_fk, test_status, 
+        #         #         analysis_timestamp, processing_time_seconds
+        #         #     ) VALUES (%s, %s, %s, %s, %s)
+        #         #     ON CONFLICT (series_id_fk) 
+        #         #     DO UPDATE SET 
+        #         #         test_status = EXCLUDED.test_status,
+        #         #         analysis_timestamp = EXCLUDED.analysis_timestamp,
+        #         #         processing_time_seconds = EXCLUDED.processing_time_seconds
+        #         #     RETURNING id
+        #         # """, (
+        #         #     series_id, ct_id, 'headers_only', 
+        #         #     datetime.now(), 0.0
+        #         # ))
+                
+                    
+        #         # Commit the transaction
+        #         self.postgres_connection.commit()
+        #         print(f"DICOM headers saved for series {series.get('series_instance_uid')}")
+        #         return True
+                
+        # except Exception as e:
+        #     print(f"Error saving DICOM headers: {str(e)}")
+        #     if self.postgres_connection:
+        #         self.postgres_connection.rollback()
+        #     import traceback
+        #     traceback.print_exc()
+        #     return False
+
 
 
 # Global instance

@@ -14,7 +14,7 @@ from progress_tracker import progress_tracker
 from calculation_wrapper import run_cho_calculation_with_progress
 
 TOKEN = orthanc.GenerateRestApiAuthorizationToken()
-TEST_TYPE = os.getenv("INSTANCE_BEHAVIOR_TEST", "None")
+TEST_TYPE = os.getenv("INSTANCE_BEHAVIOR_TEST", "Global Noise")
 SAVE_TYPE = (os.getenv("INSTANCE_BEHAVIOR_SAVE", "true") == "true")
 
 print(f'=== CHO Analysis Plugin Initialized ===')
@@ -650,9 +650,49 @@ def test_database_connection():
     except Exception as e:
         print(f"Database connection test failed: {str(e)}")
 
-# def dict_to_get(dict):
-#     string = ""
-#     for dict.keys
+def save_dicom_headers_only(series_uuid):
+    """Save DICOM headers to database without running analysis"""
+    from dicom_parser import DicomParser
+    import pydicom
+    try:
+        print(f"Saving DICOM headers for series: {series_uuid}")
+        
+        # Get series instances
+        instances_res = orthanc.RestApiGet(f'/series/{series_uuid}/instances')
+        instances_json = json.loads(instances_res)
+        print(f"loading: {series_uuid}")
+        files = []
+        for i in range(len(instances_json)):
+            instance_id = instances_json[i]['ID']
+            f = orthanc.GetDicomForInstance(instance_id)
+            files.append(pydicom.dcmread(io.BytesIO(f)))
+        
+        slices = [f for f in files if hasattr(f, "SliceLocation")]
+        slices = sorted(slices, key=lambda s: s.SliceLocation)
+
+        # Create parser and extract metadata
+        dcm_parser = DicomParser(files)
+        patient, study, scanner, series, ct = dcm_parser.extract_core()
+
+        # Add series-specific metadata
+        series['uuid'] = series_uuid
+        series['image_count'] = len(files)
+        
+        # Save to database using results_storage
+        success = cho_storage.save_dicom_headers_only(patient, study, scanner, series, ct)
+        
+        if success:
+            print(f"DICOM headers saved successfully for series {series_uuid}")
+        else:
+            print(f"Failed to save DICOM headers for series {series_uuid}")
+            
+        return success
+        
+    except Exception as e:
+        print(f"Error saving DICOM headers for series {series_uuid}: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
 
 # Register callbacks and endpoints
 def OnChange(change_type, resource_type, resource_id):
@@ -660,12 +700,20 @@ def OnChange(change_type, resource_type, resource_id):
     if change_type == orthanc.ChangeType.STABLE_SERIES and resource_type == orthanc.ResourceType.SERIES:
         print(f'Stable series: {resource_id}')
         series_uuid = resource_id
-        try:
-            test = 'none'
-            if TEST_TYPE == "Global Noise":
-                test = 'global'
-            elif TEST_TYPE == "Detectability":
-                test = 'full'
+        try:            
+            # Check if this is a headers-only instance
+            if TEST_TYPE == "None":
+                # Save DICOM headers without running analysis
+                save_dicom_headers_only(series_uuid)
+                
+                # Delete series if not saving
+                if not SAVE_TYPE:
+                    orthanc.RestApiDelete(f'/series/{series_uuid}')
+                    print(f"Deleted series after saving headers: {series_uuid}")
+                return
+            
+            test = 'global' if TEST_TYPE == "Global Noise" else 'full'
+            
             body = {
                     'series_uuid': series_uuid, 
                     'testType': test,

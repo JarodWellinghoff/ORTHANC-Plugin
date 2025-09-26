@@ -691,13 +691,15 @@ function updateSummaryStatistics(data) {
 function getStatusDisplayText(test_status) {
   switch (test_status) {
     case "full":
-      return "Detectability";
+      return "Full Analysis";
     case "partial":
       return "Global Noise";
+    case "headers_only":
+      return "Headers Only";
     case "error":
       return "Error";
     default:
-      return "Unknown Status";
+      return "No Analysis";
   }
 }
 
@@ -707,6 +709,8 @@ function getStatusClass(test_status) {
       return "status-completed";
     case "partial":
       return "status-partial";
+    case "headers_only":
+      return "status-headers-only";
     case "error":
       return "status-error";
     default:
