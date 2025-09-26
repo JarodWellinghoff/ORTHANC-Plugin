@@ -11,9 +11,6 @@ pillow==11.2.1
 xlsxwriter==3.2.5
 scikit-image==0.25.2
 
-# WebSocket dependencies for real-time updates
-websockets==15.0.1
-
 # MinIO S3 client
 minio==7.2.16
 

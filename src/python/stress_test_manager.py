@@ -48,7 +48,8 @@ class DicomStressTest:
         
     def __enter__(self):
         """Context manager entry"""
-        self.temp_dir = tempfile.mkdtemp(prefix="dicom_stress_", dir="D:/temp")
+        # self.temp_dir = tempfile.mkdtemp(prefix="dicom_stress_", dir="D:/temp")
+        self.temp_dir = tempfile.mkdtemp(prefix="dicom_stress_")
         print(f"Using temporary directory: {self.temp_dir}")
         return self
         

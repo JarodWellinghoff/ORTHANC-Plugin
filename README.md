@@ -17,7 +17,6 @@ A comprehensive Docker-based DICOM server with advanced image quality analysis c
 - **🖥️ OHIF Viewer**: Integrated advanced DICOM viewer for image visualization
 - **📈 Analytics**: Comprehensive filtering, export, and statistical analysis tools
 - **⚡ Performance Testing**: Built-in stress testing tools for system validation
-- **🔄 Real-time Updates**: WebSocket integration for live progress monitoring
 
 ## 🏗️ Architecture
 
@@ -57,8 +56,8 @@ Update the volume paths in `docker-compose.yml` to match your system:
 
 ```yaml
 volumes:
-  - D:/docker/postgres-data:/var/lib/postgresql/data    # Windows
-  - ./data/postgres:/var/lib/postgresql/data           # Linux/Mac
+  - D:/docker/postgres-data:/var/lib/postgresql/data # Windows
+  - ./data/postgres:/var/lib/postgresql/data # Linux/Mac
 ```
 
 ### 3. Start the Platform
@@ -87,6 +86,7 @@ docker-compose ps
 ### DICOM Operations
 
 **Upload DICOM Files:**
+
 ```bash
 # Using ORTHANC REST API
 curl -X POST http://localhost:8042/instances \
@@ -99,6 +99,7 @@ curl -X POST http://localhost:8042/instances \
 ```
 
 **Query/Retrieve:**
+
 ```bash
 # Get all patients
 curl -u demo:demo http://localhost:8042/patients
@@ -112,6 +113,7 @@ curl -u demo:demo http://localhost:8042/patients/{patient-id}/studies
 The platform provides advanced Channelized Hotelling Observer (CHO) analysis for CT image quality assessment:
 
 **Features:**
+
 - **Detectability Analysis**: Low-contrast object detection performance
 - **Global Noise Analysis**: Image noise characteristics and uniformity
 - **Patient-Specific Parameters**: Customizable analysis parameters per series
@@ -130,18 +132,8 @@ The platform provides advanced Channelized Hotelling Observer (CHO) analysis for
 6. Export results as CSV for further analysis
 
 **Programmatic Access:**
-```bash
-# Start CHO analysis via REST API
-curl -X POST http://localhost:8042/PatSpecCHO/{series-id} \
-     -u demo:demo \
-     -H "Content-Type: application/json" \
-     -d '{
-       "test_type": "both",
-       "roi_size": 64,
-       "roi_spacing": 16,
-       "noise_roi_size": 256
-     }'
 
+```bash
 # Check analysis status
 curl -u demo:demo http://localhost:8042/cho-calculation-status?series_id={series-id}
 
@@ -152,17 +144,20 @@ curl -u demo:demo http://localhost:8042/cho-results/{series-id}
 ### Dashboard Features
 
 **Filtering and Search:**
+
 - Patient name/ID search
 - Institute, scanner model, and protocol filters
 - Date range filtering
 - Advanced multi-field filtering
 
 **Data Export:**
+
 - CSV export of filtered results
 - Comprehensive metadata inclusion
 - Analysis results and parameters
 
 **Statistics and Monitoring:**
+
 - Real-time system status
 - Analysis completion rates
 - Error tracking and reporting
@@ -177,7 +172,7 @@ The platform includes comprehensive stress testing tools:
 
 # Predefined test scenarios
 ./src/scripts/stress_test_runner.sh quick-test      # 10 series, 2 workers
-./src/scripts/stress_test_runner.sh medium-test     # 50 series, 4 workers  
+./src/scripts/stress_test_runner.sh medium-test     # 50 series, 4 workers
 ./src/scripts/stress_test_runner.sh heavy-test      # 100 series, 8 workers
 
 # Custom test
@@ -190,6 +185,7 @@ The platform includes comprehensive stress testing tools:
 ```
 
 **Test Parameters:**
+
 - `--template`: Path to DICOM template file
 - `--num-series`: Number of synthetic series to generate
 - `--workers`: Concurrent upload workers
@@ -239,17 +235,12 @@ environment:
   ORTHANC__STABLE_AGE: 10
   VERBOSE_ENABLED: "true"
   DEBUG_MODE: "true"
-  
-  # WebSocket Configuration
-  WEBSOCKET_HOST: "0.0.0.0"
-  WEBSOCKET_PORT: "8765"
-  WEBSOCKET_ENABLED: "true"
-  
+
   # MinIO Integration
   MINIO_ENDPOINT: "minio:9000"
   MINIO_ACCESS_KEY: "minio"
   MINIO_SECRET_KEY: "minio12345"
-  
+
   # Analysis Settings
   AUTO_ANALYZE: "true"
 ```
@@ -258,24 +249,23 @@ environment:
 
 ### CHO Analysis Endpoints
 
-| Endpoint | Method | Description |
-|----------|---------|-------------|
-| `/PatSpecCHO/{series-id}` | POST | Start CHO analysis |
-| `/cho-results/{series-id}` | GET | Get analysis results |
-| `/cho-results/{series-id}` | DELETE | Delete results |
-| `/cho-calculation-status` | GET | Check analysis status |
-| `/cho-active-calculations` | GET | List active analyses |
-| `/cho-results-export` | GET | Export results as CSV |
-| `/cho-dashboard` | GET | Main dashboard interface |
+| Endpoint                   | Method | Description              |
+| -------------------------- | ------ | ------------------------ |
+| `/cho-results/{series-id}` | GET    | Get analysis results     |
+| `/cho-results/{series-id}` | DELETE | Delete results           |
+| `/cho-calculation-status`  | GET    | Check analysis status    |
+| `/cho-active-calculations` | GET    | List active analyses     |
+| `/cho-results-export`      | GET    | Export results as CSV    |
+| `/cho-dashboard`           | GET    | Main dashboard interface |
 
 ### DICOM Web Endpoints
 
-| Endpoint | Method | Description |
-|----------|---------|-------------|
-| `/dicom-web/studies` | GET | QIDO-RS studies |
-| `/dicom-web/studies/{study}/series` | GET | QIDO-RS series |
-| `/dicom-web/studies/{study}/instances` | GET | QIDO-RS instances |
-| `/dicom-web/studies/{study}` | GET | WADO-RS study |
+| Endpoint                               | Method | Description       |
+| -------------------------------------- | ------ | ----------------- |
+| `/dicom-web/studies`                   | GET    | QIDO-RS studies   |
+| `/dicom-web/studies/{study}/series`    | GET    | QIDO-RS series    |
+| `/dicom-web/studies/{study}/instances` | GET    | QIDO-RS instances |
+| `/dicom-web/studies/{study}`           | GET    | WADO-RS study     |
 
 ### Standard ORTHANC REST API
 
@@ -302,6 +292,7 @@ orthanc.RegisterRestCallback('/custom-endpoint', CustomRestCallback)
 ### Frontend Extensions
 
 Extend the dashboard by modifying:
+
 - `/src/static/js/dashboard.js` - Main dashboard logic
 - `/src/static/css/dashboard.css` - Styling
 - `/src/templates/dashboard.html` - HTML structure
@@ -309,6 +300,7 @@ Extend the dashboard by modifying:
 ### Database Extensions
 
 Add custom tables by extending:
+
 - `/src/python/results_storage.py` - Database operations
 - SQL schema files for new table definitions
 
@@ -334,16 +326,19 @@ curl -u demo:demo http://localhost:8042/system
 ### Common Issues
 
 **ORTHANC won't start:**
+
 - Check PostgreSQL connectivity
 - Verify volume mount permissions
 - Review ORTHANC logs for Python errors
 
 **CHO Analysis fails:**
+
 - Ensure sufficient memory (8GB+ recommended)
 - Check series contains valid CT images
 - Verify analysis parameters are within valid ranges
 
 **Database connection errors:**
+
 - Confirm PostgreSQL is healthy: `docker-compose exec postgres pg_isready`
 - Check database credentials in environment variables
 - Verify network connectivity between containers
@@ -353,6 +348,7 @@ curl -u demo:demo http://localhost:8042/system
 **For High-Volume Deployments:**
 
 1. **Database Tuning**:
+
    ```bash
    # Increase PostgreSQL memory settings
    shared_buffers = 256MB
@@ -361,6 +357,7 @@ curl -u demo:demo http://localhost:8042/system
    ```
 
 2. **ORTHANC Optimization**:
+
    ```json
    {
      "MaximumStorageSize": 0,
@@ -377,7 +374,7 @@ curl -u demo:demo http://localhost:8042/system
          resources:
            limits:
              memory: 4G
-             cpus: '2.0'
+             cpus: "2.0"
    ```
 
 ## 🤝 Contributing

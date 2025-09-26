@@ -1,30 +1,17 @@
 #!/usr/bin/env python3
 
 """
-Enhanced Progress tracking module for CHO calculations with WebSocket support
+Enhanced Progress tracking module for CHO calculations
 This module provides a singleton ProgressTracker class to track and report
-calculation progress that can be accessed from API endpoints and broadcast via WebSocket.
+calculation progress that can be accessed from API endpoints.
 """
 
 import time
 import threading
-import json
 from collections import deque
-import orthanc  # For logging
-
-# Import WebSocket broadcaster
-try:
-    from websocket_server import broadcast_progress_update, broadcast_calculation_status
-    WEBSOCKET_AVAILABLE = True
-except ImportError:
-    WEBSOCKET_AVAILABLE = False
-    def broadcast_progress_update(*args, **kwargs):
-        pass
-    def broadcast_calculation_status(*args, **kwargs):
-        pass
 
 class ProgressTracker:
-    """Singleton class to track calculation progress with WebSocket broadcasting"""
+    """Singleton class to track calculation progress"""
     _instance = None
     _lock = threading.Lock()
     
@@ -41,12 +28,8 @@ class ProgressTracker:
         self._lock = threading.Lock()
         # Store the last 100 completed calculations
         self._history = deque(maxlen=100)
-        self._websocket_enabled = WEBSOCKET_AVAILABLE
-        
-        if self._websocket_enabled:
-            orthanc.LogInfo("Progress tracker initialized with WebSocket support")
-        else:
-            orthanc.LogWarning("Progress tracker initialized without WebSocket support")
+
+        print("Progress tracker initialized")
         
     def start_calculation(self, series_id, metadata=None):
         """Start tracking a new calculation"""
@@ -70,19 +53,15 @@ class ProgressTracker:
             
             self._calculations[series_id] = calculation_data
             
-            orthanc.LogInfo(f"Started tracking calculation for series {series_id}")
-            
-            # Broadcast initial status via WebSocket
-            if self._websocket_enabled:
-                broadcast_calculation_status(series_id, 'started', calculation_data.copy())
+            print(f"Started tracking calculation for series {series_id}")
             
             return self._calculations[series_id]
     
     def update_progress(self, series_id, progress, message=None, stage=None, details=None):
-        """Update the progress of a calculation and broadcast via WebSocket"""
+        """Update the progress of a calculation"""
         with self._lock:
             if series_id not in self._calculations:
-                orthanc.LogWarning(f"Attempted to update non-existent calculation: {series_id}")
+                print(f"Attempted to update non-existent calculation: {series_id}")
                 return False
                 
             calc = self._calculations[series_id]
@@ -110,11 +89,7 @@ class ProgressTracker:
                         if key not in calc:
                             calc[key] = value
             
-            orthanc.LogInfo(f"Updated progress for {series_id}: {progress}%, {message}")
-            
-            # Broadcast progress update via WebSocket if progress changed significantly
-            if self._websocket_enabled and (progress - old_progress >= 1 or stage or message):
-                broadcast_progress_update(series_id, calc.copy())
+            print(f"Updated progress for {series_id}: {progress}%, {message}")
             
             return True
     
@@ -122,7 +97,7 @@ class ProgressTracker:
         """Mark a calculation as complete and broadcast completion"""
         with self._lock:
             if series_id not in self._calculations:
-                orthanc.LogWarning(f"Attempted to complete non-existent calculation: {series_id}")
+                print(f"Attempted to complete non-existent calculation: {series_id}")
                 return False
                 
             calc = self._calculations[series_id]
@@ -147,13 +122,9 @@ class ProgressTracker:
             # Add to history for completed calculations
             self._history.append(calc.copy())
             
-            orthanc.LogInfo(f"Completed calculation for series {series_id}")
-
-            
-            
-            # Broadcast completion via WebSocket
-            if self._websocket_enabled:
-                broadcast_calculation_status(series_id, 'completed', calc.copy())
+            print(f"Completed calculation for series {series_id}")
+            # Delete the series DICOMS
+            # orthanc.RestApiDelete(f'/series/{series_id}')
             
             return True
     
@@ -161,7 +132,7 @@ class ProgressTracker:
         """Mark a calculation as failed and broadcast failure"""
         with self._lock:
             if series_id not in self._calculations:
-                orthanc.LogWarning(f"Attempted to fail non-existent calculation: {series_id}")
+                print(f"Attempted to fail non-existent calculation: {series_id}")
                 return False
                 
             calc = self._calculations[series_id]
@@ -182,11 +153,7 @@ class ProgressTracker:
             # Add to history for completed calculations
             self._history.append(calc.copy())
             
-            orthanc.LogInfo(f"Failed calculation for series {series_id}: {error_message}")
-            
-            # Broadcast failure via WebSocket
-            if self._websocket_enabled:
-                broadcast_calculation_status(series_id, 'failed', calc.copy())
+            print(f"Failed calculation for series {series_id}: {error_message}")
             
             return True
     
@@ -225,14 +192,7 @@ class ProgressTracker:
         with self._lock:
             if series_id in self._calculations:
                 del self._calculations[series_id]
-                orthanc.LogInfo(f"Cleaned up calculation for series {series_id}")
-                
-                # Broadcast cleanup notification via WebSocket
-                if self._websocket_enabled:
-                    broadcast_calculation_status(series_id, 'cleaned_up', {
-                        'series_id': series_id,
-                        'message': 'Calculation data cleaned up'
-                    })
+                print(f"Cleaned up calculation for series {series_id}")
                 
                 return True
             return False
@@ -241,12 +201,12 @@ class ProgressTracker:
         """Cancel a running calculation"""
         with self._lock:
             if series_id not in self._calculations:
-                orthanc.LogWarning(f"Attempted to cancel non-existent calculation: {series_id}")
+                print(f"Attempted to cancel non-existent calculation: {series_id}")
                 return False
                 
             calc = self._calculations[series_id]
             if calc['status'] not in ['running']:
-                orthanc.LogWarning(f"Attempted to cancel non-running calculation: {series_id}")
+                print(f"Attempted to cancel non-running calculation: {series_id}")
                 return False
                 
             calc['status'] = 'cancelled'
@@ -265,11 +225,7 @@ class ProgressTracker:
             # Add to history
             self._history.append(calc.copy())
             
-            orthanc.LogInfo(f"Cancelled calculation for series {series_id}: {reason}")
-            
-            # Broadcast cancellation via WebSocket
-            if self._websocket_enabled:
-                broadcast_calculation_status(series_id, 'cancelled', calc.copy())
+            print(f"Cancelled calculation for series {series_id}: {reason}")
             
             return True
     
@@ -289,7 +245,6 @@ class ProgressTracker:
                 'active_calculations': active_count,
                 'completed_calculations': history_count,
                 'status_breakdown': status_counts,
-                'websocket_enabled': self._websocket_enabled,
                 'total_tracked': active_count + history_count
             }
 

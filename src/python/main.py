@@ -1,40 +1,28 @@
 import io
 import json
-import socket
 import os
 import orthanc
 import pydicom
 import pandas as pd
+from ChangeType import ChangeType
+from ResourceType import ResourceType
 import psycopg2  # type: ignore
 from datetime import datetime, date, time
 import xlwt
 from results_storage import cho_storage
 from progress_tracker import progress_tracker
 from calculation_wrapper import run_cho_calculation_with_progress
-from patient_specific_calculation import main as unified_cho_main
-
-try:
-    from websocket_server import (
-        start_websocket_server, 
-        stop_websocket_server, 
-        get_websocket_stats,
-        ws_broadcaster
-    )
-    WEBSOCKET_AVAILABLE = True
-except ImportError:
-    WEBSOCKET_AVAILABLE = False
-    print("Warning: WebSocket functionality not available")
 
 TOKEN = orthanc.GenerateRestApiAuthorizationToken()
-AUTO_ANALYZE = os.getenv('AUTO_ANALYZE', 'false').lower() == 'true'
+TEST_TYPE = os.getenv("INSTANCE_BEHAVIOR_TEST", "None")
+SAVE_TYPE = (os.getenv("INSTANCE_BEHAVIOR_SAVE", "true") == "true")
+
+print(f'=== CHO Analysis Plugin Initialized ===')
+print(f' - Test Type: {TEST_TYPE}')
+print(f' - Save Type: {SAVE_TYPE}')
 
 print("=== CHO Analysis Plugin Initialized ===")
-if WEBSOCKET_AVAILABLE:
-    print("WebSocket support enabled")
-else:
-    print("WebSocket support disabled")
 print("Available endpoints:")
-print("  - /PatSpecCHO/{series_id} - Run CHO analysis on a series")
 print("  - /cho-dashboard - View CHO results dashboard")
 print("  - /cho-calculation-status - Get the status of a calculation")
 print("  - /cho-active-calculations - Get all active calculations")
@@ -66,82 +54,8 @@ def get_database_connection():
             connect_timeout=5  # 5 second timeout
         )
         return conn
-    except (psycopg2.OperationalError, socket.error) as e:
+    except (psycopg2.OperationalError) as e:
         print(f"Failed to connect to database: {e}")
-
-def OnChange(change_type, resource_type, resource_id):
-    """Handle automatic analysis on stable series"""
-    if change_type == orthanc.ChangeType.STABLE_SERIES and resource_type == orthanc.ResourceType.SERIES and AUTO_ANALYZE:
-        print(f'Stable series: {resource_id}')
-        series_uuid = resource_id
-        try:
-            print(f"Starting automatic CHO analysis for series {series_uuid}")
-            # Start with global noise analysis (test=0) for automatic analysis
-            orthanc.RestApiGetAfterPlugins(f'/PatSpecCHO/{series_uuid}')
-        except Exception as e:
-            print(f"Error in automatic CHO analysis for series {series_uuid}: {str(e)}")
-
-def RunPatientSpecificCHO(output: orthanc.RestOutput, url: str, **request) -> None:
-    """Updated function to support modal interface - no redirect for modal requests"""
-    method = request.get('method')
-    groups = request.get('groups')
-    get = request.get('get', {})
-
-    if not groups or len(groups) < 1:
-        output.SendHttpStatusCode(400)
-        return
-
-    if method != 'GET':
-        output.SendMethodNotAllowed('GET')
-        return
-
-    # Retrieve parameters
-    series_uuid = groups[0]
-    test_param = get.get('test', '0')  # Default to test=0
-    
-    # Convert test parameter to boolean
-    full_test = (test_param == '1')
-    
-    print(f"Running CHO analysis: Full test: {full_test} for series {series_uuid}")
-    print(f"\tTest: {'Detectability' if full_test else 'Global Noise'}")
-    print(f"\tSeries: {series_uuid}")
-    
-    custom_params = {
-        'resamples': 500,
-        'internalNoise': 2.25,
-        'resamplingMethod': 'Bootstrap',
-        'roiSize': 6,
-        'thresholdLow': 0,
-        'thresholdHigh': 150,
-        'windowLength': 15.0,
-        'stepSize': 5.0,
-        'channelType': 'Gabor',
-        'lesionSet': 'standard',
-        'saveResults': True
-    }
-
-    try:        
-        calculation_id = run_cho_calculation_with_progress(
-            series_uuid, 
-            full_test,
-            custom_params
-        )
-        response = {
-            'status': 'started',
-            'calculation_id': calculation_id,
-            'message': 'Analysis started with custom parameters',
-            'parameters': custom_params
-        }
-        output.AnswerBuffer(json.dumps(response, indent=2, cls=DateTimeEncoder).encode('utf-8'), 'text/plain')
-
-    except Exception as e:
-        print(f"Error loading DICOM files: {str(e)}")
-        ret_json = {
-            'error': f"Failed to load DICOM files: {str(e)}",
-            'calculation_type': 'Error'
-        }
-        output.AnswerBuffer(json.dumps(ret_json, indent=2, cls=DateTimeEncoder).encode('utf-8'), 'text/plain')
-
 
 def ServeStaticFile(output: orthanc.RestOutput, url: str, **request) -> None:
     """Serve static files"""
@@ -231,13 +145,13 @@ def HandleCHOResult(output: orthanc.RestOutput, url: str, **request) -> None:
     else:
         output.SendMethodNotAllowed('GET, DELETE')
 
-def StartCHOAnalysisFromModal(output: orthanc.RestOutput, url: str, **request) -> None:
+def StartCHOAnalysis(output: orthanc.RestOutput, url: str, **request) -> None:
     """New endpoint specifically for modal requests with custom parameters"""
     method = request.get('method')
     get = request.get('get', {})
     
-    if method != 'POST':
-        output.SendMethodNotAllowed('POST')
+    if method not in ['POST', 'GET'] :
+        output.SendMethodNotAllowed('GET, POST')
         return
     
     try:
@@ -247,6 +161,8 @@ def StartCHOAnalysisFromModal(output: orthanc.RestOutput, url: str, **request) -
             body = body.decode('utf-8')
         
         params = json.loads(body)
+        # update body with get parameters
+        params.update(get)
         series_uuid = params.get('series_uuid')
         
         if not series_uuid:
@@ -269,7 +185,9 @@ def StartCHOAnalysisFromModal(output: orthanc.RestOutput, url: str, **request) -
             'stepSize': params.get('stepSize', 5.0),
             'channelType': params.get('channelType', 'Gabor'),
             'lesionSet': params.get('lesionSet', 'standard'),
-            'saveResults': params.get('saveResults', False)  # New parameter to control result saving
+            'saveResults': params.get('saveResults', False),
+            'deleteAfterCompletion': params.get('deleteAfterCompletion', False),
+            'report_progress': params.get('report_progress', True)
         }
         
         print(f"Starting CHO analysis with custom parameters: {custom_params}")
@@ -732,12 +650,37 @@ def test_database_connection():
     except Exception as e:
         print(f"Database connection test failed: {str(e)}")
 
+# def dict_to_get(dict):
+#     string = ""
+#     for dict.keys
 
 # Register callbacks and endpoints
+def OnChange(change_type, resource_type, resource_id):
+    """Handle automatic analysis on stable series"""
+    if change_type == orthanc.ChangeType.STABLE_SERIES and resource_type == orthanc.ResourceType.SERIES:
+        print(f'Stable series: {resource_id}')
+        series_uuid = resource_id
+        try:
+            test = 'none'
+            if TEST_TYPE == "Global Noise":
+                test = 'global'
+            elif TEST_TYPE == "Detectability":
+                test = 'full'
+            body = {
+                    'series_uuid': series_uuid, 
+                    'testType': test,
+                    'saveResults': True,
+                    'deleteAfterCompletion': not SAVE_TYPE,
+                    'report_progress': False
+            }
+            orthanc.RestApiPostAfterPlugins('/cho-analysis-modal', json.dumps(body).encode('utf-8'))
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            print(f"Error in automatic CHO analysis for series {series_uuid}: {str(e)}")
 
 orthanc.RegisterOnChangeCallback(OnChange)
 
-orthanc.RegisterRestCallback('/PatSpecCHO/(.*)', RunPatientSpecificCHO) # type: ignore
 orthanc.RegisterRestCallback('/cho-results/(.*)', HandleCHOResult) # type: ignore
 orthanc.RegisterRestCallback('/cho-results', GetAllCHOResults) # type: ignore
 orthanc.RegisterRestCallback('/cho-results-export', ExportCHOResultsCSV) # type: ignore
@@ -746,7 +689,7 @@ orthanc.RegisterRestCallback('/cho-dashboard', ServeCHODashboard) # type: ignore
 orthanc.RegisterRestCallback('/cho-calculation-status', GetCalculationStatus) # type: ignore
 orthanc.RegisterRestCallback('/cho-active-calculations', GetActiveCalculations) # type: ignore
 orthanc.RegisterRestCallback('/static/(.*)', ServeStaticFile) # type: ignore
-orthanc.RegisterRestCallback('/cho-analysis-modal', StartCHOAnalysisFromModal) # type: ignore
+orthanc.RegisterRestCallback('/cho-analysis-modal', StartCHOAnalysis) # type: ignore
 orthanc.RegisterRestCallback('/minio-images/(.*)', ServeMinIOImage) # type: ignore
 orthanc.RegisterRestCallback('/image-metadata/(.*)', GetImageMetadata) # type: ignore
 orthanc.RegisterRestCallback('/results-statistics', ServeResultsStatistics) # type: ignore
@@ -755,5 +698,8 @@ orthanc.RegisterRestCallback('/cho-export-results', ServeExportResults) # type: 
 
 
 # Update the Orthanc Explorer to add buttons to the toolbar
-with open("/src/static/js/extend-explorer.js", "r", encoding='utf-8') as f:
-    orthanc.ExtendOrthancExplorer(f.read())
+try:
+    with open("/src/static/js/extend-explorer.js", "r", encoding='utf-8') as f:
+        orthanc.ExtendOrthancExplorer(f.read())
+except FileNotFoundError:
+    print("No frontend to update")

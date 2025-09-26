@@ -529,6 +529,7 @@ tbody > tr:hover {
 tr:hover td {
   border: 1px solid #667eea;
   border-style: solid none;
+  /* padding: 15px; */
 }
 
 tr:hover td:first-child {

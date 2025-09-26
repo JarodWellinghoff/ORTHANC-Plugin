@@ -14,7 +14,7 @@ from progress_tracker import progress_tracker
 from patient_specific_calculation import main as unified_cho_main
 import json
 
-def run_cho_calculation_with_progress(series_uuid, full_test=False, custom_params=None):
+def run_cho_calculation_with_progress(series_uuid, full_test, custom_params):
     """
     Run CHO calculation with progress tracking and custom parameters
     
@@ -27,41 +27,22 @@ def run_cho_calculation_with_progress(series_uuid, full_test=False, custom_param
     Returns:
     - The calculation ID for tracking
     """
-    # Default parameters
-    default_params = {
-        'resamples': 500,
-        'internalNoise': 2.25,
-        'resamplingMethod': 'Bootstrap',
-        'roiSize': 6,
-        'thresholdLow': 0,
-        'thresholdHigh': 150,
-        'windowLength': 15.0,
-        'stepSize': 5.0,
-        'channelType': 'Gabor',
-        'lesionSet': 'standard'
-    }
-    
-    # Merge custom parameters with defaults
-    if custom_params:
-        default_params.update(custom_params)
     
     # Get metadata about the calculation
     metadata = {
-        # 'slice_count': len(slices),
-        # 'patient_id': slices[0].PatientID if hasattr(slices[0], 'PatientID') else 'Unknown',
-        # 'patient_name': str(slices[0].PatientName) if hasattr(slices[0], 'PatientName') else 'Unknown',
         'full_test': full_test,
         'calculation_type': 'full_analysis' if full_test else 'global_noise',
-        'custom_parameters': default_params
+        'custom_parameters': custom_params
     }
     
     # Start tracking the calculation
-    progress_tracker.start_calculation(series_uuid, metadata)
+    if custom_params.get("report_progress", True):
+        progress_tracker.start_calculation(series_uuid, metadata)
     
     # Start the calculation in a separate thread
     thread = threading.Thread(
         target=_run_calculation_thread,
-        args=(series_uuid, full_test, default_params)
+        args=(series_uuid, full_test, custom_params)
     )
     thread.daemon = True
     thread.start()
@@ -75,20 +56,21 @@ def _run_calculation_thread(series_uuid, full_test, params):
     try:
         # Update progress to indicate we're starting
         analysis_type = "Full CHO" if full_test else "Global Noise"
-        progress_tracker.update_progress(
-            series_uuid, 5, 
-            f"Starting {analysis_type} calculation with custom parameters...", 
-            "initialization"
-        )
         
         # Create config for unified CHO module with custom parameters
         config = {
             'series_uuid': series_uuid,
             'full_test': full_test,
-            'report_progress': True,
+            'report_progress': params['report_progress'],
             'custom_parameters': params
         }
         
+        if config['report_progress'] and config['series_uuid']:
+            progress_tracker.update_progress(
+                series_uuid, 5, 
+                f"Starting {analysis_type} calculation with custom parameters...", 
+                "initialization"
+            )
         # Import and run the unified CHO calculation with progress reporting
         # Load DICOM files
         instances_res = orthanc.RestApiGet(f'/series/{series_uuid}/instances')
@@ -97,7 +79,7 @@ def _run_calculation_thread(series_uuid, full_test, params):
         print(f"loading: {series_uuid}")
         files = []
         for i in range(len(instances_json)):
-            if (i % 10 == 0 or i == len(instances_json) - 1):
+            if config['report_progress'] and config['series_uuid'] and (i % 10 == 0 or i == len(instances_json) - 1):
                 # 5 = progress during analysis
                 # 15 = progress after analysis
                 progress_percentage = 5 + ((i / len(instances_json)) * (15 - 5))

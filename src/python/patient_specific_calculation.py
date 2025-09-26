@@ -27,6 +27,7 @@ import gc
 from dicom_parser import DicomParser
 from numpy.lib.stride_tricks import sliding_window_view
 from ct_sliding_window import CTSlidingWindow
+from progress_tracker import progress_tracker
 # from python.CHO_Calculation_Patient_Specific_skimage_Canny_edge_v12 import Edges
 
 CONSTANT_RECON_FOV = 340
@@ -281,12 +282,10 @@ def run_global_noise_analysis(files, config):
     """Run Global Noise CHO Analysis"""
     
     custom_params = config['custom_parameters']
-    if config['report_progress']:
-        from progress_tracker import progress_tracker
     start = time.time()
     
     if config['report_progress'] and config['series_uuid']:
-        progress_tracker.update_progress(   #type:ignore
+        progress_tracker.update_progress(
             config['series_uuid'], 15, 
             "Starting Global Noise CHO calculation...", 
             "preprocessing"
@@ -325,7 +324,7 @@ def run_global_noise_analysis(files, config):
     n_sel_images = (n_images + sample_interval - 1) // sample_interval
 
     if config['report_progress'] and config['series_uuid']:
-        progress_tracker.update_progress(   #type:ignore
+        progress_tracker.update_progress(   
             config['series_uuid'], 15, 
             f"Analyzing {n_sel_images} selected images for noise calculation", 
             "preprocessing"
@@ -351,9 +350,11 @@ def run_global_noise_analysis(files, config):
     # for i in range(0, n_images, sample_interval):
         i = metadata['slice_indices'][0]
         idx = metadata['window_idx']
-        if config['report_progress'] and config['series_uuid']:
-            progress_percentage = 20 + (i / n_images) * 60
-            progress_tracker.update_progress(   #type:ignore
+        if config['report_progress'] and config['series_uuid'] and (i % 10 == 0 or i == n_images - 1):
+            # 25 = progress during analysis
+            # 85 = progress after analysis
+            progress_percentage = 25 + ((i / n_images) * (85 - 25))
+            progress_tracker.update_progress(   
                 config['series_uuid'], int(progress_percentage), 
                 f"Processing slice {i+1}/{n_images}", 
                 "analysis"
@@ -370,7 +371,7 @@ def run_global_noise_analysis(files, config):
     window_gen.clear_cache()
 
     if config['report_progress'] and config['series_uuid']:
-        progress_tracker.update_progress(   #type:ignore
+        progress_tracker.update_progress(   
             config['series_uuid'], 85, 
             "Calculating final metrics...", 
             "finalizing"
@@ -428,7 +429,7 @@ def run_global_noise_analysis(files, config):
     }
 
     if config['report_progress'] and config['series_uuid']:
-        progress_tracker.update_progress(   #type:ignore
+        progress_tracker.update_progress(   
             config['series_uuid'], 95, 
             "Saving results to database...", 
             "finalizing"
@@ -451,12 +452,12 @@ def run_global_noise_analysis(files, config):
             print(f"Error saving to database: {str(e)}")
     
     if config['report_progress'] and config['series_uuid']:
-        progress_tracker.update_progress(   #type:ignore
+        progress_tracker.update_progress(   
             config['series_uuid'], 100, 
             "Global Noise CHO calculation completed successfully", 
             "completed"
         )
-        progress_tracker.complete_calculation(  #type:ignore
+        progress_tracker.complete_calculation(
             config['series_uuid'], {
                 'patient': patient, 
                 'study': study, 
@@ -467,6 +468,11 @@ def run_global_noise_analysis(files, config):
             }
         )
     
+    if custom_params['deleteAfterCompletion']:
+        import orthanc
+        orthanc.RestApiDelete(f'/series/{config["series_uuid"]}')
+        print(f"Requested deletion of series {config['series_uuid']}")
+        
     print(f"Global Noise processing time: {processing_time:.2f} seconds")
     # del results['coronal_view']
     return {
@@ -1001,8 +1007,6 @@ def compute_image_analysis(curr_file, pixel_roi_mm2):
 
 def run_full_cho_analysis(files, config):
     """Run Full CHO Analysis with lesion detectability calculation"""
-    if config['report_progress']:
-        from progress_tracker import progress_tracker
     print('Config')
     for key, val in config.items():
         if key == 'custom_parameters':
@@ -1015,7 +1019,7 @@ def run_full_cho_analysis(files, config):
     start = time.time()
 
     if config['report_progress'] and config['series_uuid']:
-        progress_tracker.update_progress(   #type:ignore
+        progress_tracker.update_progress(   
             config['series_uuid'], 15, 
             "Starting Full CHO calculation...", 
             "preprocessing"
@@ -1028,7 +1032,7 @@ def run_full_cho_analysis(files, config):
     psf_file = os.path.join(src_dir, "data", "EID_PSF_Br44.mat")
 
     if config['report_progress'] and config['series_uuid']:
-        progress_tracker.update_progress(   #type:ignore
+        progress_tracker.update_progress(   
             config['series_uuid'], 10, 
             "Loading lesion models...", 
             "loading"
@@ -1044,7 +1048,7 @@ def run_full_cho_analysis(files, config):
     lesion_sizes = [3, 9, 6, 6, 6]
     roi_sizes = [21, 29, 25, 25, 25]
     if config['report_progress'] and config['series_uuid']:
-        progress_tracker.update_progress(   #type:ignore
+        progress_tracker.update_progress(   
             config['series_uuid'], 15, 
             "Preparing lesion models for analysis...", 
             "preprocessing"
@@ -1064,7 +1068,7 @@ def run_full_cho_analysis(files, config):
     last_file = files[-1]
 
     if config['report_progress'] and config['series_uuid']:
-        progress_tracker.update_progress(   #type:ignore
+        progress_tracker.update_progress(   
             config['series_uuid'], 20, 
             f"Processing {n_images} DICOM images...", 
             "analysis"
@@ -1102,7 +1106,7 @@ def run_full_cho_analysis(files, config):
             # 25 = progress during analysis
             # 40 = progress after analysis
             progress_percentage = 25 + ((i / n_images) * (40 - 25))
-            progress_tracker.update_progress(   #type:ignore
+            progress_tracker.update_progress(   
                 config['series_uuid'], int(progress_percentage), 
                 f"Calculating dose metrics for slice {i+1}/{n_images}", 
                 "analysis"
@@ -1113,7 +1117,7 @@ def run_full_cho_analysis(files, config):
 
 
     if config['report_progress'] and config['series_uuid']:
-        progress_tracker.update_progress(   #type:ignore
+        progress_tracker.update_progress(   
             config['series_uuid'], 40, 
             "Dose metrics calculation completed", 
             "analysis"
@@ -1121,7 +1125,7 @@ def run_full_cho_analysis(files, config):
 
 
     if config['report_progress'] and config['series_uuid']:
-        progress_tracker.update_progress(   #type:ignore
+        progress_tracker.update_progress(   
             config['series_uuid'], 45, 
             "Setting up CHO channels...", 
             "analysis"
@@ -1171,7 +1175,7 @@ def run_full_cho_analysis(files, config):
             # 50 = progress during analysis
             # 90 = progress after analysis
             progress_percentage = 50 + ((mm / total_sections) * (90 - 50))
-            progress_tracker.update_progress(   #type:ignore
+            progress_tracker.update_progress(   
                 config['series_uuid'], int(progress_percentage), 
                 f"Processing CHO section {mm + 1}/{total_sections}", 
                 "analysis"
@@ -1274,7 +1278,7 @@ def run_full_cho_analysis(files, config):
     window_gen.clear_cache()
     # Calculate final statistics
     if config['report_progress'] and config['series_uuid']:
-        progress_tracker.update_progress(   #type:ignore
+        progress_tracker.update_progress(   
             config['series_uuid'], 90, 
             "Calculating statistics and preparing final results...", 
             "finalizing"
@@ -1349,7 +1353,7 @@ def run_full_cho_analysis(files, config):
     }
 
     if config['report_progress'] and config['series_uuid']:
-        progress_tracker.update_progress(   #type:ignore
+        progress_tracker.update_progress(   
             config['series_uuid'], 95, 
             "Saving results to database...", 
             "finalizing"
@@ -1371,12 +1375,12 @@ def run_full_cho_analysis(files, config):
             print(f"Error saving to database: {str(e)}")   
 
     if config['report_progress'] and config['series_uuid']:
-        progress_tracker.update_progress(   #type:ignore
+        progress_tracker.update_progress(   
             config['series_uuid'], 100, 
             "Full CHO calculation completed successfully", 
             "completed"
         )
-        progress_tracker.complete_calculation(  #type:ignore
+        progress_tracker.complete_calculation(  
             config['series_uuid'], {
                 'patient': patient,
                 'study': study,
@@ -1385,7 +1389,12 @@ def run_full_cho_analysis(files, config):
                 'ct': ct, 
                 'results': converted_results
             }
-        ) 
+        )
+    
+    if custom_params['deleteAfterCompletion']:
+        import orthanc
+        orthanc.RestApiDelete(f'/series/{config["series_uuid"]}')
+        print(f"Requested deletion of series {config['series_uuid']}")
 
     print(f"Full CHO processing time: {processing_time:.2f} seconds")
     print(f'Peak frequency = {peakfrequency:.3f}')
@@ -1477,6 +1486,7 @@ if __name__ == "__main__":
             'thresholdLow': 0,
             'windowLength': 15,
             'saveResults': False,
+            'deleteAfterCompletion': False
         },
     }
     main(slices, config)

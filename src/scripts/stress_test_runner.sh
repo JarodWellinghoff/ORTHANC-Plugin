@@ -50,6 +50,7 @@ print_usage() {
     echo "  $0 quick-test --template /path/to/dicoms"
     echo "  $0 custom --template /path/to/dicoms --series 30 --workers 6 --noise 0.05"
 }
+# 'c:/Users/M297802/Desktop/ORTHANC Plugin/src/scripts/stress_test_runner.sh' custom --template W:/L067_FD_1_0_B30F_0001 --series 50 --workers 2 --max-series 0
 
 check_requirements() {
     if ! command -v python &> /dev/null; then
