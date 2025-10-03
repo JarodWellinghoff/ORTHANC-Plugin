@@ -31,6 +31,26 @@ print("  - /cho-results/{series_id} - Get CHO results for a specific series")
 print("  - /static/{filename} - Serve static files (JS, CSS)")
 print("  - Auto Analysis: Automatically triggered on stable series (if enabled)")
 
+CORS_ALLOWED_ORIGIN = os.getenv('CORS_ALLOWED_ORIGIN', '*')
+CORS_ALLOWED_METHODS = os.getenv('CORS_ALLOWED_METHODS', 'GET, POST, PUT, DELETE, OPTIONS')
+CORS_ALLOWED_HEADERS = os.getenv('CORS_ALLOWED_HEADERS', 'Content-Type, Authorization')
+CORS_ALLOW_CREDENTIALS = os.getenv('CORS_ALLOW_CREDENTIALS', 'false').lower() == 'true'
+
+def set_cors_headers(output: orthanc.RestOutput) -> None:
+    output.SetHttpHeader('Access-Control-Allow-Origin', CORS_ALLOWED_ORIGIN)
+    output.SetHttpHeader('Access-Control-Allow-Methods', CORS_ALLOWED_METHODS)
+    output.SetHttpHeader('Access-Control-Allow-Headers', CORS_ALLOWED_HEADERS)
+    if CORS_ALLOW_CREDENTIALS:
+        output.SetHttpHeader('Access-Control-Allow-Credentials', 'true')
+
+def handle_cors_preflight(output: orthanc.RestOutput, request: dict) -> bool:
+    """Apply CORS headers and finish OPTIONS preflight when needed."""
+    set_cors_headers(output)
+    if request.get('method') == 'OPTIONS':
+        output.SendHttpStatusCode(204)
+        return True
+    return False
+
 class DateTimeEncoder(json.JSONEncoder):
     def default(self, o):
         if isinstance(o, datetime):
@@ -60,6 +80,9 @@ def get_database_connection():
 def ServeStaticFile(output: orthanc.RestOutput, url: str, **request) -> None:
     """Serve static files"""
     
+    if handle_cors_preflight(output, request):
+        return
+
     method = request.get('method')
     groups = request.get('groups')
 
@@ -95,6 +118,9 @@ def ServeStaticFile(output: orthanc.RestOutput, url: str, **request) -> None:
 def HandleCHOResult(output: orthanc.RestOutput, url: str, **request) -> None:
     """Handle CHO results for a specific series - both GET and DELETE"""
     
+    if handle_cors_preflight(output, request):
+        return
+
     method = request.get('method')
     groups = request.get('groups')
 
@@ -147,9 +173,12 @@ def HandleCHOResult(output: orthanc.RestOutput, url: str, **request) -> None:
 
 def StartCHOAnalysis(output: orthanc.RestOutput, url: str, **request) -> None:
     """New endpoint specifically for modal requests with custom parameters"""
+    if handle_cors_preflight(output, request):
+        return
+
     method = request.get('method')
     get = request.get('get', {})
-    
+
     if method not in ['POST', 'GET'] :
         output.SendMethodNotAllowed('GET, POST')
         return
@@ -220,6 +249,9 @@ def StartCHOAnalysis(output: orthanc.RestOutput, url: str, **request) -> None:
 def GetAllCHOResults(output: orthanc.RestOutput, url: str, **request) -> None:
     """Get all CHO results with enhanced filtering options and pagination"""
     
+    if handle_cors_preflight(output, request):
+        return
+
     method = request.get('method')
     get = request.get('get', {}) 
 
@@ -239,6 +271,9 @@ def GetAllCHOResults(output: orthanc.RestOutput, url: str, **request) -> None:
 
 def GetFilterOptions(output: orthanc.RestOutput, url: str, **request) -> None:
     """Get available filter options for dropdowns"""
+
+    if handle_cors_preflight(output, request):
+        return
 
     method = request.get('method')
     
@@ -260,6 +295,9 @@ def GetFilterOptions(output: orthanc.RestOutput, url: str, **request) -> None:
 def ExportCHOResultsCSV(output: orthanc.RestOutput, url: str, **request) -> None:
     """Export CHO results to CSV format"""
 
+    if handle_cors_preflight(output, request):
+        return
+
     method = request.get('method')
 
     if method != 'GET':
@@ -278,6 +316,9 @@ def ExportCHOResultsCSV(output: orthanc.RestOutput, url: str, **request) -> None
 
 def ServeCHODashboard(output: orthanc.RestOutput, url: str, **request) -> None:
     """Serve the CHO dashboard HTML page"""
+
+    if handle_cors_preflight(output, request):
+        return
 
     method = request.get('method')
 
@@ -301,6 +342,10 @@ def ServeExportResults(output: orthanc.RestOutput, url: str, **request) -> None:
         output (orthanc.RestOutput): The output object for sending responses
         url (str): The request URL
     """
+    print(request)
+    if handle_cors_preflight(output, request):
+        return
+
     method = request.get('method')
 
     if method != 'POST':
@@ -374,6 +419,9 @@ def ServeExportResults(output: orthanc.RestOutput, url: str, **request) -> None:
 def ServeSaveResults(output: orthanc.RestOutput, url: str, **request) -> None:
     """Serve the save results endpoint"""
 
+    if handle_cors_preflight(output, request):
+        return
+
     method = request.get('method')
 
     if method != 'POST':
@@ -416,6 +464,9 @@ def ServeSaveResults(output: orthanc.RestOutput, url: str, **request) -> None:
 def ServeMinIOImage(output: orthanc.RestOutput, url: str, **request) -> None:
     """Serve images from MinIO storage"""
     
+    if handle_cors_preflight(output, request):
+        return
+
     method = request.get('method')
     groups = request.get('groups')
     
@@ -462,6 +513,9 @@ def ServeMinIOImage(output: orthanc.RestOutput, url: str, **request) -> None:
 def GetImageMetadata(output: orthanc.RestOutput, url: str, **request) -> None:
     """Get metadata about available images for a series"""
     
+    if handle_cors_preflight(output, request):
+        return
+
     method = request.get('method')
     groups = request.get('groups')
     
@@ -517,6 +571,9 @@ def GetImageMetadata(output: orthanc.RestOutput, url: str, **request) -> None:
 def ServeResultsStatistics(output: orthanc.RestOutput, url: str, **request) -> None:
     """Serve the results statistics page"""
 
+    if handle_cors_preflight(output, request):
+        return
+
     method = request.get('method')
 
     if method != 'GET':
@@ -546,6 +603,9 @@ def ServeResultsStatistics(output: orthanc.RestOutput, url: str, **request) -> N
 
 def GetCalculationStatus(output: orthanc.RestOutput, url: str, **request) -> None:
     """Get the status of a calculation"""
+
+    if handle_cors_preflight(output, request):
+        return
 
     method = request.get('method')
     get = request.get('get', {})
@@ -582,6 +642,9 @@ def GetCalculationStatus(output: orthanc.RestOutput, url: str, **request) -> Non
 def DelCalculationStatus(output: orthanc.RestOutput, url: str, **request) -> None:
     """Delete the status of a calculation"""
 
+    if handle_cors_preflight(output, request):
+        return
+
     method = request.get('method')
     get = request.get('get', {})
 
@@ -606,6 +669,8 @@ def DelCalculationStatus(output: orthanc.RestOutput, url: str, **request) -> Non
 
 def GetActiveCalculations(output: orthanc.RestOutput, url: str, **request) -> None:
     """Get all active calculations"""
+    if handle_cors_preflight(output, request):
+        return
     method = request.get('method')
     if method != 'GET':
         output.SendMethodNotAllowed('GET')

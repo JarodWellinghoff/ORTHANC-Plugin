@@ -18,6 +18,27 @@ x-orthanc-base: &orthanc
     start_period: 40s
 
 services:
+  nginx:
+    image: nginx:alpine
+    container_name: orthanc-proxy
+    ports:
+      - "8000:80"
+      - "4242:4242"
+      - "4253:4253"
+      - "5342:5342"
+      - "5353:5353"
+      - "4040:4040"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/ssl/certs
+    depends_on:
+      - global-noise-save-images
+      - global-noise-delete-images
+      - detectability-save-images
+      - detectability-delete-images
+      - save-images
+    restart: unless-stopped
+
   postgres:
     image: postgres:13
     command: ["postgres", "-c", "max_connections=200"]
@@ -57,9 +78,12 @@ services:
     volumes:
       - ./src:/src
       - ./orthanc:/etc/orthanc
-    ports:
-      - "8042:8042" # HTTP
-      - "4242:4242" # DICOM
+    # ports:
+    #   # - "8042:8042" # HTTP
+    #   - "4242:4242" # DICOM
+    expose:
+      - "8042"
+      - "4242"
     environment:
       ORTHANC__Name: "global-noise-save-images"
       ORTHANC__DicomAet: "GLOBAL_NOISE_SAVE_IMAGES"
@@ -74,8 +98,11 @@ services:
       - ./src/data:/src/data
       - ./src/sql:/src/sql
       - ./orthanc:/etc/orthanc
-    ports:
-      - "4253:4242" # DICOM
+    # ports:
+    #   - "4253:4242" # DICOM
+    expose:
+      # - "8042"
+      - "4253"
     environment:
       ORTHANC__Name: "global-noise-delete-images"
       ORTHANC__DicomAet: "GLOBAL_NOISE_DELETE_IMAGES"
@@ -90,8 +117,11 @@ services:
       - ./src/data:/src/data
       - ./src/sql:/src/sql
       - ./orthanc:/etc/orthanc
-    ports:
-      - "5342:4242" # DICOM
+    # ports:
+    #   - "5342:4242" # DICOM
+    expose:
+      # - "8042"
+      - "5342"
     environment:
       ORTHANC__Name: "detectability-save-images"
       ORTHANC__DicomAet: "DETECTABILITY_SAVE_IMAGES"
@@ -106,8 +136,11 @@ services:
       - ./src/data:/src/data
       - ./src/sql:/src/sql
       - ./orthanc:/etc/orthanc
-    ports:
-      - "5353:4242" # DICOM
+    # ports:
+    #   - "5353:4242" # DICOM
+    expose:
+      # - "8042"
+      - "5353"
     environment:
       ORTHANC__Name: "detectability-delete-images"
       ORTHANC__DicomAet: "DETECTABILITY_DELETE_IMAGES"
@@ -122,8 +155,11 @@ services:
       - ./src/data:/src/data
       - ./src/sql:/src/sql
       - ./orthanc:/etc/orthanc
-    ports:
-      - "4040:4242" # DICOM
+    # ports:
+    #   - "4040:4242" # DICOM
+    expose:
+      # - "8042"
+      - "4040"
     environment:
       ORTHANC__Name: "save-images"
       ORTHANC__DicomAet: "SAVE_IMAGES"
