@@ -665,7 +665,6 @@ for i in range(len(Lesion_Contrasts)):
 # users should specif the location of files for CHO d' calculation in "dir1"
 #dir1 = '\\\\mfad.mfroot.org\\rchapp\\eb017185\\eb017185\\Grand_Challenge\\10_Training_Cases_RD\\L067_Mayo\\FD_1_0_B30F_0001\\'
 #dir1 ='H:\\Zhou_ZX\\For_Jarod\\L067_FD_1_0_B30F_0001\\'
-#dir1 = '\\\\mfad.mfroot.org\\rchapp\\eb028936\\eb028936\\_Projects\\_PCD_Abdomen_Noise_Insertion\\For_review\\Pineda\\Z_Others\\QIR3_Br44_FD\\' #FBP reconstruction has no CTDIvol information?!!
 
 dir1 ='\\\\mfad.mfroot.org\\rchapp\\eb028591\\CT_CIC_Group_Server\\Staff_Folders\\Wellinghoff_Jarod\\Wellinghoff\\_For_Zhongxing\\Problem_DICOMS\\'
 scan_listing = os.listdir(dir1)
