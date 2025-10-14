@@ -663,7 +663,6 @@ for i in range(len(Lesion_Contrasts)):
     Lesion_sigs.append(Lesion_sig)  # Append the result to the list
 
 # users should specif the location of files for CHO d' calculation in "dir1"
-#dir1 = '\\\\mfad.mfroot.org\\rchapp\\eb017185\\eb017185\\Grand_Challenge\\10_Training_Cases_RD\\L067_Mayo\\FD_1_0_B30F_0001\\'
 #dir1 ='H:\\Zhou_ZX\\For_Jarod\\L067_FD_1_0_B30F_0001\\'
 
 dir1 ='\\\\mfad.mfroot.org\\rchapp\\eb028591\\CT_CIC_Group_Server\\Staff_Folders\\Wellinghoff_Jarod\\Wellinghoff\\_For_Zhongxing\\Problem_DICOMS\\'
