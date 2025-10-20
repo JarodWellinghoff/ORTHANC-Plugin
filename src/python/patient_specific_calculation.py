@@ -1454,9 +1454,7 @@ if __name__ == "__main__":
     print(f"The longest list in the dictionary is: {longest_list_count}")
     import pydicom
     # This section won't be used when imported as a module
-    # test_path = "V:\\Zhou_Zhongxing\\Zhou_ZX\\For_Jarod\\L067_FD_1_0_B30F_0001"  # Replace with actual path
-    test_path = "W:\\Liver Segmentation\\input\\TOBIN, SARA\\2025-06-26-001\\IMAGES"  # Replace with actual path
-    # test_path = "Y:\\Patient_data\\Alpha\\Radiomics\\healthy\\BARTZ_LYDIA_L\\DICOMS\\100%\\3\\Br44f\\1x1\\vmi_67"
+    test_path = "V:\\Zhou_Zhongxing\\Zhou_ZX\\For_Jarod\\L067_FD_1_0_B30F_0001"  # Replace with actual path
     slices = []
     skipcount = 0
     for f in os.listdir(test_path):
