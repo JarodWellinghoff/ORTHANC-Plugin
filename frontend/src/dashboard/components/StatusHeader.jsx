@@ -13,7 +13,7 @@ const severityToColor = {
 };
 
 const StatusHeader = () => {
-  const { status, actions } = useDashboard();
+  const { status } = useDashboard();
   const chipColor = severityToColor[status.severity] ?? "default";
 
   return (

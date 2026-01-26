@@ -80,6 +80,7 @@ docker-compose ps
 - **OHIF DICOM Viewer**: http://localhost:8042/ohif
 - **MinIO Console**: http://localhost:9001 (minio/minio12345)
 - **PostgreSQL**: localhost:5433 (postgres/pgpassword)
+- **Redis Broker (Celery)**: localhost:6379
 
 ## 📖 Usage Guide
 

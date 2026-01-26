@@ -61,9 +61,9 @@ try:
         connect_timeout=5
     )
     conn.close()
-    print('✓ Database connection successful')
+    print('[SUCCESS] Database connection successful')
 except Exception as e:
-    print(f'✗ Database connection failed: {e}')
+    print(f'[ERROR] Database connection failed: {e}')
     exit(1)
 "
 }
@@ -117,9 +117,9 @@ try:
     schemas = [row[0] for row in cursor.fetchall()]
     
     if 'dicom' in schemas and 'analysis' in schemas:
-        print('✓ Required schemas (dicom, analysis) found')
+        print('[SUCCESS] Required schemas (dicom, analysis) found')
     else:
-        print(f'✗ Missing schemas. Found: {schemas}')
+        print(f'[ERROR] Missing schemas. Found: {schemas}')
         exit(1)
         
     # Check for key tables
@@ -140,16 +140,16 @@ try:
             )
         \"\"\")
         if cursor.fetchone()[0]:
-            print(f'✓ Table {schema}.{table} exists')
+            print(f'[SUCCESS] Table {schema}.{table} exists')
         else:
-            print(f'✗ Table {schema}.{table} missing')
+            print(f'[ERROR] Table {schema}.{table} missing')
             exit(1)
     
     conn.close()
-    print('✓ Database schema verification complete')
+    print('[SUCCESS] Database schema verification complete')
     
 except Exception as e:
-    print(f'✗ Schema check failed: {e}')
+    print(f'[ERROR] Schema check failed: {e}')
     exit(1)
 "
 }

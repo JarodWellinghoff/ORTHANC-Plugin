@@ -1,5 +1,5 @@
-import { alpha } from '@mui/material/styles';
-import { gray, orange } from '../themePrimitives';
+import { alpha } from "@mui/material/styles";
+import { gray, orange } from "../themePrimitives";
 
 export const feedbackCustomizations = {
   MuiAlert: {
@@ -9,10 +9,10 @@ export const feedbackCustomizations = {
         backgroundColor: orange[100],
         color: (theme.vars || theme).palette.text.primary,
         border: `1px solid ${alpha(orange[300], 0.5)}`,
-        '& .MuiAlert-icon': {
+        "& .MuiAlert-icon": {
           color: orange[500],
         },
-        ...theme.applyStyles('dark', {
+        ...theme.applyStyles("dark", {
           backgroundColor: `${alpha(orange[900], 0.5)}`,
           border: `1px solid ${alpha(orange[800], 0.5)}`,
         }),
@@ -22,10 +22,11 @@ export const feedbackCustomizations = {
   MuiDialog: {
     styleOverrides: {
       root: ({ theme }) => ({
-        '& .MuiDialog-paper': {
-          borderRadius: '10px',
-          border: '1px solid',
+        "& .MuiDialog-paper": {
+          borderRadius: "10px",
+          border: "1px solid",
           borderColor: (theme.vars || theme).palette.divider,
+          backgroundColor: (theme.vars || theme).palette.background.paper,
         },
       }),
     },
@@ -35,9 +36,9 @@ export const feedbackCustomizations = {
       root: ({ theme }) => ({
         height: 8,
         borderRadius: 8,
-        backgroundColor: gray[200],
-        ...theme.applyStyles('dark', {
-          backgroundColor: gray[800],
+        backgroundColor: (theme.vars || theme).palette.divider,
+        ...theme.applyStyles("dark", {
+          backgroundColor: (theme.vars || theme).palette.divider,
         }),
       }),
     },

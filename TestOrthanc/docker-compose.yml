@@ -1,0 +1,17 @@
+services:
+  test-orthanc:
+    image: jodogne/orthanc:1.12.9
+    container_name: test-orthanc
+    volumes:
+      - ./orthanc/orthanc.json:/etc/orthanc/orthanc.json
+      - D:/docker/test-orthanc-data:/var/lib/orthanc/db
+    ports:
+      - "8042:8042"
+      - "4343:4242"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sfu", "demo:demo", "http://localhost:8042/system"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

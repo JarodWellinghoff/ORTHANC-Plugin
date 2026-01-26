@@ -10,6 +10,15 @@ CREATE SEQUENCE analysis.results_id_seq
 	MAXVALUE 9223372036854775807
 	START 1
 	CACHE 1
+	NO CYCLE;
+-- DROP SEQUENCE analysis.results_id_seq1;
+
+CREATE SEQUENCE analysis.results_id_seq1
+	INCREMENT BY 1
+	MINVALUE 1
+	MAXVALUE 9223372036854775807
+	START 1
+	CACHE 1
 	NO CYCLE;-- analysis.results definition
 
 -- Drop table
@@ -40,6 +49,7 @@ CREATE TABLE analysis.results (
 	spatial_frequency _float8 NULL,
 	spatial_resolution float8 NULL,
 	ssde float8 NULL,
+	ssde_inc _float8 NULL,
 	CONSTRAINT results_pkey PRIMARY KEY (id),
 	CONSTRAINT results_series_id_fk_unique UNIQUE (series_id_fk)
 );

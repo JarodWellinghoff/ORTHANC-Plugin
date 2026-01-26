@@ -7,7 +7,6 @@
   "HttpPort": 8042,
   "Plugins": [
     "/usr/local/share/orthanc/plugins/libOrthancPython.so",
-    "/usr/local/share/orthanc/plugins/libOrthancOHIF.so",
     "/usr/local/share/orthanc/plugins/libOrthancDicomWeb.so",
     "/usr/local/share/orthanc/plugins/libOrthancPostgreSQLIndex.so",
     "/usr/local/share/orthanc/plugins/libOrthancPostgreSQLStorage.so"
@@ -25,20 +24,23 @@
     "IndexConnectionsCount": 5,
     "UseDynamicConnectionPool": true
   },
-  "OHIF": {
-    "DataSource": "dicom-web"
-  },
   "PythonScript": "/src/python/main.py",
   "PythonVerbose": true,
   "HttpVerbose": true,
-  "DicomCheckCalledAeTitle": false,
-  "DicomAlwaysAllowEcho": true,
-  "DicomAlwaysAllowStore": true,
-  "DicomAlwaysAllowFind": true,
-  "DicomAlwaysAllowMove": true,
-  "DicomServerEnabled": true,
   "DicomModalities": {
-    "SLICER": ["SLICER", "localhost", 11113]
+    "TEST": {
+      "AET": "ORTHANC",
+      "Port": 4343,
+      "Host": "host.docker.internal",
+      "Manufacturer": "Generic"
+    }
   },
-  "StableAge": 10
+  "StorageDirectory": "/var/lib/orthanc/db",
+  "StableAge": 10,
+  "UserContentType": {
+    "resultsJson": [1025, "application/json"],
+    "resultsCsvFull": [1026, "text/csv"],
+    "resultsCsvTrunc": [1027, "text/csv"],
+    "coronalPng": [1028, "image/png"]
+  }
 }

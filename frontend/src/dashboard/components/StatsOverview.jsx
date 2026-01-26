@@ -40,7 +40,7 @@ const StatsOverview = () => {
       value: stats.detectability,
     },
     { id: "noise", label: "Global Noise Results", value: stats.noise },
-    { id: "errors", label: "Errors", value: stats.errors },
+    { id: "errors", label: "No Data", value: stats.errors },
   ];
 
   return (
@@ -51,7 +51,7 @@ const StatsOverview = () => {
         justifyContent: "center",
       }}>
       {cards.map((stat) => (
-        <Grid item key={stat.id} xs={12} sm={6} lg={3}>
+        <Grid item key={stat.id} size={{ xs: 12, md: 6, lg: 3 }}>
           <StatCard label={stat.label} value={stat.value} />
         </Grid>
       ))}

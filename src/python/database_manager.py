@@ -362,7 +362,7 @@ class CHODatabaseManager:
                 print(f"  Orphaned studies: {orphaned_studies}")
                 
                 if orphaned_results + orphaned_series + orphaned_studies == 0:
-                    print("✓ No data integrity issues found")
+                    print("[SUCCESS] No data integrity issues found")
                 else:
                     print("⚠ Data integrity issues detected")
                 

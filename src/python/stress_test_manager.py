@@ -296,7 +296,7 @@ class DicomStressTest:
             for i, future in enumerate(as_completed(futures), 1):
                 try:
                     success, message = future.result()
-                    status = "✓" if success else "✗"
+                    status = "[SUCCESS]" if success else "[ERROR]"
                     print(f"[{i:3d}/{num_series}] {status} {message}")
                     
                     # Periodic cleanup
@@ -304,7 +304,7 @@ class DicomStressTest:
                         self.cleanup_old_series(max_series_on_disk)
                         
                 except Exception as e:
-                    print(f"[{i:3d}/{num_series}] ✗ Exception: {e}")
+                    print(f"[{i:3d}/{num_series}] [ERROR] Exception: {e}")
                     with self.lock:
                         self.stats['failed'] += 1
 
@@ -338,14 +338,14 @@ class DicomStressTest:
             response = requests.get(f"{self.orthanc_url}/system", auth=self.auth, timeout=10)
             if response.status_code == 200:
                 system_info = response.json()
-                print(f"✓ Connected to Orthanc: {system_info.get('Name', 'Unknown')}")
+                print(f"[SUCCESS] Connected to Orthanc: {system_info.get('Name', 'Unknown')}")
                 print(f"  Version: {system_info.get('Version', 'Unknown')}")
                 return True
             else:
-                print(f"✗ Orthanc connection failed: HTTP {response.status_code}")
+                print(f"[ERROR] Orthanc connection failed: HTTP {response.status_code}")
                 return False
         except Exception as e:
-            print(f"✗ Orthanc connection failed: {e}")
+            print(f"[ERROR] Orthanc connection failed: {e}")
             return False
 
 

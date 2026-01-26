@@ -1,19 +1,28 @@
-import * as React from 'react';
-import { styled } from '@mui/material/styles';
-import Divider, { dividerClasses } from '@mui/material/Divider';
-import Menu from '@mui/material/Menu';
-import MuiMenuItem from '@mui/material/MenuItem';
-import { paperClasses } from '@mui/material/Paper';
-import { listClasses } from '@mui/material/List';
-import ListItemText from '@mui/material/ListItemText';
-import ListItemIcon, { listItemIconClasses } from '@mui/material/ListItemIcon';
-import LogoutRoundedIcon from '@mui/icons-material/LogoutRounded';
-import MoreVertRoundedIcon from '@mui/icons-material/MoreVertRounded';
-import MenuButton from './MenuButton';
+import * as React from "react";
+import { styled } from "@mui/material/styles";
+import Divider from "@mui/material/Divider";
+import Menu from "@mui/material/Menu";
+import MuiMenuItem from "@mui/material/MenuItem";
+import ListItemText from "@mui/material/ListItemText";
+import ListItemIcon from "@mui/material/ListItemIcon";
+import LogoutRoundedIcon from "@mui/icons-material/LogoutRounded";
+import MenuButton from "./MenuButton";
+import Avatar from "@mui/material/Avatar";
+import HelpRoundedIcon from "@mui/icons-material/HelpRounded";
+import SettingsRoundedIcon from "@mui/icons-material/SettingsRounded";
+import InfoRoundedIcon from "@mui/icons-material/InfoRounded";
 
 const MenuItem = styled(MuiMenuItem)({
-  margin: '2px 0',
+  margin: "2px 0",
 });
+
+const topListItems = [
+  { text: "Profile", icon: InfoRoundedIcon },
+  { text: "Settings", icon: SettingsRoundedIcon },
+  { text: "Feedback", icon: HelpRoundedIcon },
+];
+
+const bottomListItems = [{ text: "Logout", icon: LogoutRoundedIcon }];
 
 export default function OptionsMenu() {
   const [anchorEl, setAnchorEl] = React.useState(null);
@@ -25,55 +34,56 @@ export default function OptionsMenu() {
     setAnchorEl(null);
   };
   return (
-    <React.Fragment>
+    <>
       <MenuButton
-        aria-label="Open menu"
+        aria-label='Open menu'
         onClick={handleClick}
-        sx={{ borderColor: 'transparent' }}
-      >
-        <MoreVertRoundedIcon />
+        sx={{ border: "none" }}>
+        <Avatar
+          sizes='small'
+          alt='John Doe'
+          src='/static/images/avatar/7.jpg'
+          sx={{ width: 36, height: 36 }}
+        />
       </MenuButton>
       <Menu
         anchorEl={anchorEl}
-        id="menu"
+        id='menu'
         open={open}
         onClose={handleClose}
         onClick={handleClose}
-        transformOrigin={{ horizontal: 'right', vertical: 'top' }}
-        anchorOrigin={{ horizontal: 'right', vertical: 'bottom' }}
-        sx={{
-          [`& .${listClasses.root}`]: {
-            padding: '4px',
-          },
-          [`& .${paperClasses.root}`]: {
-            padding: 0,
-          },
-          [`& .${dividerClasses.root}`]: {
-            margin: '4px -4px',
-          },
+        anchorOrigin={{
+          vertical: "top",
+          horizontal: "right",
         }}
-      >
-        <MenuItem onClick={handleClose}>Profile</MenuItem>
-        <MenuItem onClick={handleClose}>My account</MenuItem>
+        transformOrigin={{
+          vertical: "bottom",
+          horizontal: "left",
+        }}>
+        {topListItems.map((item) => {
+          const Icon = item.icon;
+          return (
+            <MenuItem onClick={handleClose}>
+              <ListItemIcon>
+                <Icon fontSize='small' />
+              </ListItemIcon>
+              <ListItemText>{item.text}</ListItemText>
+            </MenuItem>
+          );
+        })}
         <Divider />
-        <MenuItem onClick={handleClose}>Add another account</MenuItem>
-        <MenuItem onClick={handleClose}>Settings</MenuItem>
-        <Divider />
-        <MenuItem
-          onClick={handleClose}
-          sx={{
-            [`& .${listItemIconClasses.root}`]: {
-              ml: 'auto',
-              minWidth: 0,
-            },
-          }}
-        >
-          <ListItemText>Logout</ListItemText>
-          <ListItemIcon>
-            <LogoutRoundedIcon fontSize="small" />
-          </ListItemIcon>
-        </MenuItem>
+        {bottomListItems.map((item) => {
+          const Icon = item.icon;
+          return (
+            <MenuItem onClick={handleClose}>
+              <ListItemIcon>
+                <Icon fontSize='small' />
+              </ListItemIcon>
+              <ListItemText>{item.text}</ListItemText>
+            </MenuItem>
+          );
+        })}
       </Menu>
-    </React.Fragment>
+    </>
   );
 }

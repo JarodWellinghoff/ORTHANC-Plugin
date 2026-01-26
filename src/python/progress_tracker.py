@@ -6,9 +6,12 @@ This module provides a singleton ProgressTracker class to track and report
 calculation progress that can be accessed from API endpoints.
 """
 
+import copy
 import time
 import threading
 from collections import deque
+
+from sse_manager import sse_manager
 
 class ProgressTracker:
     """Singleton class to track calculation progress"""
@@ -30,6 +33,27 @@ class ProgressTracker:
         self._history = deque(maxlen=100)
 
         print("Progress tracker initialized")
+
+    def _broadcast_event(self, event_type, calc=None, series_id=None, extra=None):
+        """Send structured progress updates to SSE subscribers."""
+        if calc is not None:
+            payload = copy.deepcopy(calc)
+        else:
+            payload = {}
+
+        target_series = series_id or payload.get('series_id')
+        if target_series is not None:
+            payload['series_id'] = target_series
+
+        payload['eventType'] = event_type
+
+        if extra:
+            payload.update(extra)
+
+        try:
+            sse_manager.broadcast('cho-calculation', payload)
+        except Exception as exc:
+            print(f"Failed to broadcast SSE event '{event_type}' for {target_series}: {exc}")
         
     def start_calculation(self, series_id, metadata=None):
         """Start tracking a new calculation"""
@@ -54,6 +78,7 @@ class ProgressTracker:
             self._calculations[series_id] = calculation_data
             
             print(f"Started tracking calculation for series {series_id}")
+            self._broadcast_event('start', calculation_data)
             
             return self._calculations[series_id]
     
@@ -90,6 +115,7 @@ class ProgressTracker:
                             calc[key] = value
             
             print(f"Updated progress for {series_id}: {progress}%, {message}")
+            self._broadcast_event('progress', calc)
             
             return True
     
@@ -125,6 +151,7 @@ class ProgressTracker:
             print(f"Completed calculation for series {series_id}")
             # Delete the series DICOMS
             # orthanc.RestApiDelete(f'/series/{series_id}')
+            self._broadcast_event('completed', calc)
             
             return True
     
@@ -154,6 +181,7 @@ class ProgressTracker:
             self._history.append(calc.copy())
             
             print(f"Failed calculation for series {series_id}: {error_message}")
+            self._broadcast_event('failed', calc)
             
             return True
     
@@ -183,19 +211,28 @@ class ProgressTracker:
 
     def cleanup_history(self, series_id):
         """Remove old entries from the calculation history"""
+        removed = False
         with self._lock:
-            self._history = [calc for calc in self._history if calc['series_id'] != series_id]
+            max_len = self._history.maxlen
+            filtered = [calc for calc in self._history if calc['series_id'] != series_id]
+            removed = len(filtered) != len(self._history)
+            self._history = deque(filtered, maxlen=max_len)
+
+        if removed:
+            self._broadcast_event('history-cleanup', series_id=series_id, extra={'status': 'removed'})
 
 
     def cleanup_calculation(self, series_id):
         """Remove a calculation from tracking (called after a delay)"""
         with self._lock:
-            if series_id in self._calculations:
-                del self._calculations[series_id]
-                print(f"Cleaned up calculation for series {series_id}")
-                
-                return True
-            return False
+            calc = self._calculations.pop(series_id, None)
+
+        if calc is not None:
+            print(f"Cleaned up calculation for series {series_id}")
+            self._broadcast_event('cleanup', calc, series_id=series_id, extra={'status': 'removed'})
+            return True
+
+        return False
     
     def cancel_calculation(self, series_id, reason="User cancelled"):
         """Cancel a running calculation"""
@@ -226,6 +263,7 @@ class ProgressTracker:
             self._history.append(calc.copy())
             
             print(f"Cancelled calculation for series {series_id}: {reason}")
+            self._broadcast_event('cancelled', calc)
             
             return True
     

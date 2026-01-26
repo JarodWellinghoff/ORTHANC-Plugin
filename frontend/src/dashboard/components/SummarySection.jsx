@@ -1,38 +1,14 @@
 import * as React from "react";
-import Chip from "@mui/material/Chip";
+import Box from "@mui/material/Box";
 import IconButton from "@mui/material/IconButton";
 import Paper from "@mui/material/Paper";
-import Table from "@mui/material/Table";
-import TableBody from "@mui/material/TableBody";
-import TableCell from "@mui/material/TableCell";
-import TableContainer from "@mui/material/TableContainer";
-import TableHead from "@mui/material/TableHead";
-import TablePagination from "@mui/material/TablePagination";
-import TableRow from "@mui/material/TableRow";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
-import ScienceIcon from "@mui/icons-material/Science";
-import VisibilityIcon from "@mui/icons-material/Visibility";
 import DeleteIcon from "@mui/icons-material/Delete";
-import InfoIcon from "@mui/icons-material/Info";
+import { DataGrid } from "@mui/x-data-grid";
+import { useNavigate } from "react-router-dom";
 
 import { useDashboard } from "../context/DashboardContext";
-
-const statusLabelMap = {
-  full: "Full Analysis",
-  partial: "Global Noise",
-  headers_only: "Headers Only",
-  error: "Error",
-  none: "No Analysis",
-};
-
-const statusColorMap = {
-  full: "success",
-  partial: "warning",
-  headers_only: "info",
-  error: "error",
-  none: "default",
-};
 
 const formatDateTime = (value) => {
   if (!value) return "N/A";
@@ -40,161 +16,185 @@ const formatDateTime = (value) => {
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
 };
 
+const NoRowsOverlay = () => (
+  <Box sx={{ p: 2, textAlign: "center" }}>
+    <Typography variant='body2' color='text.secondary'>
+      No series found matching the filters.
+    </Typography>
+  </Box>
+);
+
+const LoadingOverlay = () => (
+  <Box sx={{ p: 2, textAlign: "center" }}>
+    <Typography variant='body2' color='text.secondary'>
+      Loading series summary...
+    </Typography>
+  </Box>
+);
+
 const SummarySection = () => {
   const { summary, actions } = useDashboard();
-  const availableLookup = React.useMemo(
-    () => new Set(summary.availableSeries ?? []),
-    [summary.availableSeries]
-  );
+  const navigate = useNavigate();
   const { items, loading, pagination } = summary;
 
-  const handleChangePage = (_event, newPage) => {
-    actions.changePage(newPage + 1);
-  };
+  const openSeriesDetails = React.useCallback(
+    (series) => {
+      if (!series) return;
+      actions.openChoModal(series);
+      const targetId =
+        series.series_id ??
+        series.series_uuid ??
+        series.series_instance_uid ??
+        series.seriesId ??
+        series.seriesUuid ??
+        null;
+      if (targetId !== null && targetId !== undefined && targetId !== "") {
+        navigate(`/results/${encodeURIComponent(String(targetId))}`);
+      }
+    },
+    [actions, navigate]
+  );
 
-  const handleChangeRowsPerPage = (event) => {
-    actions.changePageSize(parseInt(event.target.value, 10));
-  };
+  const paginationModel = React.useMemo(
+    () => ({
+      page: Math.max(0, (pagination.page ?? 1) - 1),
+      pageSize: pagination.limit ?? 25,
+    }),
+    [pagination.page, pagination.limit]
+  );
 
-  const rows = loading ? [] : items;
+  const handlePaginationModelChange = React.useCallback(
+    (model) => {
+      if (model.page !== paginationModel.page) {
+        actions.changePage(model.page + 1);
+      }
+      if (model.pageSize !== paginationModel.pageSize) {
+        actions.changePageSize(model.pageSize);
+      }
+    },
+    [actions, paginationModel.page, paginationModel.pageSize]
+  );
+
+  const columns = React.useMemo(
+    () => [
+      {
+        field: "patient_name",
+        headerName: "Patient",
+        flex: 1,
+        minWidth: 180,
+        valueFormatter: (value) => value ?? "N/A",
+      },
+      {
+        field: "institution_name",
+        headerName: "Institute",
+        flex: 1,
+        minWidth: 180,
+        valueFormatter: (value) => value ?? "N/A",
+      },
+      {
+        field: "scanner_model",
+        headerName: "Scanner Model",
+        flex: 1,
+        minWidth: 180,
+        valueFormatter: (value) => value ?? "N/A",
+      },
+      {
+        field: "station_name",
+        headerName: "Station",
+        flex: 1,
+        minWidth: 160,
+        valueFormatter: (value) => value ?? "N/A",
+      },
+      {
+        field: "protocol_name",
+        headerName: "Protocol",
+        flex: 1,
+        minWidth: 180,
+        valueFormatter: (value) => value ?? "N/A",
+      },
+      {
+        field: "latest_analysis_date",
+        headerName: "Last Analysis",
+        flex: 1,
+        minWidth: 200,
+        valueFormatter: (value) => formatDateTime(value),
+      },
+      {
+        field: "actions",
+        headerName: "Actions",
+        sortable: false,
+        filterable: false,
+        disableColumnMenu: true,
+        width: 100,
+        align: "center",
+        renderCell: (params) => (
+          <Tooltip title='Delete'>
+            <span>
+              <IconButton
+                size='small'
+                onClick={(event) => {
+                  event.stopPropagation();
+                  actions.openDeleteDialog(
+                    params.row.series_id,
+                    null,
+                    params.row.patient_name
+                  );
+                }}>
+                <DeleteIcon fontSize='small' />
+              </IconButton>
+            </span>
+          </Tooltip>
+        ),
+      },
+    ],
+    [actions]
+  );
+
+  const getRowId = React.useCallback((row) => {
+    const baseId =
+      row.series_id ??
+      row.series_uuid ??
+      row.series_instance_uid ??
+      row.seriesId ??
+      row.seriesUuid ??
+      row.study_id ??
+      null;
+    if (baseId !== null && baseId !== undefined && baseId !== "") {
+      return String(baseId);
+    }
+    return `${row.patient_name ?? "patient"}-${
+      row.latest_analysis_date ?? "na"
+    }`;
+  }, []);
 
   return (
-    <Paper variant='outlined'>
-      <TableContainer>
-        <Table size='small'>
-          <TableHead>
-            <TableRow>
-              <TableCell>Patient</TableCell>
-              <TableCell>Institute</TableCell>
-              <TableCell>Scanner Model</TableCell>
-              <TableCell>Station</TableCell>
-              <TableCell>Protocol</TableCell>
-              {/* <TableCell>Status</TableCell> */}
-              <TableCell>Last Analysis</TableCell>
-              <TableCell align='center'>Actions</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {loading ? (
-              <TableRow>
-                <TableCell colSpan={8} align='center'>
-                  <Typography variant='body2' color='text.secondary'>
-                    Loading series summary...
-                  </Typography>
-                </TableCell>
-              </TableRow>
-            ) : rows.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={8} align='center'>
-                  <Typography variant='body2' color='text.secondary'>
-                    No series found matching the filters.
-                  </Typography>
-                </TableCell>
-              </TableRow>
-            ) : (
-              rows.map((row) => {
-                const statusKey = row.test_status ?? "none";
-                const chipColor = statusColorMap[statusKey] ?? "default";
-                const chipLabel = statusLabelMap[statusKey] ?? "No Analysis";
-                const hasSeries =
-                  row.series_uuid && availableLookup.has(row.series_uuid);
-
-                return (
-                  <TableRow
-                    hover
-                    key={`${row.series_id}-${row.test_status ?? "na"}`}
-                    onClick={() => actions.openDetails(row.series_id)}
-                    sx={{ cursor: "pointer" }}>
-                    <TableCell>{row.patient_name ?? "N/A"}</TableCell>
-                    <TableCell>{row.institution_name ?? "N/A"}</TableCell>
-                    <TableCell>{row.scanner_model ?? "N/A"}</TableCell>
-                    <TableCell>{row.station_name ?? "N/A"}</TableCell>
-                    <TableCell>{row.protocol_name ?? "N/A"}</TableCell>
-                    {/* <TableCell>
-                      <Chip size="small" label={chipLabel} color={chipColor} variant={chipColor === "default" ? "outlined" : "filled"} />
-                    </TableCell> */}
-                    <TableCell>
-                      {formatDateTime(row.latest_analysis_date)}
-                    </TableCell>
-                    <TableCell
-                      align='center'
-                      onClick={(event) => event.stopPropagation()}>
-                      {/* <Tooltip title='View Details'>
-                        <IconButton
-                          size='small'
-                          onClick={() => actions.openDetails(row.series_id)}>
-                          <InfoIcon fontSize='small' />
-                        </IconButton>
-                      </Tooltip> */}
-                      <Tooltip
-                        title={
-                          hasSeries
-                            ? "Run CHO Analysis"
-                            : "Series not found in DICOM database"
-                        }>
-                        <span>
-                          <IconButton
-                            size='small'
-                            onClick={() => actions.openChoModal(row)}
-                            disabled={!hasSeries}>
-                            <ScienceIcon fontSize='small' />
-                          </IconButton>
-                        </span>
-                      </Tooltip>
-                      <Tooltip
-                        title={
-                          hasSeries
-                            ? "Open Viewer"
-                            : "Series not found in DICOM database"
-                        }>
-                        <span>
-                          <IconButton
-                            size='small'
-                            onClick={() =>
-                              window.open(
-                                `/ohif/viewer?StudyInstanceUIDs=${encodeURIComponent(
-                                  row.study_id
-                                )}`,
-                                "_blank",
-                                "noopener"
-                              )
-                            }
-                            disabled={!hasSeries}>
-                            <VisibilityIcon fontSize='small' />
-                          </IconButton>
-                        </span>
-                      </Tooltip>
-                      <Tooltip title='Delete'>
-                        <IconButton
-                          size='small'
-                          onClick={() =>
-                            actions.openDeleteDialog(
-                              row.series_id,
-                              null,
-                              row.patient_name
-                            )
-                          }>
-                          <DeleteIcon fontSize='small' />
-                        </IconButton>
-                      </Tooltip>
-                    </TableCell>
-                  </TableRow>
-                );
-              })
-            )}
-          </TableBody>
-        </Table>
-      </TableContainer>
-      <TablePagination
-        component='div'
-        count={pagination.total}
-        page={Math.max(0, pagination.page - 1)}
-        onPageChange={handleChangePage}
-        rowsPerPage={pagination.limit}
-        onRowsPerPageChange={handleChangeRowsPerPage}
-        rowsPerPageOptions={[10, 25, 50, 100]}
-      />
-    </Paper>
+    <DataGrid
+      autoHeight
+      rows={loading ? [] : items ?? []}
+      columns={columns}
+      getRowId={getRowId}
+      rowCount={pagination.total ?? items?.length ?? 0}
+      paginationMode='server'
+      paginationModel={paginationModel}
+      onPaginationModelChange={handlePaginationModelChange}
+      loading={loading}
+      disableRowSelectionOnClick
+      disableColumnSelector
+      disableDensitySelector
+      pageSizeOptions={[10, 25, 50, 100]}
+      initialState={{
+        pagination: { paginationModel: { pageSize: 25 } },
+        sorting: {
+          sortModel: [{ field: "latest_analysis_date", sort: "desc" }],
+        },
+      }}
+      onRowClick={(params) => openSeriesDetails(params.row)}
+      showToolbar
+      slots={{
+        noRowsOverlay: NoRowsOverlay,
+        loadingOverlay: LoadingOverlay,
+      }}
+    />
   );
 };
 

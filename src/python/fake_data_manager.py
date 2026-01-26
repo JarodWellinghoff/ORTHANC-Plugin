@@ -413,14 +413,14 @@ class CHOFakeDataGenerator:
             try:
                 fake_data = self.generate_fake_result(is_full_analysis)
                 if self.save_fake_result(fake_data):
-                    print("✓")
+                    print("[SUCCESS]")
                     successful += 1
                 else:
-                    print("✗ (save failed)")
+                    print("[ERROR] (save failed)")
                     failed += 1
             except Exception as e:
                 import traceback
-                print(f"✗ (error: {str(e)})")
+                print(f"[ERROR] (error: {str(e)})")
                 traceback.print_exc()
                 failed += 1
         

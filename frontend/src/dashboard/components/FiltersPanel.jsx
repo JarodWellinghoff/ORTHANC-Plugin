@@ -63,6 +63,7 @@ const FiltersPanel = () => {
   }, [filters]);
 
   const handleChange = (event) => {
+    console.debug(event);
     const { name, value } = event.target;
     updateFilter(name, value);
   };
@@ -191,6 +192,7 @@ const FiltersPanel = () => {
                 <InputLabel id='institute-label'>Institute</InputLabel>
                 <Select
                   labelId='institute-label'
+                  name='institute'
                   value={filters.institute}
                   onChange={handleChange}
                   fullWidth>
@@ -205,6 +207,7 @@ const FiltersPanel = () => {
                 <InputLabel id='scannerStation-label'>Scanner Name</InputLabel>
                 <Select
                   labelId='scannerStation-label'
+                  name='scannerStation'
                   value={filters.scannerStation}
                   onChange={handleChange}
                   fullWidth>
@@ -219,6 +222,7 @@ const FiltersPanel = () => {
                 <InputLabel id='protocolName-label'>Protocol Name</InputLabel>
                 <Select
                   labelId='protocolName-label'
+                  name='protocolName'
                   value={filters.protocolName}
                   onChange={handleChange}
                   fullWidth>
@@ -233,6 +237,7 @@ const FiltersPanel = () => {
                 <InputLabel id='scannerModel-label'>Scanner Model</InputLabel>
                 <Select
                   labelId='scannerModel-label'
+                  name='scannerModel'
                   value={filters.scannerModel}
                   onChange={handleChange}
                   fullWidth>
@@ -250,6 +255,7 @@ const FiltersPanel = () => {
                   sx={{ width: "100%" }}>
                   <DatePicker
                     label='Exam Date From'
+                    name='examDateFrom'
                     value={examDateFromValue}
                     onChange={handleDateChange("examDateFrom")}
                     format='YYYY-MM-DD'
@@ -264,6 +270,7 @@ const FiltersPanel = () => {
                   />
                   <DatePicker
                     label='Exam Date To'
+                    name='examDateTo'
                     value={examDateToValue}
                     onChange={handleDateChange("examDateTo")}
                     format='YYYY-MM-DD'
@@ -278,7 +285,7 @@ const FiltersPanel = () => {
                   />
                 </Stack>
               </LocalizationProvider>
-              <Grid item xs={12} md={6}>
+              <Grid item size={{ xs: 12, md: 6 }}>
                 <Stack
                   direction={{ xs: "column", sm: "row" }}
                   spacing={2}
@@ -287,6 +294,7 @@ const FiltersPanel = () => {
                     <InputLabel id='ageMin-label'>Age Min</InputLabel>
                     <TextField
                       labelId='ageMin-label'
+                      name='ageMin'
                       type='number'
                       value={filters.ageMin}
                       onChange={handleChange}
@@ -307,6 +315,7 @@ const FiltersPanel = () => {
                     <InputLabel id='ageMax-label'>Age Max</InputLabel>
                     <TextField
                       labelId='ageMax-label'
+                      name='ageMax'
                       type='number'
                       value={filters.ageMax}
                       onChange={handleChange}

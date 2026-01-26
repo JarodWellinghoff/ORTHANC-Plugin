@@ -3,12 +3,20 @@ import * as React from "react";
 import { alpha } from "@mui/material/styles";
 import CssBaseline from "@mui/material/CssBaseline";
 import Box from "@mui/material/Box";
+import Container from "@mui/material/Container";
 import Stack from "@mui/material/Stack";
+import { Navigate, Route, Routes } from "react-router-dom";
 
 import AppNavbar from "./components/AppNavbar";
 import SideMenu from "./components/SideMenu";
 import DashboardContent from "./components/DashboardContent";
+import ChoAnalysisRoute from "./components/ChoAnalysisRoute";
+import ModalsHost from "./components/ModalsHost";
 import AppTheme from "../shared-theme/AppTheme.jsx";
+import BulkTestsPage from "./components/BulkTestsPage.jsx";
+import DicomPullsPage from "./components/DicomPullsPage.jsx";
+import DicomViewerPage from "./components/DicomViewerPage.jsx";
+import DicomViewerRoute from "./components/DicomViewerRoute.jsx";
 import {
   chartsCustomizations,
   dataGridCustomizations,
@@ -50,8 +58,30 @@ export default function Dashboard(props) {
                 pb: 5,
                 mt: { xs: 8, md: 0 },
               }}>
-              <StatusHeader />
-              <DashboardContent />
+              {/* <StatusHeader /> */}
+              <Container
+                maxWidth='xl'
+                sx={{
+                  py: 4,
+                  width: "100%",
+                }}>
+                <Routes>
+                  <Route path='/' element={<DashboardContent />} />
+                  <Route
+                    path='/results/:seriesId'
+                    element={<ChoAnalysisRoute />}
+                  />
+                  <Route path='/dicom-pulls' element={<DicomPullsPage />} />
+                  <Route path='/bulk-tests' element={<BulkTestsPage />} />
+                  <Route path='/dicom-viewer' element={<DicomViewerPage />} />
+                  <Route
+                    path='/dicom-viewer/:seriesId'
+                    element={<DicomViewerRoute />}
+                  />
+                  <Route path='*' element={<Navigate to='/' replace />} />
+                </Routes>
+              </Container>
+              <ModalsHost />
             </Stack>
           </DashboardProvider>
         </Box>

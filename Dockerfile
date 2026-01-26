@@ -1,5 +1,5 @@
 # orthanc/Dockerfile.dev
-FROM jodogne/orthanc-python
+FROM jodogne/orthanc-python:1.12.9
 
 USER root
 

@@ -141,7 +141,10 @@ def apply_custom_parameters_to_analysis(config, custom_params):
         'windowLength': 'window_length_cm',
         'stepSize': 'step_size_cm',
         'channelType': 'channel_type',
-        'lesionSet': 'lesion_configuration'
+        'lesionSet': 'lesion_configuration',
+        'spatialResolution': 'spatial_resolution',
+        'mtf50': 'mtf50',
+        'mtf10': 'mtf10'
     }
     
     # Apply the mappings
@@ -151,29 +154,6 @@ def apply_custom_parameters_to_analysis(config, custom_params):
     
     return config
 
-def get_lesion_configuration(lesion_set):
-    """
-    Get lesion configuration based on the selected set
-    """
-    lesion_configs = {
-        'standard': {
-            'contrasts': [-30, -30, -10, -30, -50],
-            'sizes': [3, 9, 6, 6, 6],
-            'roi_sizes': [21, 29, 25, 25, 25]
-        },
-        'low-contrast': {
-            'contrasts': [-10, -15, -20],
-            'sizes': [6, 6, 6],
-            'roi_sizes': [25, 25, 25]
-        },
-        'high-contrast': {
-            'contrasts': [-50, -75, -100],
-            'sizes': [6, 6, 6],
-            'roi_sizes': [25, 25, 25]
-        }
-    }
-    
-    return lesion_configs.get(lesion_set, lesion_configs['standard'])
 
 def get_channel_configuration(channel_type):
     """

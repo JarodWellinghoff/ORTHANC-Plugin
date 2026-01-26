@@ -23,28 +23,28 @@ const defaultFilters = {
 };
 
 const defaultChoParams = {
-  testType: "global",
-  resamples: 500,
-  internalNoise: 2.25,
-  resamplingMethod: "Bootstrap",
-  roiSize: 6,
-  thresholdLow: 0,
-  thresholdHigh: 150,
-  windowLength: 15,
-  stepSize: 5,
-  channelType: "Gabor",
+  testType: "full",
   lesionSet: "standard",
+  lesionHUs: {
+    standard: [-10, -30, -50],
+    "low-contrast": [-5, -15, -25],
+    "high-contrast": [-20, -60, -100],
+  },
+  spatialResolution: "auto",
+  mtf50: 0.434,
+  mtf10: null,
 };
 
 const createInitialChoState = () => ({
   open: false,
   seriesUuid: null,
+  seriesId: null,
   seriesSummary: null,
   stage: "config",
   params: { ...defaultChoParams },
   progress: { value: 0, message: "", stage: "initialization" },
   results: null,
-  saving: false,
+  storedResults: { loading: false, data: null, error: null },
   pollError: null,
 });
 
@@ -53,6 +53,7 @@ const fetchJson = async (url, options) => {
     `${import.meta.env.VITE_API_URL}${url}`,
     options
   );
+  if (response.status === 204) return null;
   if (!response.ok) {
     const text = await response.text();
     throw new Error(text || response.statusText || "Request failed");
@@ -77,19 +78,88 @@ const toSearchParams = (params) => {
 const serializeChoPayload = (seriesUuid, params) => ({
   series_uuid: seriesUuid,
   testType: params.testType,
-  resamples: Number(params.resamples) || 0,
-  internalNoise: Number(params.internalNoise) || 0,
-  resamplingMethod: params.resamplingMethod,
-  roiSize: Number(params.roiSize) || 0,
+  resamples: Number(params.resamples) || 500,
+  internalNoise: Number(params.internalNoise) || 2.25,
+  resamplingMethod: params.resamplingMethod || "Bootstrap",
+  roiSize: Number(params.roiSize) || 6,
   thresholdLow: Number(params.thresholdLow) || 0,
-  thresholdHigh: Number(params.thresholdHigh) || 0,
-  windowLength: Number(params.windowLength) || 0,
-  stepSize: Number(params.stepSize) || 0,
-  channelType: params.channelType,
-  lesionSet: params.lesionSet,
-  saveResults: false,
+  thresholdHigh: Number(params.thresholdHigh) || 150,
+  windowLength: Number(params.windowLength) || 15,
+  stepSize: Number(params.stepSize) || 5,
+  channelType: params.channelType || "Gabor",
+  lesionSet: params.lesionSet || "standard",
+  saveResults:
+    typeof params.saveResults === "boolean" ? params.saveResults : true,
+  spatialResolution: params.spatialResolution || "auto",
+  mtf50: params.mtf50 ? Number(params.mtf50) : null,
+  mtf10: params.mtf10 ? Number(params.mtf10) : null,
 });
 
+const deriveSeriesSummary = (data, fallback = null) => {
+  if (!data || typeof data !== "object") {
+    return fallback ?? null;
+  }
+
+  const patient = data.patient ?? {};
+  const series = data.series ?? {};
+  const scanner = data.scanner ?? {};
+  const study = data.study ?? {};
+
+  const summary = {
+    patient_name:
+      patient.patient_name ??
+      data.patient_name ??
+      fallback?.patient_name ??
+      null,
+    protocol_name:
+      series.protocol_name ??
+      data.protocol_name ??
+      fallback?.protocol_name ??
+      null,
+    institution_name:
+      scanner.institution_name ??
+      study.institution_name ??
+      data.institution_name ??
+      fallback?.institution_name ??
+      null,
+    scanner_model:
+      scanner.model_name ??
+      scanner.scanner_model ??
+      data.scanner_model ??
+      fallback?.scanner_model ??
+      null,
+    station_name:
+      scanner.station_name ??
+      data.station_name ??
+      fallback?.station_name ??
+      null,
+    series_uuid:
+      series.series_instance_uid ??
+      series.series_uuid ??
+      data.series_uuid ??
+      data.series_instance_uid ??
+      fallback?.series_uuid ??
+      null,
+    series_id:
+      data.series_id ?? series.series_id ?? fallback?.series_id ?? null,
+    study_id:
+      study.study_instance_uid ??
+      study.study_id ??
+      data.study_id ??
+      fallback?.study_id ??
+      null,
+  };
+
+  const hasValue = Object.values(summary).some(
+    (value) => value !== null && value !== undefined && value !== ""
+  );
+
+  if (!hasValue) {
+    return fallback ?? null;
+  }
+
+  return summary;
+};
 export const DashboardProvider = ({ children }) => {
   const [status, setStatusState] = useState({ message: "", severity: "idle" });
   const [filters, setFilters] = useState(defaultFilters);
@@ -101,7 +171,7 @@ export const DashboardProvider = ({ children }) => {
     date_range: null,
     age_range: null,
   });
-  const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(true);
+  const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
   const [stats, setStats] = useState({
     total: 0,
     detectability: 0,
@@ -117,12 +187,6 @@ export const DashboardProvider = ({ children }) => {
     pages: 1,
   });
   const [availableSeries, setAvailableSeries] = useState([]);
-  const [detailsModal, setDetailsModal] = useState({
-    open: false,
-    loading: false,
-    seriesId: null,
-    data: null,
-  });
   const [choModal, setChoModal] = useState(createInitialChoState);
   const [deleteDialog, setDeleteDialog] = useState({
     open: false,
@@ -131,9 +195,12 @@ export const DashboardProvider = ({ children }) => {
     patientName: null,
     loading: false,
   });
+  const [calculationStates, setCalculationStates] = useState({});
 
   const pollingRef = useRef(null);
   const mountedRef = useRef(true);
+  const sseRef = useRef(null);
+  const sseReconnectRef = useRef(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -141,6 +208,14 @@ export const DashboardProvider = ({ children }) => {
       mountedRef.current = false;
       if (pollingRef.current) {
         clearInterval(pollingRef.current);
+      }
+      if (sseRef.current) {
+        sseRef.current.close();
+        sseRef.current = null;
+      }
+      if (sseReconnectRef.current) {
+        clearTimeout(sseReconnectRef.current);
+        sseReconnectRef.current = null;
       }
     };
   }, []);
@@ -216,7 +291,6 @@ export const DashboardProvider = ({ children }) => {
             fetchJson(`/cho-results?${search.toString()}`),
             fetchJson("/series/"),
           ]);
-
         console.debug("Stats Response:", statsResponse);
         console.debug("Summary Response:", summaryResponse);
         console.debug("Orthanc Series:", orthancSeries);
@@ -299,36 +373,6 @@ export const DashboardProvider = ({ children }) => {
     [loadSummary]
   );
 
-  const openDetails = useCallback(
-    async (seriesId) => {
-      setDetailsModal({ open: true, loading: true, seriesId, data: null });
-      setStatus("Loading series details...", "loading");
-      try {
-        const data = await fetchJson(`/cho-results/${seriesId}`);
-        if (mountedRef.current) {
-          setDetailsModal({ open: true, loading: false, seriesId, data });
-          setStatus("", "idle");
-        }
-      } catch (error) {
-        console.error("Failed to load series details", error);
-        if (mountedRef.current) {
-          setDetailsModal({ open: true, loading: false, seriesId, data: null });
-          setStatus(`Error loading details: ${error.message}`, "error");
-        }
-      }
-    },
-    [setStatus]
-  );
-
-  const closeDetails = useCallback(() => {
-    setDetailsModal({
-      open: false,
-      loading: false,
-      seriesId: null,
-      data: null,
-    });
-  }, []);
-
   const openDeleteDialogAction = useCallback(
     (seriesId, calculationType, patientName) => {
       setDeleteDialog({
@@ -381,11 +425,28 @@ export const DashboardProvider = ({ children }) => {
     }
   }, [deleteDialog, closeDeleteDialog, loadSummary, setStatus]);
 
-  const exportAllResults = useCallback(() => {
+  const exportAllResults = useCallback(async () => {
     setStatus("Exporting to CSV...", "loading");
     try {
-      window.open("/cho-results-export", "_blank", "noopener");
-      setStatus("Export initiated", "success");
+      const response = await fetch(
+        `${import.meta.env.VITE_API_URL}/cho-results-export`,
+        {
+          method: "GET",
+        }
+      );
+      if (!response.ok) throw new Error("Failed to export");
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "cho-results.csv";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+
+      setStatus("Export complete", "success");
     } catch (error) {
       setStatus(`Export failed: ${error.message}`, "error");
     }
@@ -397,6 +458,128 @@ export const DashboardProvider = ({ children }) => {
       pollingRef.current = null;
     }
   }, []);
+
+  useEffect(() => {
+    const apiBase = import.meta.env.VITE_API_URL;
+    if (!apiBase) {
+      return undefined;
+    }
+
+    const connect = () => {
+      if (sseRef.current) {
+        sseRef.current.close();
+        sseRef.current = null;
+      }
+
+      const source = new EventSource(`${apiBase}/cho-progress/stream`, {
+        withCredentials: true,
+      });
+      sseRef.current = source;
+
+      source.onopen = () => {
+        if (sseReconnectRef.current) {
+          clearTimeout(sseReconnectRef.current);
+          sseReconnectRef.current = null;
+        }
+      };
+
+      source.addEventListener("snapshot", (event) => {
+        if (!mountedRef.current) return;
+        let payload;
+        try {
+          payload = JSON.parse(event.data);
+        } catch (error) {
+          console.debug("Failed to parse snapshot event", error);
+          return;
+        }
+        setCalculationStates(() => {
+          const next = {};
+          const register = (entry, defaultEvent = "snapshot") => {
+            if (!entry || typeof entry !== "object") return;
+            const rawId =
+              entry.series_id ?? entry.seriesUuid ?? entry.seriesInstanceUid;
+            if (!rawId) return;
+            const key = String(rawId);
+            next[key] = {
+              ...entry,
+              eventType: entry.eventType ?? defaultEvent,
+            };
+          };
+          if (Array.isArray(payload.history)) {
+            payload.history.forEach((item) => register(item, "history"));
+          }
+          if (Array.isArray(payload.active)) {
+            payload.active.forEach((item) => register(item, "snapshot"));
+          }
+          return next;
+        });
+      });
+
+      source.addEventListener("cho-calculation", (event) => {
+        if (!mountedRef.current) return;
+        let payload;
+        try {
+          payload = JSON.parse(event.data);
+        } catch (error) {
+          console.debug("Failed to parse calculation event", error);
+          return;
+        }
+        const rawId =
+          payload?.series_id ??
+          payload?.seriesUuid ??
+          payload?.seriesInstanceUid ??
+          null;
+        if (!rawId) {
+          return;
+        }
+        const key = String(rawId);
+        setCalculationStates((prev) => {
+          if (
+            payload?.eventType === "cleanup" ||
+            payload?.eventType === "history-cleanup" ||
+            payload?.status === "removed"
+          ) {
+            if (!(key in prev)) {
+              return prev;
+            }
+            const next = { ...prev };
+            delete next[key];
+            return next;
+          }
+          const nextState = { ...(prev[key] ?? {}), ...payload };
+          return { ...prev, [key]: nextState };
+        });
+      });
+
+      source.onerror = () => {
+        if (!mountedRef.current) {
+          return;
+        }
+        if (sseReconnectRef.current) {
+          return;
+        }
+        source.close();
+        sseRef.current = null;
+        sseReconnectRef.current = setTimeout(() => {
+          sseReconnectRef.current = null;
+          connect();
+        }, 5000);
+      };
+    };
+
+    connect();
+
+    return () => {
+      if (sseRef.current) {
+        sseRef.current.close();
+        sseRef.current = null;
+      }
+      if (sseReconnectRef.current) {
+        clearTimeout(sseReconnectRef.current);
+        sseReconnectRef.current = null;
+      }
+    };
+  }, [stopChoPolling]);
 
   const checkChoCalculationStatus = useCallback(
     async (seriesUuidParam) => {
@@ -477,7 +660,7 @@ export const DashboardProvider = ({ children }) => {
             },
             pollError: null,
           }));
-          startChoPolling(seriesUuid);
+          //   startChoPolling(seriesUuid);
         } else if (data.status === "completed") {
           setChoModal((prev) => ({
             ...prev,
@@ -494,20 +677,184 @@ export const DashboardProvider = ({ children }) => {
     [startChoPolling]
   );
 
+  const activeChoSeriesId = choModal.seriesUuid
+    ? String(choModal.seriesUuid)
+    : null;
+
+  useEffect(() => {
+    if (!activeChoSeriesId) {
+      return;
+    }
+    const state = calculationStates[activeChoSeriesId];
+    if (!state) {
+      return;
+    }
+
+    setChoModal((prev) => {
+      if (prev.seriesUuid !== activeChoSeriesId) {
+        return prev;
+      }
+
+      const status = state.status ?? state.eventType;
+
+      if (status === "running") {
+        return {
+          ...prev,
+          stage: "progress",
+          progress: {
+            value:
+              typeof state.progress === "number"
+                ? state.progress
+                : prev.progress.value,
+            message: state.message ?? prev.progress.message ?? "Processing...",
+            stage: state.current_stage ?? prev.progress.stage ?? "analysis",
+          },
+          pollError: null,
+        };
+      }
+
+      if (status === "completed") {
+        stopChoPolling();
+        return {
+          ...prev,
+          stage: "results",
+          progress: {
+            value: 100,
+            message: state.message ?? "Completed",
+            stage: state.current_stage ?? "completed",
+          },
+          results: state.results ?? prev.results,
+          pollError: null,
+        };
+      }
+
+      if (status === "failed") {
+        stopChoPolling();
+        return {
+          ...prev,
+          stage: "results",
+          progress: {
+            value:
+              typeof state.progress === "number"
+                ? state.progress
+                : prev.progress.value ?? 0,
+            message: state.message ?? "Failed",
+            stage: state.current_stage ?? "failed",
+          },
+          pollError: state.error ?? state.message ?? "Analysis failed",
+          results: null,
+        };
+      }
+
+      if (status === "cancelled") {
+        stopChoPolling();
+        return {
+          ...prev,
+          stage: "results",
+          progress: {
+            value:
+              typeof state.progress === "number"
+                ? state.progress
+                : prev.progress.value ?? 0,
+            message: state.message ?? "Cancelled",
+            stage: state.current_stage ?? "cancelled",
+          },
+          pollError: state.message ?? "Analysis cancelled",
+        };
+      }
+
+      return prev;
+    });
+  }, [activeChoSeriesId, calculationStates, stopChoPolling]);
+
+  const loadStoredChoResults = useCallback(
+    async (seriesId) => {
+      if (!seriesId) {
+        setChoModal((prev) => ({
+          ...prev,
+          storedResults: { loading: false, data: null, error: null },
+        }));
+        return;
+      }
+      setChoModal((prev) => ({
+        ...prev,
+        storedResults: { ...prev.storedResults, loading: true, error: null },
+      }));
+      setStatus("Loading series details...", "loading");
+      try {
+        const data = await fetchJson(`/cho-results/${seriesId}`);
+        if (!mountedRef.current) return;
+        setChoModal((prev) => {
+          const derivedSummary = deriveSeriesSummary(data, prev.seriesSummary);
+          const nextSeriesUuid =
+            derivedSummary?.series_uuid ?? prev.seriesUuid ?? null;
+          const nextSeriesId =
+            derivedSummary?.series_id ?? prev.seriesId ?? null;
+          return {
+            ...prev,
+            seriesUuid: nextSeriesUuid,
+            seriesId: nextSeriesId,
+            seriesSummary: derivedSummary ?? prev.seriesSummary,
+            storedResults: { loading: false, data, error: null },
+          };
+        });
+        setStatus("", "idle");
+      } catch (error) {
+        if (!mountedRef.current) return;
+        setChoModal((prev) => ({
+          ...prev,
+          storedResults: { loading: false, data: null, error: error.message },
+        }));
+        setStatus(`Error loading details: ${error.message}`, "error");
+      }
+    },
+    [setStatus]
+  );
+
+  const reloadStoredChoResults = useCallback(() => {
+    if (choModal.seriesId) {
+      loadStoredChoResults(choModal.seriesId);
+    }
+  }, [choModal.seriesId, loadStoredChoResults]);
+
   const openChoModal = useCallback(
     (series) => {
       if (!series) return;
       stopChoPolling();
+      const seriesUuid =
+        series.series_uuid ??
+        series.series_instance_uid ??
+        series.seriesId ??
+        null;
+      const seriesId =
+        series.series_id ??
+        series.seriesId ??
+        series.series_instance_uid ??
+        null;
+      const storedResultsState = seriesId
+        ? { loading: true, data: null, error: null }
+        : {
+            loading: false,
+            data: null,
+            error: "Stored CHO results unavailable for this series.",
+          };
       setChoModal({
         ...createInitialChoState(),
         open: true,
-        seriesUuid: series.series_uuid,
+        seriesUuid,
+        seriesId,
         seriesSummary: series,
-        params: { ...defaultChoParams, testType: "global" },
+        params: { ...defaultChoParams, testType: series.testType ?? "full" },
+        storedResults: storedResultsState,
       });
-      checkExistingChoCalculation(series.series_uuid);
+      if (seriesId) {
+        loadStoredChoResults(seriesId);
+      }
+      if (seriesUuid) {
+        checkExistingChoCalculation(seriesUuid);
+      }
     },
-    [checkExistingChoCalculation, stopChoPolling]
+    [checkExistingChoCalculation, loadStoredChoResults, stopChoPolling]
   );
 
   const closeChoModal = useCallback(() => {
@@ -516,6 +863,7 @@ export const DashboardProvider = ({ children }) => {
   }, [stopChoPolling]);
 
   const updateChoParam = useCallback((name, value) => {
+    console.debug("Updating CHO param", name, value);
     setChoModal((prev) => ({
       ...prev,
       params: { ...prev.params, [name]: value },
@@ -545,9 +893,9 @@ export const DashboardProvider = ({ children }) => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      if (mountedRef.current) {
-        startChoPolling(choModal.seriesUuid);
-      }
+      //   if (mountedRef.current) {
+      //     startChoPolling(choModal.seriesUuid);
+      //   }
     } catch (error) {
       if (mountedRef.current) {
         setChoModal((prev) => ({
@@ -558,39 +906,7 @@ export const DashboardProvider = ({ children }) => {
         setStatus(`Failed to start analysis: ${error.message}`, "error");
       }
     }
-  }, [choModal.seriesUuid, choModal.params, setStatus, startChoPolling]);
-
-  const saveChoResults = useCallback(async () => {
-    if (!choModal.results) {
-      setStatus("No results to save", "error");
-      return;
-    }
-    setChoModal((prev) => ({ ...prev, saving: true }));
-    try {
-      await fetchJson("/cho-save-results", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          patient: choModal.results.patient,
-          study: choModal.results.study,
-          scanner: choModal.results.scanner,
-          series: choModal.results.series,
-          ct: choModal.results.ct,
-          converted_results: choModal.results.results,
-        }),
-      });
-      if (mountedRef.current) {
-        setStatus("Results saved to database", "success");
-        closeChoModal();
-        loadSummary();
-      }
-    } catch (error) {
-      if (mountedRef.current) {
-        setChoModal((prev) => ({ ...prev, saving: false }));
-        setStatus(`Failed to save results: ${error.message}`, "error");
-      }
-    }
-  }, [choModal.results, closeChoModal, loadSummary, setStatus]);
+  }, [choModal.seriesUuid, choModal.params, setStatus]);
 
   const discardChoResults = useCallback(async () => {
     if (!choModal.seriesUuid) return;
@@ -649,6 +965,7 @@ export const DashboardProvider = ({ children }) => {
   const value = useMemo(() => {
     return {
       status,
+      calculationStates,
       filters,
       filterOptions,
       advancedFiltersOpen,
@@ -659,7 +976,6 @@ export const DashboardProvider = ({ children }) => {
         pagination,
         availableSeries,
       },
-      detailsModal,
       choModal,
       deleteDialog,
       actions: {
@@ -671,18 +987,16 @@ export const DashboardProvider = ({ children }) => {
         refresh,
         changePage,
         changePageSize,
-        openDetails,
-        closeDetails,
         openDeleteDialog: openDeleteDialogAction,
         closeDeleteDialog,
         confirmDelete,
         exportAllResults,
         exportSeries,
+        reloadStoredChoResults,
         openChoModal,
         closeChoModal,
         updateChoParam,
         startChoAnalysis,
-        saveChoResults,
         discardChoResults,
         loadFilterOptions,
         loadSummary,
@@ -698,7 +1012,7 @@ export const DashboardProvider = ({ children }) => {
     summaryLoading,
     pagination,
     availableSeries,
-    detailsModal,
+    calculationStates,
     choModal,
     deleteDialog,
     setStatus,
@@ -709,18 +1023,16 @@ export const DashboardProvider = ({ children }) => {
     refresh,
     changePage,
     changePageSize,
-    openDetails,
-    closeDetails,
     openDeleteDialogAction,
     closeDeleteDialog,
     confirmDelete,
     exportAllResults,
     exportSeries,
+    reloadStoredChoResults,
     openChoModal,
     closeChoModal,
     updateChoParam,
     startChoAnalysis,
-    saveChoResults,
     discardChoResults,
     loadFilterOptions,
     loadSummary,

@@ -1,0 +1,8 @@
+{
+  "RemoteAccessAllowed": true,
+  "AuthenticationEnabled": false,
+  "DicomModalities": {
+    "MAIN": ["ORTHANC", "host.docker.internal", 4242]
+  },
+  "StorageDirectory": "/var/lib/orthanc/db"
+}
