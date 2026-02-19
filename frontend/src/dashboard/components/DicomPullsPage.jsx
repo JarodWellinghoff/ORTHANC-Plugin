@@ -25,9 +25,15 @@ import {
   TableHead,
   TableRow,
   TextField,
+  Autocomplete,
   Tooltip,
   Typography,
 } from "@mui/material";
+import dayjs from "dayjs";
+import Collapse from "@mui/material/Collapse";
+import { AdapterDayjs } from "@mui/x-date-pickers/AdapterDayjs";
+import SearchIcon from "@mui/icons-material/Search";
+import InputAdornment from "@mui/material/InputAdornment";
 import CloudDownloadRoundedIcon from "@mui/icons-material/CloudDownloadRounded";
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
@@ -35,7 +41,9 @@ import ScheduleRoundedIcon from "@mui/icons-material/ScheduleRounded";
 import { DateTimePicker } from "@mui/x-date-pickers/DateTimePicker";
 import { DatePicker } from "@mui/x-date-pickers/DatePicker";
 import CustomActionBar from "./CustomActionBar";
+import { LocalizationProvider } from "@mui/x-date-pickers/LocalizationProvider";
 
+import { useDashboard } from "../context/DashboardContext";
 const apiBase = import.meta.env.VITE_API_URL;
 
 const statusColorMap = {
@@ -167,7 +175,7 @@ const ResultsList = ({
       <Stack alignItems='center' justifyContent='center' sx={{ py: 6, gap: 2 }}>
         <CircularProgress size={32} />
         <Typography variant='body2' color='text.secondary'>
-          Querying remote modality…
+          Querying remote server…
         </Typography>
       </Stack>
     );
@@ -182,7 +190,7 @@ const ResultsList = ({
   }
 
   const allSelected = results.every(
-    (item) => !!selectedMap[getSelectionKey(item)]
+    (item) => !!selectedMap[getSelectionKey(item)],
   );
 
   return (
@@ -269,7 +277,7 @@ const BatchesTable = ({ batches, loading, onRefresh }) => {
       <TableHead>
         <TableRow>
           <TableCell>Name</TableCell>
-          <TableCell>Modality</TableCell>
+          <TableCell>Server</TableCell>
           <TableCell>Window</TableCell>
           <TableCell>Status</TableCell>
           <TableCell align='right'>Progress</TableCell>
@@ -331,8 +339,10 @@ const BatchesTable = ({ batches, loading, onRefresh }) => {
 };
 
 const DicomPullsPage = () => {
+  const { filters, filterOptions, advancedFiltersOpen, actions } =
+    useDashboard();
   const [modalities, setModalities] = useState([]);
-  const [filters, setFilters] = useState(defaultFilters);
+  //   const [filters, setFilters] = useState(defaultFilters);
   const [schedule, setSchedule] = useState(defaultWindow);
   const [selectedModality, setSelectedModality] = useState("");
   const [results, setResults] = useState([]);
@@ -344,14 +354,43 @@ const DicomPullsPage = () => {
   const [loadingResults, setLoadingResults] = useState(false);
   const [loadingBatches, setLoadingBatches] = useState(false);
   const [creatingBatch, setCreatingBatch] = useState(false);
+  const { date_range: dateRange, age_range: ageRange } = filterOptions;
+  const examDateFromValue = useMemo(() => {
+    if (!filters.examDateFrom) {
+      return null;
+    }
+    const parsed = dayjs(filters.examDateFrom);
+    return parsed.isValid() ? parsed : null;
+  }, [filters.examDateFrom]);
+  const minExamDate = useMemo(() => {
+    if (!dateRange?.min) {
+      return undefined;
+    }
+    const parsed = dayjs(dateRange.min);
+    return parsed.isValid() ? parsed : undefined;
+  }, [dateRange]);
 
+  const maxExamDate = useMemo(() => {
+    if (!dateRange?.max) {
+      return undefined;
+    }
+    const parsed = dayjs(dateRange.max);
+    return parsed.isValid() ? parsed : undefined;
+  }, [dateRange]);
+  const examDateToValue = useMemo(() => {
+    if (!filters.examDateTo) {
+      return null;
+    }
+    const parsed = dayjs(filters.examDateTo);
+    return parsed.isValid() ? parsed : null;
+  }, [filters.examDateTo]);
   const selectedItems = useMemo(
     () => Object.values(selectedMap),
-    [selectedMap]
+    [selectedMap],
   );
   const estimatedSeconds = useMemo(
     () => sumEstimatedSeconds(selectedItems),
-    [selectedItems]
+    [selectedItems],
   );
 
   const loadModalities = useCallback(async () => {
@@ -421,7 +460,7 @@ const DicomPullsPage = () => {
     if (!selectedModality) {
       setStatusMessage({
         severity: "warning",
-        text: "Select a modality before querying.",
+        text: "Select a server before querying.",
       });
       return;
     }
@@ -475,7 +514,7 @@ const DicomPullsPage = () => {
   const handleSelectAll = () => {
     if (!results.length) return;
     const allSelected = results.every(
-      (item) => !!selectedMap[getSelectionKey(item)]
+      (item) => !!selectedMap[getSelectionKey(item)],
     );
     if (allSelected) {
       setSelectedMap({});
@@ -492,7 +531,7 @@ const DicomPullsPage = () => {
     if (!selectedModality || !selectedItems.length) {
       setStatusMessage({
         severity: "warning",
-        text: "Select a modality and at least one series to schedule.",
+        text: "Select a server and at least one series to schedule.",
       });
       return;
     }
@@ -588,22 +627,353 @@ const DicomPullsPage = () => {
           <Paper elevation={0} variant='outlined' sx={{ p: 3 }}>
             <Stack spacing={2}>
               <Typography variant='h6'>Remote Query</Typography>
-              <FormControl fullWidth size='small'>
-                <InputLabel id='modality-label'>Modality</InputLabel>
-                <Select
-                  labelId='modality-label'
-                  label='Modality'
-                  value={selectedModality}
-                  onChange={(event) => setSelectedModality(event.target.value)}
-                  disabled={loadingModalities}>
-                  {modalities.map((item) => (
-                    <MenuItem key={item.id} value={item.id}>
-                      {item.title || item.id}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-              <Grid container spacing={2}>
+
+              <Stack spacing={3}>
+                <Stack
+                  direction={{ xs: "column", md: "row" }}
+                  spacing={2}
+                  alignItems={{ xs: "stretch", md: "center" }}>
+                  <TextField
+                    name='patientSearch'
+                    value={filters.patientSearch}
+                    //   onChange={handleChange}
+                    placeholder='Search by patient name or ID'
+                    // sx={{
+                    //   width: "50%",
+                    // }}
+                    fullWidth
+                    slotProps={{
+                      input: {
+                        startAdornment: (
+                          <InputAdornment position='start'>
+                            <SearchIcon fontSize='small' />
+                          </InputAdornment>
+                        ),
+                      },
+                    }}
+                  />
+                  <FormControl size='small'>
+                    <InputLabel id='modality-label'>Server</InputLabel>
+                    <Select
+                      labelId='modality-label'
+                      label='Server'
+                      value={selectedModality}
+                      sx={{
+                        minWidth: 150,
+                      }}
+                      onChange={(event) =>
+                        setSelectedModality(event.target.value)
+                      }
+                      disabled={loadingModalities}>
+                      {modalities.map((item) => (
+                        <MenuItem key={item.id} value={item.id}>
+                          {item.title || item.id}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Stack>
+
+                <Grid container spacing={2} columns={15}>
+                  <Grid size={{ sm: 5, md: 3 }}>
+                    <TextField
+                      name='institute'
+                      value={filters.institute}
+                      //   onChange={handleChange}
+                      placeholder='Institute'
+                      fullWidth
+                    />
+                  </Grid>
+                  {/* <FormControl sx={{ m: 1, width: 300 }}>
+                      <InputLabel id='institute-label'>Institute</InputLabel>
+                      <Select
+                        labelId='institute-label'
+                        name='institute'
+                        value={filters.institute}
+                        // onChange={handleChange}
+                        fullWidth>
+                        {filterOptions.institutes?.map((option) => (
+                          <MenuItem key={option} value={option}>
+                            {option}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl> */}
+                  <Grid size={{ sm: 5, md: 3 }}>
+                    <TextField
+                      name='scannerStation'
+                      value={filters.scannerStation}
+                      //   onChange={handleChange}
+                      placeholder='Scanner Name'
+                      fullWidth
+                    />
+                  </Grid>
+                  {/* <FormControl sx={{ m: 1, width: 300 }}>
+                      <InputLabel id='scannerStation-label'>
+                        Scanner Name
+                      </InputLabel>
+                      <Select
+                        labelId='scannerStation-label'
+                        name='scannerStation'
+                        value={filters.scannerStation}
+                        // onChange={handleChange}
+                        fullWidth>
+                        {filterOptions.scanner_stations?.map((option) => (
+                          <MenuItem key={option} value={option}>
+                            {option}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl> */}
+                  <Grid size={{ sm: 5, md: 3 }}>
+                    <TextField
+                      name='protocolName'
+                      value={filters.protocolName}
+                      //   onChange={handleChange}
+                      placeholder='Protocol Name'
+                      fullWidth
+                    />
+                  </Grid>
+                  {/* <FormControl sx={{ m: 1, width: 300 }}>
+                      <InputLabel id='protocolName-label'>
+                        Protocol Name
+                      </InputLabel>
+                      <Select
+                        labelId='protocolName-label'
+                        name='protocolName'
+                        value={filters.protocolName}
+                        // onChange={handleChange}
+                        fullWidth>
+                        {filterOptions.protocol_names?.map((option) => (
+                          <MenuItem key={option} value={option}>
+                            {option}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl> */}
+                  <Grid size={{ sm: 5, md: 3 }}>
+                    <TextField
+                      name='scannerModel'
+                      value={filters.scannerModel}
+                      //   onChange={handleChange}
+                      placeholder='Scanner Model'
+                      fullWidth
+                    />
+                  </Grid>
+                  {/* <FormControl sx={{ m: 1, width: 300 }}>
+                      <InputLabel id='scannerModel-label'>
+                        Scanner Model
+                      </InputLabel>
+                      <Select
+                        labelId='scannerModel-label'
+                        name='scannerModel'
+                        value={filters.scannerModel}
+                        // onChange={handleChange}
+                        fullWidth>
+                        {filterOptions.scanner_models?.map((option) => (
+                          <MenuItem key={option} value={option}>
+                            {option}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl> */}
+                  <Grid size={{ sm: 5, md: 3 }}>
+                    <TextField
+                      name='seriesDescription'
+                      value={filters.seriesDescription}
+                      //   onChange={handleChange}
+                      placeholder='Series Description'
+                      fullWidth
+                    />
+                    <Autocomplete
+                      multiple
+                      id='seriesDescription'
+                      freeSolo
+                      options={[]}
+                      defaultValue={[]}
+                      renderValue={(value, getItemProps) =>
+                        value.map((option, index) => {
+                          const { key, ...itemProps } = getItemProps({ index });
+                          return (
+                            <Chip
+                              variant='outlined'
+                              label={option}
+                              key={key}
+                              {...itemProps}
+                            />
+                          );
+                        })
+                      }
+                      renderInput={(params) => (
+                        <TextField
+                          {...params}
+                          label='Series Description'
+                          placeholder='Series Description'
+                        />
+                      )}
+                    />
+                  </Grid>
+                </Grid>
+                <Grid container spacing={2} columns={15}>
+                  <LocalizationProvider dateAdapter={AdapterDayjs}>
+                    <Grid size={{ sm: 5, md: 3 }}>
+                      <DatePicker
+                        enableAccessibleFieldDOMStructure={false}
+                        slots={{
+                          textField: TextField,
+                        }}
+                        slotProps={{
+                          actionBar: {
+                            actions: ["clear", "today", "accept"],
+                          },
+                          openPickerButton: {
+                            sx: {
+                              "&&": {
+                                border: "none",
+                                boxShadow: "none",
+                                bgcolor: "transparent",
+                                width: 36,
+                                height: 36,
+                                p: 0.5,
+                                "&:hover": {
+                                  bgcolor: "transparent",
+                                  borderColor: "transparent",
+                                },
+                                "&:active": { bgcolor: "transparent" },
+                                "& .MuiSvgIcon-root": { fontSize: 18 },
+                              },
+                            },
+                          },
+                          textField: {
+                            placeholder: "",
+                            InputLabelProps: { shrink: true },
+                          },
+                        }}
+                        label='Study Date Start'
+                        name='studyDateStart'
+                        value={filters.studyDateStart}
+                        onChange={handleStudyDateChange}
+                        sx={{
+                          width: "100%",
+                        }}
+                      />
+                    </Grid>
+                    <Grid size={{ sm: 5, md: 3 }}>
+                      <DatePicker
+                        enableAccessibleFieldDOMStructure={false}
+                        slots={{
+                          textField: TextField,
+                        }}
+                        slotProps={{
+                          actionBar: {
+                            actions: ["clear", "today", "accept"],
+                          },
+                          openPickerButton: {
+                            sx: {
+                              "&&": {
+                                border: "none",
+                                boxShadow: "none",
+                                bgcolor: "transparent",
+                                width: 36,
+                                height: 36,
+                                p: 0.5,
+                                "&:hover": {
+                                  bgcolor: "transparent",
+                                  borderColor: "transparent",
+                                },
+                                "&:active": { bgcolor: "transparent" },
+                                "& .MuiSvgIcon-root": { fontSize: 18 },
+                              },
+                            },
+                          },
+                          textField: {
+                            placeholder: "",
+                            InputLabelProps: { shrink: true },
+                          },
+                        }}
+                        label='Study Date End'
+                        name='studyDateEnd'
+                        value={filters.studyDateEnd}
+                        onChange={handleStudyDateChange}
+                        sx={{
+                          width: "100%",
+                        }}
+                      />
+                    </Grid>
+                  </LocalizationProvider>
+                </Grid>
+                {/* <Grid item size={{ xs: 12, md: 6 }}>
+                      <Stack
+                        direction={{ xs: "column", sm: "row" }}
+                        spacing={2}
+                        sx={{ width: "100%" }}>
+                        <FormControl sx={{ m: 1, width: 300 }}>
+                          <InputLabel id='ageMin-label'>Age Min</InputLabel>
+                          <TextField
+                            labelId='ageMin-label'
+                            name='ageMin'
+                            type='number'
+                            value={filters.ageMin}
+                            // onChange={handleChange}
+                            slotProps={{
+                              input: {
+                                min: ageRange?.min ?? 0,
+                                max: ageRange?.max ?? 150,
+                                endAdornment: (
+                                  <InputAdornment position='end'>
+                                    years
+                                  </InputAdornment>
+                                ),
+                              },
+                            }}
+                          />
+                        </FormControl>
+                        <FormControl sx={{ m: 1, width: 300 }}>
+                          <InputLabel id='ageMax-label'>Age Max</InputLabel>
+                          <TextField
+                            labelId='ageMax-label'
+                            name='ageMax'
+                            type='number'
+                            value={filters.ageMax}
+                            // onChange={handleChange}
+                            slotProps={{
+                              input: {
+                                min: ageRange?.min ?? 0,
+                                max: ageRange?.max ?? 150,
+                                endAdornment: (
+                                  <InputAdornment position='end'>
+                                    years
+                                  </InputAdornment>
+                                ),
+                              },
+                            }}
+                          />
+                        </FormControl>
+                      </Stack>
+                    </Grid> */}
+
+                {/* {activeFilters.length > 0 && (
+                    <Stack
+                      direction='row'
+                      spacing={1}
+                      flexWrap='wrap'
+                      alignItems='center'>
+                      <Typography variant='body2' color='text.secondary'>
+                        Active Filters:
+                      </Typography>
+                      {activeFilters.map((filter) => (
+                        <Chip
+                          key={filter.key}
+                          label={filter.label}
+                          onDelete={() => clearFilterValue(filter.key)}
+                          size='small'
+                        />
+                      ))}
+                    </Stack>
+                  )} */}
+              </Stack>
+
+              {/* <Grid container spacing={2}>
                 <Grid item size={{ xs: 12, sm: 6 }}>
                   <TextField
                     fullWidth
@@ -627,7 +997,6 @@ const DicomPullsPage = () => {
                       openPickerButton: {
                         sx: {
                           "&&": {
-                            // bump specificity to beat theme overrides
                             border: "none",
                             boxShadow: "none",
                             bgcolor: "transparent",
@@ -652,16 +1021,6 @@ const DicomPullsPage = () => {
                       width: "100%",
                     }}
                   />
-                  {/* <TextField
-                    fullWidth
-                    size='small'
-                    label='Study Date'
-                    name='studyDate'
-                    type='date'
-                    value={filters.studyDate}
-                    onChange={handleFilterChange}
-                    InputLabelProps={{ shrink: true }}
-                  /> */}
                 </Grid>
                 <Grid item size={{ xs: 12, sm: 6 }}>
                   <TextField
@@ -695,7 +1054,7 @@ const DicomPullsPage = () => {
                     onChange={handleFilterChange}
                   />
                 </Grid>
-              </Grid>
+              </Grid> */}
               <Box>
                 <Button
                   variant='contained'
@@ -804,7 +1163,7 @@ const DicomPullsPage = () => {
                         add12Label: "+12 hours",
                         onAdd12Hours: () =>
                           handleEndDatePickerChange(
-                            schedule.start.add(12, "hour")
+                            schedule.start.add(12, "hour"),
                           ),
                       },
                       openPickerButton: {
@@ -836,7 +1195,6 @@ const DicomPullsPage = () => {
                     value={schedule.end}
                     minDate={schedule.start}
                     onChange={handleEndDatePickerChange}
-                    disabled={!schedule.start}
                     sx={{
                       width: "100%",
                     }}
@@ -872,8 +1230,8 @@ const DicomPullsPage = () => {
                 {creatingBatch
                   ? "Scheduling…"
                   : schedule.start === null
-                  ? "Pull now"
-                  : "Schedule pull"}
+                    ? "Pull now"
+                    : "Schedule pull"}
               </Button>
             </Stack>
           </Paper>

@@ -57,25 +57,25 @@ const DicomViewerRoute = () => {
   const meta = location.state?.meta ?? {};
 
   const [seriesData, setSeriesData] = useState(
-    rowFromState?.raw ?? rowFromState ?? null
+    rowFromState?.raw ?? rowFromState ?? null,
   );
   const [seriesUuid, setSeriesUuid] = useState(
-    meta.seriesUuid ?? rowFromState?.seriesUuid ?? null
+    meta.seriesUuid ?? rowFromState?.seriesUuid ?? null,
   );
   const [seriesInstanceUid, setSeriesInstanceUid] = useState(
     meta.seriesInstanceUid ??
       rowFromState?.seriesInstanceUid ??
       seriesId ??
-      null
+      null,
   );
   const [studyInstanceUid, setStudyInstanceUid] = useState(
-    meta.studyInstanceUid ?? rowFromState?.studyInstanceUid ?? null
+    meta.studyInstanceUid ?? rowFromState?.studyInstanceUid ?? null,
   );
   const [patientId, setPatientId] = useState(
     meta.patientId ??
       rowFromState?.raw?.patient_id ??
       rowFromState?.patientId ??
-      null
+      null,
   );
 
   const [loadingSummary, setLoadingSummary] = useState(!rowFromState);
@@ -101,18 +101,21 @@ const DicomViewerRoute = () => {
 
     try {
       const data = await fetchJson(
-        `/cho-results/${encodeURIComponent(seriesId)}`
+        `/cho-results/${encodeURIComponent(seriesId)}`,
       );
       if (data && typeof data === "object") {
         setSeriesData(data);
         setSeriesUuid(
-          data.series_uuid ?? data.seriesUuid ?? data.series_id ?? null
+          data.series_uuid ?? data.seriesUuid ?? data.series_id ?? null,
         );
         setSeriesInstanceUid(
-          data.series_instance_uid ?? data.seriesInstanceUid ?? seriesId ?? null
+          data.series_instance_uid ??
+            data.seriesInstanceUid ??
+            seriesId ??
+            null,
         );
         setStudyInstanceUid(
-          data.study_instance_uid ?? data.studyInstanceUid ?? null
+          data.study_instance_uid ?? data.studyInstanceUid ?? null,
         );
         setPatientId(data.patient_id ?? data.patientId ?? null);
       } else {
@@ -177,7 +180,7 @@ const DicomViewerRoute = () => {
     if (!selectedModality) {
       setBanner({
         severity: "warning",
-        message: "Select a modality before requesting a DICOM pull.",
+        message: "Select a server before requesting a DICOM pull.",
       });
       return;
     }
@@ -276,12 +279,10 @@ const DicomViewerRoute = () => {
         </Typography>
         <Stack direction='row' spacing={2} alignItems='center'>
           <FormControl size='small' sx={{ minWidth: 200 }}>
-            <InputLabel id='viewer-modality-label'>
-              Recovery modality
-            </InputLabel>
+            <InputLabel id='viewer-modality-label'>Recovery server</InputLabel>
             <Select
               labelId='viewer-modality-label'
-              label='Recovery modality'
+              label='Recovery server'
               value={selectedModality}
               onChange={(event) => setSelectedModality(event.target.value)}
               disabled={loadingModalities || modalities.length === 0}>

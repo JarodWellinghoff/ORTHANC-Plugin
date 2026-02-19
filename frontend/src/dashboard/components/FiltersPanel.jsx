@@ -39,7 +39,14 @@ const filterLabels = {
   ageMax: "Age Max",
 };
 
-const FiltersPanel = () => {
+const defaultActionItems = [
+  "advancedFilters",
+  "clearFilters",
+  "refresh",
+  "exportCsv",
+];
+
+const FiltersPanel = ({ actionItems }) => {
   const { filters, filterOptions, advancedFiltersOpen, actions } =
     useDashboard();
   const {
@@ -54,7 +61,7 @@ const FiltersPanel = () => {
   const activeFilters = React.useMemo(() => {
     return Object.entries(filters)
       .filter(
-        ([, value]) => value !== undefined && value !== null && value !== ""
+        ([, value]) => value !== undefined && value !== null && value !== "",
       )
       .map(([key, value]) => ({
         key,
@@ -110,8 +117,142 @@ const FiltersPanel = () => {
       }
       updateFilter(name, newValue.format("YYYY-MM-DD"));
     },
-    [updateFilter]
+    [updateFilter],
   );
+
+  const resolvedActionItems = React.useMemo(() => {
+    const items =
+      Array.isArray(actionItems) && actionItems.length > 0
+        ? actionItems
+        : defaultActionItems;
+
+    const normalizeKey = (value) => {
+      if (!value) {
+        return null;
+      }
+      if (typeof value === "string" && defaultActionItems.includes(value)) {
+        return value;
+      }
+      const normalized = String(value).trim().toLowerCase();
+      switch (normalized) {
+        case "advanced":
+        case "advancedfilters":
+        case "advanced_filters":
+          return "advancedFilters";
+        case "clear":
+        case "clearfilters":
+        case "clear_filters":
+          return "clearFilters";
+        case "refresh":
+          return "refresh";
+        case "export":
+        case "exportcsv":
+        case "export_csv":
+          return "exportCsv";
+        default:
+          return null;
+      }
+    };
+
+    const actionContext = {
+      filters,
+      advancedFiltersOpen,
+      resetFilters,
+      toggleAdvancedFilters,
+      refresh,
+      exportAllResults,
+    };
+
+    return items
+      .map((item, index) => {
+        if (!item) {
+          return null;
+        }
+        if (React.isValidElement(item)) {
+          return React.cloneElement(item, {
+            key: item.key ?? `filters-panel-custom-${index}`,
+          });
+        }
+        if (typeof item === "function") {
+          const result = item(actionContext);
+          if (!React.isValidElement(result)) {
+            return null;
+          }
+          return React.cloneElement(result, {
+            key: result.key ?? `filters-panel-fn-${index}`,
+          });
+        }
+        const key = normalizeKey(item);
+        const elementKey = `filters-panel-action-${key ?? "custom"}-${index}`;
+        if (!key) {
+          return null;
+        }
+        switch (key) {
+          case "advancedFilters":
+            return (
+              <Button
+                key={elementKey}
+                variant={advancedFiltersOpen ? "contained" : "outlined"}
+                startIcon={<FilterAltIcon />}
+                endIcon={
+                  advancedFiltersOpen ? (
+                    <ExpandLessIcon fontSize='small' />
+                  ) : (
+                    <ExpandMoreIcon fontSize='small' />
+                  )
+                }
+                sx={{ whiteSpace: "nowrap" }}
+                onClick={toggleAdvancedFilters}>
+                Advanced Filters
+              </Button>
+            );
+          case "clearFilters":
+            return (
+              <Button
+                key={elementKey}
+                variant='outlined'
+                startIcon={<FilterAltOffIcon />}
+                sx={{ whiteSpace: "nowrap" }}
+                onClick={resetFilters}>
+                Clear Filters
+              </Button>
+            );
+          case "refresh":
+            return (
+              <Button
+                key={elementKey}
+                variant='outlined'
+                startIcon={<RefreshIcon />}
+                sx={{ whiteSpace: "nowrap" }}
+                onClick={refresh}>
+                Refresh
+              </Button>
+            );
+          case "exportCsv":
+            return (
+              <Button
+                key={elementKey}
+                variant='contained'
+                sx={{ whiteSpace: "nowrap" }}
+                startIcon={<DownloadIcon />}
+                onClick={exportAllResults}>
+                Export CSV
+              </Button>
+            );
+          default:
+            return null;
+        }
+      })
+      .filter(Boolean);
+  }, [
+    actionItems,
+    filters,
+    advancedFiltersOpen,
+    resetFilters,
+    toggleAdvancedFilters,
+    refresh,
+    exportAllResults,
+  ]);
 
   return (
     <Paper variant='outlined' sx={{ p: 3 }}>
@@ -140,41 +281,7 @@ const FiltersPanel = () => {
             }}
           />
           <Stack direction='row' spacing={1} justifyContent='flex-end'>
-            <Button
-              variant={advancedFiltersOpen ? "contained" : "outlined"}
-              startIcon={<FilterAltIcon />}
-              endIcon={
-                advancedFiltersOpen ? (
-                  <ExpandLessIcon fontSize='small' />
-                ) : (
-                  <ExpandMoreIcon fontSize='small' />
-                )
-              }
-              sx={{ whiteSpace: "nowrap" }}
-              onClick={toggleAdvancedFilters}>
-              Advanced Filters
-            </Button>
-            <Button
-              variant='outlined'
-              startIcon={<FilterAltOffIcon />}
-              sx={{ whiteSpace: "nowrap" }}
-              onClick={resetFilters}>
-              Clear Filters
-            </Button>
-            <Button
-              variant='outlined'
-              startIcon={<RefreshIcon />}
-              sx={{ whiteSpace: "nowrap" }}
-              onClick={refresh}>
-              Refresh
-            </Button>
-            <Button
-              variant='contained'
-              sx={{ whiteSpace: "nowrap" }}
-              startIcon={<DownloadIcon />}
-              onClick={exportAllResults}>
-              Export CSV
-            </Button>
+            {resolvedActionItems}
           </Stack>
         </Stack>
 

@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
 import Plot from "react-plotly.js";
-import { useTheme } from "@mui/material/styles";
 import Box from "@mui/material/Box";
 import Stack from "@mui/material/Stack";
 import Grid from "@mui/material/Grid";
@@ -11,6 +10,7 @@ import DialogContent from "@mui/material/DialogContent";
 import DialogTitle from "@mui/material/DialogTitle";
 import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
+import { alpha, useTheme, useColorScheme } from "@mui/material/styles";
 
 /**
  * MTF Interactive Plot - React Component
@@ -30,7 +30,7 @@ function handleShapesForContrast(
   mtfc10Data,
   visible,
   editable50,
-  editable10
+  editable10,
 ) {
   // Only show handles for the active contrast to avoid confusion
   if (!visible) return [];
@@ -340,7 +340,7 @@ const MTFInteractivePlot = ({
       // Force Plotly to keep/edit shapes coherently after we snap y back
       setEditRev(nextEditRevision);
     },
-    [currentContrast, setMtfc50Data, setMtfc10Data, editable10]
+    [currentContrast, setMtfc50Data, setMtfc10Data, editable10],
   );
   const handleShapes = React.useMemo(() => {
     return [
@@ -350,7 +350,7 @@ const MTFInteractivePlot = ({
         mtfc10Data,
         currentContrast === "10HU",
         editable50,
-        editable10
+        editable10,
       ),
       ...handleShapesForContrast(
         "30HU",
@@ -358,7 +358,7 @@ const MTFInteractivePlot = ({
         mtfc10Data,
         currentContrast === "30HU",
         editable50,
-        editable10
+        editable10,
       ),
       ...handleShapesForContrast(
         "50HU",
@@ -366,59 +366,106 @@ const MTFInteractivePlot = ({
         mtfc10Data,
         currentContrast === "50HU",
         editable50,
-        editable10
+        editable10,
       ),
     ];
   }, [mtfc50Data, mtfc10Data, currentContrast, editable50, editable10]);
 
   const theme = useTheme();
+  const colorScheme = useColorScheme();
+  const schemeMode = colorScheme?.mode;
+  const schemeSystemMode = colorScheme?.systemMode;
+  const themeMode = theme.palette?.mode ?? "light";
+  const resolvedColorMode = React.useMemo(() => {
+    if (!schemeMode) {
+      return themeMode;
+    }
+    if (schemeMode === "system") {
+      return schemeSystemMode ?? themeMode;
+    }
+    return schemeMode;
+  }, [schemeMode, schemeSystemMode, themeMode]);
+  const plotColors = React.useMemo(() => {
+    const paletteSource =
+      theme.colorSchemes?.[resolvedColorMode]?.palette ??
+      (theme.vars || theme).palette ??
+      theme.palette ??
+      {};
+    const fallbackPalette = theme.palette ?? {};
+    const textPrimary =
+      paletteSource.text?.primary ?? fallbackPalette.text?.primary ?? "#0f172a";
+    const textSecondary =
+      paletteSource.text?.secondary ??
+      fallbackPalette.text?.secondary ??
+      textPrimary;
+    const dividerColor =
+      paletteSource.divider ??
+      fallbackPalette.divider ??
+      (resolvedColorMode === "dark"
+        ? "rgba(148, 163, 184, 0.5)"
+        : "rgba(226, 232, 240, 0.7)");
+    const paperColor =
+      paletteSource.background?.paper ??
+      fallbackPalette.background?.paper ??
+      (resolvedColorMode === "dark" ? "#0f172a" : "#ffffff");
+    const legendBg = alpha(
+      paperColor,
+      resolvedColorMode === "dark" ? 0.85 : 0.9,
+    );
+    return {
+      textPrimary,
+      textSecondary,
+      divider: dividerColor,
+      legendBg,
+    };
+  }, [resolvedColorMode, theme]);
   const baseLayout = React.useMemo(
     () => ({
       title: {
         font: {
           size: 16,
-          color: theme.palette.primary.contrastText,
+          color: plotColors.textPrimary,
           weight: 1000,
         },
       },
       xaxis: {
         title: {
           font: {
-            color: theme.palette.primary.contrastText,
+            color: plotColors.textPrimary,
             size: 16,
           },
         },
         tickfont: {
-          color: theme.palette.primary.contrastText,
+          color: plotColors.textPrimary,
         },
-        color: theme.palette.divider,
-        gridcolor: theme.palette.divider,
+        color: plotColors.divider,
+        gridcolor: plotColors.divider,
       },
       yaxis: {
         title: {
           font: {
-            color: theme.palette.primary.contrastText,
+            color: plotColors.textPrimary,
             size: 16,
           },
         },
         tickfont: {
-          color: theme.palette.primary.contrastText,
+          color: plotColors.textPrimary,
         },
-        color: theme.palette.divider,
-        gridcolor: theme.palette.divider,
+        color: plotColors.divider,
+        gridcolor: plotColors.divider,
         showgrid: false,
       },
       yaxis2: {
         title: {
           font: {
-            color: theme.palette.primary.contrastText,
+            color: plotColors.textPrimary,
           },
         },
         tickfont: {
-          color: theme.palette.primary.contrastText,
+          color: plotColors.textPrimary,
         },
-        color: theme.palette.divider,
-        gridcolor: theme.palette.divider,
+        color: plotColors.divider,
+        gridcolor: plotColors.divider,
         overlaying: "y",
         side: "right",
         showgrid: false,
@@ -429,10 +476,10 @@ const MTFInteractivePlot = ({
       legend: {
         x: 0.9,
         y: 0.9,
-        bgcolor: "rgba(0, 0, 0, 0.8)",
-        bordercolor: "#e2e8f0",
+        bgcolor: plotColors.legendBg,
+        bordercolor: plotColors.divider,
         font: {
-          color: theme.palette.primary.contrastText,
+          color: plotColors.textPrimary,
           size: 16,
         },
         borderwidth: 1,
@@ -443,12 +490,12 @@ const MTFInteractivePlot = ({
       showlegend: true,
       font: { family: "Arial, sans-serif" },
     }),
-    [theme]
+    [plotColors],
   );
   const buildLayout = React.useCallback(
     (options) =>
       mergeDeep(JSON.parse(JSON.stringify(baseLayout)), options || {}),
-    [baseLayout]
+    [baseLayout],
   );
 
   const originalData = useMemo(() => {
@@ -481,32 +528,32 @@ const MTFInteractivePlot = ({
       freq10hu_05: findFrequencyAtMTF(
         originalData.freq,
         originalData.mtf10hu,
-        0.5
+        0.5,
       ),
       freq10hu_01: findFrequencyAtMTF(
         originalData.freq,
         originalData.mtf10hu,
-        0.1
+        0.1,
       ),
       freq30hu_05: findFrequencyAtMTF(
         originalData.freq,
         originalData.mtf30hu,
-        0.5
+        0.5,
       ),
       freq30hu_01: findFrequencyAtMTF(
         originalData.freq,
         originalData.mtf30hu,
-        0.1
+        0.1,
       ),
       freq50hu_05: findFrequencyAtMTF(
         originalData.freq,
         originalData.mtf50hu,
-        0.5
+        0.5,
       ),
       freq50hu_01: findFrequencyAtMTF(
         originalData.freq,
         originalData.mtf50hu,
-        0.1
+        0.1,
       ),
     };
   }, [originalData]);
@@ -528,21 +575,21 @@ const MTFInteractivePlot = ({
       originalData.freq,
       originalData.mtf10hu,
       mtfc50Data["10HU"],
-      f10_10
+      f10_10,
     );
 
     const transformed30hu = transformMTFCurve(
       originalData.freq,
       originalData.mtf30hu,
       mtfc50Data["30HU"],
-      f10_30
+      f10_30,
     );
 
     const transformed50hu = transformMTFCurve(
       originalData.freq,
       originalData.mtf50hu,
       mtfc50Data["50HU"],
-      f10_50
+      f10_50,
     );
 
     const plotData = [
@@ -582,7 +629,10 @@ const MTFInteractivePlot = ({
         mode: "lines",
         // name: "10HU (Simulated)",
         name: "-10HU",
-        line: { color: "#00FFFF", width: 2 },
+        line: {
+          color: resolvedColorMode === "dark" ? "#00FFFF" : "#00c2c2",
+          width: 2,
+        },
         // opacity: currentContrast === "10HU" ? 1.0 : 0,
         opacity: 1,
       },
@@ -593,7 +643,10 @@ const MTFInteractivePlot = ({
         mode: "lines",
         // name: "30HU (Simulated)",
         name: "-30HU",
-        line: { color: "#FF00FF", width: 2 },
+        line: {
+          color: resolvedColorMode === "dark" ? "#FF00FF" : "#c200c2",
+          width: 2,
+        },
         // opacity: currentContrast === "30HU" ? 1.0 : 0,
         opacity: 1,
       },
@@ -604,7 +657,10 @@ const MTFInteractivePlot = ({
         mode: "lines",
         // name: "50HU (Simulated)",
         name: "-50HU",
-        line: { color: "#FFFF00", width: 2 },
+        line: {
+          color: resolvedColorMode === "dark" ? "#FFFF00" : "#ff9900",
+          width: 2,
+        },
         // opacity: currentContrast === "50HU" ? 1.0 : 0,
         opacity: 1,
       },
@@ -710,7 +766,7 @@ const MTFInteractivePlot = ({
             onClick={() =>
               handleOpenPlotModal(
                 finalPlot,
-                finalPlot?.layout?.title?.text ?? "Noise power spectrum"
+                finalPlot?.layout?.title?.text ?? "Noise power spectrum",
               )
             }
             sx={{

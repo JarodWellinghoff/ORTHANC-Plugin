@@ -66,19 +66,27 @@ export default function Dashboard(props) {
                   width: "100%",
                 }}>
                 <Routes>
-                  <Route path='/' element={<DashboardContent />} />
+                  {/* <Route path='/' element={<DashboardContent />} /> */}
+                  {/* <Route path='/results' element={<DashboardContent />} /> */}
+                  <Route
+                    path='/'
+                    element={<Navigate to='/main-dashboard' replace />}
+                  />
                   <Route
                     path='/results/:seriesId'
                     element={<ChoAnalysisRoute />}
                   />
                   <Route path='/dicom-pulls' element={<DicomPullsPage />} />
-                  <Route path='/bulk-tests' element={<BulkTestsPage />} />
+                  <Route path='/main-dashboard' element={<BulkTestsPage />} />
                   <Route path='/dicom-viewer' element={<DicomViewerPage />} />
                   <Route
                     path='/dicom-viewer/:seriesId'
                     element={<DicomViewerRoute />}
                   />
-                  <Route path='*' element={<Navigate to='/' replace />} />
+                  <Route
+                    path='*'
+                    element={<Navigate to='/main-dashboard' replace />}
+                  />
                 </Routes>
               </Container>
               <ModalsHost />

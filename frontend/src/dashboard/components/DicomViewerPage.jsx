@@ -90,8 +90,8 @@ const DicomViewerPage = () => {
       const items = Array.isArray(response)
         ? response
         : Array.isArray(response?.data)
-        ? response.data
-        : [];
+          ? response.data
+          : [];
       setResults(items);
     } catch (err) {
       console.error("Failed to load CHO results", err);
@@ -141,8 +141,9 @@ const DicomViewerPage = () => {
   }, [loadResults, loadAvailableSeries, loadModalities]);
 
   const availableSet = useMemo(
-    () => new Set(availableSeries.filter(Boolean).map((value) => String(value))),
-    [availableSeries]
+    () =>
+      new Set(availableSeries.filter(Boolean).map((value) => String(value))),
+    [availableSeries],
   );
 
   const normalizedRows = useMemo(() => {
@@ -156,7 +157,10 @@ const DicomViewerPage = () => {
         item.seriesInstanceUid ??
         null;
       const studyInstanceUid =
-        item.study_id ?? item.study_instance_uid ?? item.studyInstanceUid ?? null;
+        item.study_id ??
+        item.study_instance_uid ??
+        item.studyInstanceUid ??
+        null;
       const status = String(item.test_status ?? "none").toLowerCase();
       const hasDicom =
         Boolean(seriesUuid) && availableSet.has(String(seriesUuid));
@@ -205,7 +209,7 @@ const DicomViewerPage = () => {
       if (!selectedModality) {
         setBanner({
           severity: "warning",
-          message: "Select a modality before requesting a DICOM pull.",
+          message: "Select a server before requesting a DICOM pull.",
         });
         return;
       }
@@ -230,7 +234,8 @@ const DicomViewerPage = () => {
         });
         setBanner({
           severity: "info",
-          message: "Recovery requested. The series will appear once Orthanc receives it.",
+          message:
+            "Recovery requested. The series will appear once Orthanc receives it.",
         });
         await loadAvailableSeries();
       } catch (err) {
@@ -243,7 +248,7 @@ const DicomViewerPage = () => {
         setRecoveringMap((prev) => ({ ...prev, [row.id]: false }));
       }
     },
-    [selectedModality, loadAvailableSeries]
+    [selectedModality, loadAvailableSeries],
   );
 
   const handleRowNavigation = useCallback(
@@ -266,12 +271,15 @@ const DicomViewerPage = () => {
             seriesInstanceUid: row.seriesInstanceUid ?? null,
             studyInstanceUid: row.studyInstanceUid ?? null,
             patientId:
-              row.raw?.patient_id ?? row.raw?.patientId ?? row.patientId ?? null,
+              row.raw?.patient_id ??
+              row.raw?.patientId ??
+              row.patientId ??
+              null,
           },
         },
       });
     },
-    [navigate]
+    [navigate],
   );
 
   const columns = useMemo(
@@ -361,7 +369,7 @@ const DicomViewerPage = () => {
         },
       },
     ],
-    [handleRecover, recoveringMap, selectedModality]
+    [handleRecover, recoveringMap, selectedModality],
   );
 
   return (
@@ -425,7 +433,7 @@ const DicomViewerPage = () => {
             <InputLabel id='modality-label'>Recovery modality</InputLabel>
             <Select
               labelId='modality-label'
-              label='Recovery modality'
+              label='Recovery server'
               value={selectedModality}
               onChange={(event) => setSelectedModality(event.target.value)}
               disabled={loadingModalities || modalities.length === 0}>
@@ -468,4 +476,3 @@ const DicomViewerPage = () => {
 };
 
 export default DicomViewerPage;
-

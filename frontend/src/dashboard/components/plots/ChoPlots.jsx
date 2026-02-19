@@ -1,6 +1,5 @@
 import * as React from "react";
 import Box from "@mui/material/Box";
-import Stack from "@mui/material/Stack";
 import Grid from "@mui/material/Grid";
 import Typography from "@mui/material/Typography";
 import IconButton from "@mui/material/IconButton";
@@ -8,7 +7,7 @@ import Dialog from "@mui/material/Dialog";
 import DialogContent from "@mui/material/DialogContent";
 import DialogTitle from "@mui/material/DialogTitle";
 import Plot from "react-plotly.js";
-import { useTheme } from "@mui/material/styles";
+import { alpha, useTheme, useColorScheme } from "@mui/material/styles";
 import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
 
@@ -69,9 +68,56 @@ const mergeDeep = (target, source) => {
 };
 
 const ChoPlots = ({ children, data, comparison, direction = "column" }) => {
+  const theme = useTheme();
+  const colorScheme = useColorScheme();
+  const schemeMode = colorScheme?.mode;
+  const schemeSystemMode = colorScheme?.systemMode;
+  const themeMode = theme.palette?.mode ?? "light";
+  const resolvedColorMode = React.useMemo(() => {
+    if (!schemeMode) {
+      return themeMode;
+    }
+    if (schemeMode === "system") {
+      return schemeSystemMode ?? themeMode;
+    }
+    return schemeMode;
+  }, [schemeMode, schemeSystemMode, themeMode]);
+  const plotColors = React.useMemo(() => {
+    const paletteSource =
+      theme.colorSchemes?.[resolvedColorMode]?.palette ??
+      (theme.vars || theme).palette ??
+      theme.palette ??
+      {};
+    const fallbackPalette = theme.palette ?? {};
+    const textPrimary =
+      paletteSource.text?.primary ?? fallbackPalette.text?.primary ?? "#0f172a";
+    const textSecondary =
+      paletteSource.text?.secondary ??
+      fallbackPalette.text?.secondary ??
+      textPrimary;
+    const dividerColor =
+      paletteSource.divider ??
+      fallbackPalette.divider ??
+      (resolvedColorMode === "dark"
+        ? "rgba(148, 163, 184, 0.5)"
+        : "rgba(226, 232, 240, 0.7)");
+    const paperColor =
+      paletteSource.background?.paper ??
+      fallbackPalette.background?.paper ??
+      (resolvedColorMode === "dark" ? "#0f172a" : "#ffffff");
+    const legendBg = alpha(
+      paperColor,
+      resolvedColorMode === "dark" ? 0.85 : 0.9,
+    );
+    return {
+      textPrimary,
+      textSecondary,
+      divider: dividerColor,
+      legendBg,
+    };
+  }, [resolvedColorMode, theme]);
   const seriesData = data?.series ?? data;
   const comparisonSeries = comparison?.series ?? comparison;
-  const theme = useTheme();
   const resultsData = data?.results ?? data;
   const comparisonResults = comparison?.results ?? comparison;
   const hasComparison = Boolean(comparisonResults);
@@ -83,7 +129,6 @@ const ChoPlots = ({ children, data, comparison, direction = "column" }) => {
     ? buildApiUrl(`/minio-images/${seriesInstanceUid}`)
     : null;
   const imageAvailable = useImageAvailable(coronalImageUrl);
-  console.log("seriesData", seriesData);
 
   const handleOpenPlotModal = React.useCallback((plot, title) => {
     if (!plot) return;
@@ -124,76 +169,63 @@ const ChoPlots = ({ children, data, comparison, direction = "column" }) => {
     });
     return max;
   }, [comparisonResults, comparisonSeries, resultsData, seriesData]);
-  const baseLayout = React.useMemo(
-    () => ({
+  const baseLayout = React.useMemo(() => {
+    const createAxisLayout = (overrides = {}) => ({
+      ...overrides,
+      title: {
+        ...(overrides.title || {}),
+        font: {
+          color: plotColors.textPrimary,
+          ...(overrides.title?.font || {}),
+        },
+      },
+      tickfont: {
+        color: plotColors.textSecondary,
+        ...(overrides.tickfont || {}),
+      },
+      color: overrides.color ?? plotColors.textSecondary,
+      linecolor: overrides.linecolor ?? plotColors.textSecondary,
+      zerolinecolor: overrides.zerolinecolor ?? plotColors.divider,
+      gridcolor: overrides.gridcolor ?? plotColors.divider,
+    });
+    return {
       title: {
         font: {
           size: 16,
-          color: theme.palette.primary.contrastText,
+          color: plotColors.textPrimary,
           weight: 1000,
         },
       },
-      xaxis: {
-        title: {
-          font: {
-            color: theme.palette.primary.contrastText,
-          },
-        },
-        tickfont: {
-          color: theme.palette.primary.contrastText,
-        },
-        color: theme.palette.divider,
-        gridcolor: theme.palette.divider,
-      },
-      yaxis: {
-        title: {
-          font: {
-            color: theme.palette.primary.contrastText,
-          },
-        },
-        tickfont: {
-          color: theme.palette.primary.contrastText,
-        },
-        color: theme.palette.divider,
-        gridcolor: theme.palette.divider,
-        showgrid: false,
-      },
-      yaxis2: {
-        title: {
-          font: {
-            color: theme.palette.primary.contrastText,
-          },
-        },
-        tickfont: {
-          color: theme.palette.primary.contrastText,
-        },
-        color: theme.palette.divider,
-        gridcolor: theme.palette.divider,
+      xaxis: createAxisLayout(),
+      yaxis: createAxisLayout({ showgrid: false }),
+      yaxis2: createAxisLayout({
         overlaying: "y",
         side: "right",
         showgrid: false,
-      },
+      }),
       plot_bgcolor: "rgba(0, 0, 0, 0)",
       paper_bgcolor: "rgba(0, 0, 0, 0)",
       margin: { l: 60, r: 40, t: 60, b: 60 },
       legend: {
         x: 0.0,
         y: 1.02,
-        bgcolor: "rgba(255,255,255,0.8)",
-        bordercolor: "#e2e8f0",
+        bgcolor: plotColors.legendBg,
+        bordercolor: plotColors.divider,
         borderwidth: 1,
         yanchor: "bottom",
         autosize: true,
+        font: {
+          color: plotColors.textPrimary,
+        },
       },
       showlegend: hasComparison,
-      font: { family: "Arial, sans-serif" },
-    }),
-    [hasComparison, theme]
-  );
+      font: { family: "Arial, sans-serif", color: plotColors.textPrimary },
+    };
+  }, [hasComparison, plotColors]);
   const buildLayout = React.useCallback(
     (options) =>
       mergeDeep(JSON.parse(JSON.stringify(baseLayout)), options || {}),
-    [baseLayout]
+    [baseLayout],
   );
 
   const npsPlot = React.useMemo(() => {
@@ -385,12 +417,13 @@ const ChoPlots = ({ children, data, comparison, direction = "column" }) => {
     const location = resultsData?.location;
     const dw = resultsData?.dw;
     const ssde_inc = resultsData?.ssde_inc;
-    const comparisonLocation = comparisonResults?.location;
-    const comparisonDw = comparisonResults?.dw;
+    // const comparisonLocation = comparisonResults?.location;
+    // const comparisonDw = comparisonResults?.dw;
 
     if (
-      (!isTruthyArray(location) || !isTruthyArray(dw)) &&
-      (!isTruthyArray(comparisonLocation) || !isTruthyArray(comparisonDw))
+      !isTruthyArray(location) ||
+      !isTruthyArray(dw)
+      //   && (!isTruthyArray(comparisonLocation) || !isTruthyArray(comparisonDw))
     ) {
       return null;
     }
@@ -408,24 +441,24 @@ const ChoPlots = ({ children, data, comparison, direction = "column" }) => {
         legendgroup: "dw",
       });
     }
-    if (comparisonLocation && comparisonDw) {
-      traces.push({
-        name: `Water Equivalent Diameter${storedSuffix}`,
-        x: comparisonLocation,
-        y: comparisonDw,
-        type: "scatter",
-        mode: "lines",
+    // if (comparisonLocation && comparisonDw) {
+    //   traces.push({
+    //     name: `Water Equivalent Diameter${storedSuffix}`,
+    //     x: comparisonLocation,
+    //     y: comparisonDw,
+    //     type: "scatter",
+    //     mode: "lines",
 
-        line: {
-          width: 2,
-          shape: "spline",
-          color: "#f97373",
-          dash: "dash",
-        },
-        marker: { size: 4 },
-        legendgroup: "dw",
-      });
-    }
+    //     line: {
+    //       width: 2,
+    //       shape: "spline",
+    //       color: "#f97373",
+    //       dash: "dash",
+    //     },
+    //     marker: { size: 4 },
+    //     legendgroup: "dw",
+    //   });
+    // }
 
     if (traces.length === 0) return null;
 
@@ -476,7 +509,7 @@ const ChoPlots = ({ children, data, comparison, direction = "column" }) => {
     };
   }, [
     buildLayout,
-    comparisonResults,
+    // comparisonResults,
     coronalImageUrl,
     currentSuffix,
     imageAvailable,
@@ -488,12 +521,13 @@ const ChoPlots = ({ children, data, comparison, direction = "column" }) => {
   const noisePlot = React.useMemo(() => {
     const location = resultsData?.location_sparse;
     const noise = resultsData?.noise_level;
-    const comparisonLocation = comparisonResults?.location_sparse;
-    const comparisonNoise = comparisonResults?.noise_level;
+    // const comparisonLocation = comparisonResults?.location_sparse;
+    // const comparisonNoise = comparisonResults?.noise_level;
 
     if (
-      (!isTruthyArray(location) || !isTruthyArray(noise)) &&
-      (!isTruthyArray(comparisonLocation) || !isTruthyArray(comparisonNoise))
+      !isTruthyArray(location) ||
+      !isTruthyArray(noise)
+      //   && (!isTruthyArray(comparisonLocation) || !isTruthyArray(comparisonNoise))
     ) {
       return null;
     }
@@ -516,23 +550,23 @@ const ChoPlots = ({ children, data, comparison, direction = "column" }) => {
         legendgroup: "noise",
       });
     }
-    if (comparisonLocation && comparisonNoise) {
-      traces.push({
-        name: `Local Noise Level${storedSuffix}`,
-        x: comparisonLocation,
-        y: comparisonNoise,
-        type: "scatter",
-        mode: "lines+markers",
-        line: {
-          width: 2,
-          shape: "spline",
-          color: "#94a3b8",
-          dash: "dot",
-        },
-        marker: { size: 8, symbol: "circle-open" },
-        legendgroup: "noise",
-      });
-    }
+    // if (comparisonLocation && comparisonNoise) {
+    //   traces.push({
+    //     name: `Local Noise Level${storedSuffix}`,
+    //     x: comparisonLocation,
+    //     y: comparisonNoise,
+    //     type: "scatter",
+    //     mode: "lines+markers",
+    //     line: {
+    //       width: 2,
+    //       shape: "spline",
+    //       color: "#94a3b8",
+    //       dash: "dot",
+    //     },
+    //     marker: { size: 8, symbol: "circle-open" },
+    //     legendgroup: "noise",
+    //   });
+    // }
 
     if (traces.length === 0) return null;
 
@@ -581,7 +615,7 @@ const ChoPlots = ({ children, data, comparison, direction = "column" }) => {
     };
   }, [
     buildLayout,
-    comparisonResults,
+    // comparisonResults,
     coronalImageUrl,
     currentSuffix,
     imageAvailable,
@@ -593,13 +627,13 @@ const ChoPlots = ({ children, data, comparison, direction = "column" }) => {
   const choPlot = React.useMemo(() => {
     const location = resultsData?.location_sparse;
     const detectability = resultsData?.cho_detectability;
-    const comparisonLocation = comparisonResults?.location_sparse;
-    const comparisonDetectability = comparisonResults?.cho_detectability;
+    // const comparisonLocation = comparisonResults?.location_sparse;
+    // const comparisonDetectability = comparisonResults?.cho_detectability;
 
     if (
-      (!isTruthyArray(location) || !isTruthyArray(detectability)) &&
-      (!isTruthyArray(comparisonLocation) ||
-        !isTruthyArray(comparisonDetectability))
+      !isTruthyArray(location) ||
+      !isTruthyArray(detectability)
+      //   && (!isTruthyArray(comparisonLocation) || !isTruthyArray(comparisonDetectability))
     ) {
       return null;
     }
@@ -626,23 +660,23 @@ const ChoPlots = ({ children, data, comparison, direction = "column" }) => {
         legendgroup: "detectability",
       });
     }
-    if (comparisonLocation && comparisonDetectability) {
-      traces.push({
-        name: `Detectability Index${storedSuffix}`,
-        x: comparisonLocation,
-        y: comparisonDetectability,
-        type: "scatter",
-        mode: "lines+markers",
-        line: {
-          width: 2,
-          shape: "spline",
-          color: "#f97373",
-          dash: "dot",
-        },
-        marker: { size: 8, symbol: "square-open" },
-        legendgroup: "detectability",
-      });
-    }
+    // if (comparisonLocation && comparisonDetectability) {
+    //   traces.push({
+    //     name: `Detectability Index${storedSuffix}`,
+    //     x: comparisonLocation,
+    //     y: comparisonDetectability,
+    //     type: "scatter",
+    //     mode: "lines+markers",
+    //     line: {
+    //       width: 2,
+    //       shape: "spline",
+    //       color: "#f97373",
+    //       dash: "dot",
+    //     },
+    //     marker: { size: 8, symbol: "square-open" },
+    //     legendgroup: "detectability",
+    //   });
+    // }
 
     if (traces.length === 0) return null;
 
@@ -691,7 +725,7 @@ const ChoPlots = ({ children, data, comparison, direction = "column" }) => {
     };
   }, [
     buildLayout,
-    comparisonResults,
+    // comparisonResults,
     coronalImageUrl,
     currentSuffix,
     imageAvailable,
@@ -714,7 +748,7 @@ const ChoPlots = ({ children, data, comparison, direction = "column" }) => {
                 onClick={() =>
                   handleOpenPlotModal(
                     ctdiPlot,
-                    ctdiPlot?.layout?.title?.text ?? "CTDI/Dw"
+                    ctdiPlot?.layout?.title?.text ?? "CTDI/Dw",
                   )
                 }
                 sx={{
@@ -745,7 +779,7 @@ const ChoPlots = ({ children, data, comparison, direction = "column" }) => {
                 onClick={() =>
                   handleOpenPlotModal(
                     dwPlot,
-                    dwPlot?.layout?.title?.text ?? "CTDI/Dw"
+                    dwPlot?.layout?.title?.text ?? "CTDI/Dw",
                   )
                 }
                 sx={{
@@ -776,7 +810,7 @@ const ChoPlots = ({ children, data, comparison, direction = "column" }) => {
                 onClick={() =>
                   handleOpenPlotModal(
                     noisePlot,
-                    noisePlot?.layout?.title?.text ?? "Noise and detectability"
+                    noisePlot?.layout?.title?.text ?? "Noise and detectability",
                   )
                 }
                 sx={{
@@ -807,7 +841,7 @@ const ChoPlots = ({ children, data, comparison, direction = "column" }) => {
                 onClick={() =>
                   handleOpenPlotModal(
                     choPlot,
-                    choPlot?.layout?.title?.text ?? "Noise and detectability"
+                    choPlot?.layout?.title?.text ?? "Noise and detectability",
                   )
                 }
                 sx={{
@@ -838,7 +872,7 @@ const ChoPlots = ({ children, data, comparison, direction = "column" }) => {
                 onClick={() =>
                   handleOpenPlotModal(
                     npsPlot,
-                    npsPlot?.layout?.title?.text ?? "Noise power spectrum"
+                    npsPlot?.layout?.title?.text ?? "Noise power spectrum",
                   )
                 }
                 sx={{

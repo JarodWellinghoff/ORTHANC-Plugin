@@ -11,6 +11,7 @@ import Avatar from "@mui/material/Avatar";
 import HelpRoundedIcon from "@mui/icons-material/HelpRounded";
 import SettingsRoundedIcon from "@mui/icons-material/SettingsRounded";
 import InfoRoundedIcon from "@mui/icons-material/InfoRounded";
+import ColorModeIconDropdown from "../../shared-theme/ColorModeIconDropdown";
 
 const MenuItem = styled(MuiMenuItem)({
   margin: "2px 0",
@@ -20,6 +21,7 @@ const topListItems = [
   { text: "Profile", icon: InfoRoundedIcon },
   { text: "Settings", icon: SettingsRoundedIcon },
   { text: "Feedback", icon: HelpRoundedIcon },
+  { text: "", icon: ColorModeIconDropdown },
 ];
 
 const bottomListItems = [{ text: "Logout", icon: LogoutRoundedIcon }];

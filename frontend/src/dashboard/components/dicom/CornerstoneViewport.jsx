@@ -60,10 +60,10 @@ const toolDefinitions = [
 const sortInstances = (instances) => {
   return instances.slice().sort((a, b) => {
     const aNumber = Number(
-      a?.MainDicomTags?.InstanceNumber ?? a?.IndexInSeries ?? 0
+      a?.MainDicomTags?.InstanceNumber ?? a?.IndexInSeries ?? 0,
     );
     const bNumber = Number(
-      b?.MainDicomTags?.InstanceNumber ?? b?.IndexInSeries ?? 0
+      b?.MainDicomTags?.InstanceNumber ?? b?.IndexInSeries ?? 0,
     );
     return aNumber - bNumber;
   });
@@ -84,11 +84,13 @@ const ResetButton = ({ onClick, disabled }) => {
           position: "absolute",
           top: (theme) => theme.spacing(1),
           right: (theme) => theme.spacing(1),
+          bgcolor: hovered ? "black" : "transparent",
         }}>
         <RestartAltRoundedIcon
           sx={{
             transform: hovered ? "rotate(360deg)" : "none",
             transition: "all 0.5s ease",
+            color: "common.white",
           }}
         />
       </IconButton>
@@ -129,7 +131,7 @@ const ToolButtons = ({ activeTool, onChange }) => {
               <Stack
                 direction='row'
                 spacing={hovered ? 1 : 0}
-                sx={{ transition: "all 0.3s ease" }}>
+                sx={{ transition: "all 0.3s ease", color: "common.white" }}>
                 {tool.icon}
                 <Typography
                   variant='caption'
@@ -139,6 +141,7 @@ const ToolButtons = ({ activeTool, onChange }) => {
                     maxWidth: hovered ? "200px" : "0px",
                     overflow: "hidden",
                     transition: "all 0.3s ease",
+                    // color: "common.white",
                   }}>
                   {tool.label}
                 </Typography>
@@ -229,14 +232,14 @@ const CornerstoneViewport = ({ seriesUuid, currentIndex, setCurrentIndex }) => {
         console.log("seriesUuid", seriesUuid);
         const response = await fetch(
           `${API_BASE_URL}/series/${seriesUuid}/instances?expanded`,
-          { signal: controller.signal }
+          { signal: controller.signal },
         );
         if (!response.ok) {
           if (response.status === 404) {
             throw new Error("Series not found");
           }
           throw new Error(
-            response.statusText || "Failed to load series instances"
+            response.statusText || "Failed to load series instances",
           );
         }
         const data = await response.json();
@@ -256,7 +259,7 @@ const CornerstoneViewport = ({ seriesUuid, currentIndex, setCurrentIndex }) => {
         setError(
           err instanceof Error
             ? err.message
-            : "Unable to retrieve series images"
+            : "Unable to retrieve series images",
         );
       }
     };

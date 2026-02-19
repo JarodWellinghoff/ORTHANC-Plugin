@@ -16,6 +16,9 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
+import FiltersPanel from "./FiltersPanel";
+import { useNavigate } from "react-router-dom";
+import ContentPasteSearchIcon from "@mui/icons-material/ContentPasteSearch";
 import { DataGrid, GridToolbar } from "@mui/x-data-grid";
 import PlayArrowRoundedIcon from "@mui/icons-material/PlayArrowRounded";
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
@@ -116,7 +119,10 @@ const resolveSeriesKey = (row) => {
 };
 
 const BulkTestsPage = () => {
-  const { calculationStates } = useDashboard();
+  const navigate = useNavigate();
+  const { summary, calculationStates, actions } = useDashboard();
+  const { items, pagination } = summary;
+  console.log("items:", items);
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -136,7 +142,6 @@ const BulkTestsPage = () => {
   const [recoveringMap, setRecoveringMap] = useState({});
   const [activeRunCount, setActiveRunCount] = useState(0);
   const calculationStatesRef = useRef(calculationStates);
-
   useEffect(() => {
     calculationStatesRef.current = calculationStates;
   }, [calculationStates]);
@@ -215,8 +220,8 @@ const BulkTestsPage = () => {
       const items = Array.isArray(response)
         ? response
         : Array.isArray(response?.data)
-        ? response.data
-        : [];
+          ? response.data
+          : [];
       setResults(items);
     } catch (err) {
       console.error("Failed to load results", err);
@@ -235,11 +240,11 @@ const BulkTestsPage = () => {
 
   const availableSet = useMemo(
     () => new Set(availableSeries.filter(Boolean)),
-    [availableSeries]
+    [availableSeries],
   );
 
   const normalizedResults = useMemo(() => {
-    return results.map((item, index) => {
+    return items.map((item, index) => {
       const id = deriveRowId(item, index);
       const seriesUuid =
         item.series_uuid ?? item.seriesUuid ?? item.series_id ?? null;
@@ -260,7 +265,7 @@ const BulkTestsPage = () => {
           : statusRaw || "none";
       const hasDicom =
         Boolean(seriesUuid) && availableSet.has(String(seriesUuid));
-      console.log("item:", item.latest_analysis_date);
+      //   console.log("item:", item.latest_analysis_date);
       return {
         id,
         raw: item,
@@ -277,7 +282,7 @@ const BulkTestsPage = () => {
         hasDicom,
       };
     });
-  }, [results, availableSet]);
+  }, [items, availableSet]);
 
   const filteredRows = useMemo(() => {
     return normalizedResults.filter((row) => {
@@ -310,7 +315,7 @@ const BulkTestsPage = () => {
     const unique = new Set(
       normalizedResults
         .map((row) => row.testStatus)
-        .filter((value) => value && value !== "none")
+        .filter((value) => value && value !== "none"),
     );
     return Array.from(unique);
   }, [normalizedResults]);
@@ -331,106 +336,103 @@ const BulkTestsPage = () => {
     }));
   }, []);
 
-  const waitForSeriesCompletion = useCallback(
-    async (row, options = {}) => {
-      const seriesKey = resolveSeriesKey(row);
-      if (!seriesKey) {
-        return "unknown";
-      }
-      const pollIntervalMs = options.pollIntervalMs ?? 2000;
-      const startTimeoutMs = options.startTimeoutMs ?? 15000;
-      const timeoutMs = options.timeoutMs ?? 1000 * 60 * 60;
-      const startTime = Date.now();
-      let runningObserved = false;
-      let finalStatus = null;
+  const waitForSeriesCompletion = useCallback(async (row, options = {}) => {
+    const seriesKey = resolveSeriesKey(row);
+    if (!seriesKey) {
+      return "unknown";
+    }
+    const pollIntervalMs = options.pollIntervalMs ?? 2000;
+    const startTimeoutMs = options.startTimeoutMs ?? 15000;
+    const timeoutMs = options.timeoutMs ?? 1000 * 60 * 60;
+    const startTime = Date.now();
+    let runningObserved = false;
+    let finalStatus = null;
 
-      const readServerStatus = async () => {
-        try {
-          const response = await fetchJson(
-            `/cho-calculation-status?series_id=${encodeURIComponent(
-              seriesKey
-            )}&action=check`
-          );
-          const statusValue = (response?.status ?? "").toLowerCase();
-          return statusValue || null;
-        } catch (error) {
-          console.debug("Failed to poll calculation status", error);
-          return null;
-        }
-      };
-
-      const isFinishedStatus = (status) => {
-        if (!status) return false;
-        return (
-          status === "completed" ||
-          status === "success" ||
-          status === "failed" ||
-          status === "error" ||
-          status === "cancelled" ||
-          status === "aborted" ||
-          status === "idle" ||
-          status === "none" ||
-          status === "not_found" ||
-          status === "cleanup" ||
-          status === "history-cleanup"
+    const readServerStatus = async () => {
+      try {
+        const response = await fetchJson(
+          `/cho-calculation-status?series_id=${encodeURIComponent(
+            seriesKey,
+          )}&action=check`,
         );
-      };
+        const statusValue = (response?.status ?? "").toLowerCase();
+        return statusValue || null;
+      } catch (error) {
+        console.debug("Failed to poll calculation status", error);
+        return null;
+      }
+    };
 
-      while (true) {
-        const state = calculationStatesRef.current?.[seriesKey];
-        const rawStatus =
-          (state?.status ?? state?.eventType ?? state?.state ?? "") || "";
-        const normalizedStatus = rawStatus.toLowerCase();
+    const isFinishedStatus = (status) => {
+      if (!status) return false;
+      return (
+        status === "completed" ||
+        status === "success" ||
+        status === "failed" ||
+        status === "error" ||
+        status === "cancelled" ||
+        status === "aborted" ||
+        status === "idle" ||
+        status === "none" ||
+        status === "not_found" ||
+        status === "cleanup" ||
+        status === "history-cleanup"
+      );
+    };
 
-        if (
-          normalizedStatus === "running" ||
-          normalizedStatus === "progress" ||
-          normalizedStatus === "started"
-        ) {
-          runningObserved = true;
-        } else if (runningObserved && normalizedStatus) {
-          finalStatus = normalizedStatus;
+    while (true) {
+      const state = calculationStatesRef.current?.[seriesKey];
+      const rawStatus =
+        (state?.status ?? state?.eventType ?? state?.state ?? "") || "";
+      const normalizedStatus = rawStatus.toLowerCase();
+
+      if (
+        normalizedStatus === "running" ||
+        normalizedStatus === "progress" ||
+        normalizedStatus === "started"
+      ) {
+        runningObserved = true;
+      } else if (runningObserved && normalizedStatus) {
+        finalStatus = normalizedStatus;
+        break;
+      } else if (runningObserved && !normalizedStatus) {
+        const serverStatus = await readServerStatus();
+        if (serverStatus && serverStatus !== "running") {
+          finalStatus = serverStatus;
           break;
-        } else if (runningObserved && !normalizedStatus) {
-          const serverStatus = await readServerStatus();
-          if (serverStatus && serverStatus !== "running") {
-            finalStatus = serverStatus;
-            break;
-          }
         }
-
-        const elapsed = Date.now() - startTime;
-
-        if (!runningObserved && elapsed > startTimeoutMs) {
-          const serverStatus = await readServerStatus();
-          if (serverStatus === "running") {
-            runningObserved = true;
-          } else if (isFinishedStatus(serverStatus)) {
-            finalStatus = serverStatus;
-            break;
-          }
-        }
-
-        if (runningObserved && isFinishedStatus(normalizedStatus)) {
-          finalStatus = normalizedStatus;
-          break;
-        }
-
-        if (elapsed > timeoutMs) {
-          const timeoutError = new Error(
-            "Timed out waiting for the previous analysis to finish."
-          );
-          timeoutError.code = "WAIT_TIMEOUT";
-          throw timeoutError;
-        }
-
-        await sleep(pollIntervalMs);
       }
 
-      return finalStatus ?? "completed";
-    },
-    []
-  );
+      const elapsed = Date.now() - startTime;
+
+      if (!runningObserved && elapsed > startTimeoutMs) {
+        const serverStatus = await readServerStatus();
+        if (serverStatus === "running") {
+          runningObserved = true;
+        } else if (isFinishedStatus(serverStatus)) {
+          finalStatus = serverStatus;
+          break;
+        }
+      }
+
+      if (runningObserved && isFinishedStatus(normalizedStatus)) {
+        finalStatus = normalizedStatus;
+        break;
+      }
+
+      if (elapsed > timeoutMs) {
+        const timeoutError = new Error(
+          "Timed out waiting for the previous analysis to finish.",
+        );
+        timeoutError.code = "WAIT_TIMEOUT";
+        throw timeoutError;
+      }
+
+      await sleep(pollIntervalMs);
+    }
+
+    return finalStatus ?? "completed";
+  }, []);
 
   const runAnalysisForSeries = useCallback(
     async (row) => {
@@ -451,7 +453,7 @@ const BulkTestsPage = () => {
         body: JSON.stringify(payload),
       });
     },
-    [testType]
+    [testType],
   );
 
   const numSelected = useMemo(() => {
@@ -477,7 +479,7 @@ const BulkTestsPage = () => {
       selectedIds = selectionModel.ids.intersection(rowsById);
       if (selectedIds.size === 0) {
         setError(
-          "Selected rows are no longer available in the current data set."
+          "Selected rows are no longer available in the current data set.",
         );
         return;
       }
@@ -489,7 +491,7 @@ const BulkTestsPage = () => {
       // All rows except those in the exclusion set
       selectedIds = new Set(rowsById.keys()).difference(selectionModel.ids);
     }
-    console.log("selectedIds", selectedIds);
+    // console.log("selectedIds", selectedIds);
 
     const queue = [];
     const enqueueRow = (rowId) => {
@@ -608,13 +610,13 @@ const BulkTestsPage = () => {
         setActiveRunCount((count) => Math.max(0, count - 1));
       }
     },
-    [runAnalysisForSeries, updateBulkProgress, waitForSeriesCompletion]
+    [runAnalysisForSeries, updateBulkProgress, waitForSeriesCompletion],
   );
 
   const handleRecoverDicom = useCallback(
     async (row) => {
       if (!selectedModality) {
-        setError("Select a modality to use for DICOM recovery.");
+        setError("Select a server to use for DICOM recovery.");
         return;
       }
       if (!row.seriesInstanceUid) {
@@ -647,7 +649,7 @@ const BulkTestsPage = () => {
         setRecoveringMap((prev) => ({ ...prev, [row.id]: false }));
       }
     },
-    [selectedModality, updateBulkProgress, loadAvailableSeries]
+    [selectedModality, updateBulkProgress, loadAvailableSeries],
   );
 
   const columns = useMemo(() => {
@@ -675,15 +677,15 @@ const BulkTestsPage = () => {
         headerName: "Status",
         width: 140,
         renderCell: (params) => {
-          console.log("params:", params);
+          //   console.log("params:", params);
           const value = params.row.testStatus ?? "none";
           const chipColor = statusColorMap[value] ?? "default";
           const label = statusLabelMap[value] ?? value;
           const seriesKey = params.row.seriesUuid
             ? String(params.row.seriesUuid)
             : params.row.seriesInstanceUid
-            ? String(params.row.seriesInstanceUid)
-            : null;
+              ? String(params.row.seriesInstanceUid)
+              : null;
           const calculationState = seriesKey
             ? calculationStates[seriesKey]
             : null;
@@ -698,15 +700,15 @@ const BulkTestsPage = () => {
               (status === "completed"
                 ? "Completed"
                 : status === "failed"
-                ? "Failed"
-                : "Processing");
+                  ? "Failed"
+                  : "Processing");
 
             if (status === "running") {
               const progressValue =
                 typeof calculationState.progress === "number"
                   ? Math.min(
                       100,
-                      Math.max(0, Math.round(calculationState.progress))
+                      Math.max(0, Math.round(calculationState.progress)),
                     )
                   : null;
               const caption =
@@ -895,29 +897,18 @@ const BulkTestsPage = () => {
         filterable: false,
         renderCell: (params) => {
           const row = params.row;
+          const { seriesInstanceUid } = row;
+          //   console.log("action row:", row);
+          //   seriesInstanceUid
           const isRecovering = recoveringMap[row.id] ?? false;
           return (
             <Stack direction='row' spacing={1} alignItems='center'>
-              <Tooltip title='Run analysis with current settings'>
-                <span>
-                  <IconButton
-                    size='small'
-                    color='primary'
-                    disabled={runningBulk || !row.hasDicom}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      handleRunSingle(row);
-                    }}>
-                    <PlayArrowRoundedIcon fontSize='small' />
-                  </IconButton>
-                </span>
-              </Tooltip>
-              {!row.hasDicom && (
+              {!row.hasDicom ? (
                 <Tooltip
                   title={
                     selectedModality
-                      ? `Pull from modality ${selectedModality}`
-                      : "Select a modality first"
+                      ? `Pull from server ${selectedModality}`
+                      : "Select a server first"
                   }>
                   <span>
                     <Button
@@ -939,7 +930,39 @@ const BulkTestsPage = () => {
                     </Button>
                   </span>
                 </Tooltip>
+              ) : (
+                <Tooltip title='Run analysis with current settings'>
+                  <span>
+                    <IconButton
+                      size='small'
+                      color='primary'
+                      disabled={runningBulk || !row.hasDicom}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        handleRunSingle(row);
+                      }}>
+                      <PlayArrowRoundedIcon fontSize='small' />
+                    </IconButton>
+                  </span>
+                </Tooltip>
               )}
+
+              <Tooltip title='View results for this series'>
+                <span>
+                  <IconButton
+                    size='small'
+                    color='primary'
+                    disabled={runningBulk || !row.hasDicom}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      navigate(
+                        `/results/${encodeURIComponent(seriesInstanceUid)}`,
+                      );
+                    }}>
+                    <ContentPasteSearchIcon fontSize='small' />
+                  </IconButton>
+                </span>
+              </Tooltip>
             </Stack>
           );
         },
@@ -955,6 +978,41 @@ const BulkTestsPage = () => {
     handleRunSingle,
   ]);
 
+  const paginationModel = useMemo(
+    () => ({
+      page: Math.max(0, (pagination.page ?? 1) - 1),
+      pageSize: pagination.limit ?? 25,
+    }),
+    [pagination.page, pagination.limit],
+  );
+  const getRowId = useCallback((row) => {
+    const baseId =
+      row.series_id ??
+      row.series_uuid ??
+      row.series_instance_uid ??
+      row.seriesId ??
+      row.seriesUuid ??
+      row.study_id ??
+      null;
+    if (baseId !== null && baseId !== undefined && baseId !== "") {
+      return String(baseId);
+    }
+    return `${row.patient_name ?? "patient"}-${
+      row.latest_analysis_date ?? "na"
+    }`;
+  }, []);
+
+  const handlePaginationModelChange = useCallback(
+    (model) => {
+      if (model.page !== paginationModel.page) {
+        actions.changePage(model.page + 1);
+      }
+      if (model.pageSize !== paginationModel.pageSize) {
+        actions.changePageSize(model.pageSize);
+      }
+    },
+    [actions, paginationModel.page, paginationModel.pageSize],
+  );
   return (
     <Stack spacing={3}>
       <Stack direction='row' justifyContent='space-between' alignItems='center'>
@@ -973,6 +1031,54 @@ const BulkTestsPage = () => {
         </Stack>
       </Stack>
 
+      <FiltersPanel
+        actionItems={[
+          "advancedFilters",
+          "clearFilters",
+          "refresh",
+          <FormControl size='small' sx={{ minWidth: 200 }}>
+            <InputLabel id='modality-label'>
+              Preferred Server{loadingModalities ? " (loading…)" : ""}
+            </InputLabel>
+            <Select
+              labelId='modality-label'
+              label='Preferred Modality'
+              value={selectedModality}
+              onChange={(event) => setSelectedModality(event.target.value)}
+              disabled={loadingModalities || modalities.length === 0}>
+              {modalities.map((item) => (
+                <MenuItem key={item.id} value={item.id}>
+                  {item.title ?? item.id} ({item.aet ?? "AET"})
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>,
+          "exportCsv",
+          <Tooltip
+            title={
+              numSelected
+                ? `Run ${numSelected} selected tests`
+                : "Select rows to start bulk testing"
+            }>
+            <span>
+              <Button
+                variant='contained'
+                sx={{ whiteSpace: "nowrap" }}
+                startIcon={
+                  runningBulk ? (
+                    <CircularProgress size={18} />
+                  ) : (
+                    <PlayArrowRoundedIcon />
+                  )
+                }
+                disabled={runningBulk || numSelected === 0}
+                onClick={handleRunBulk}>
+                {runningBulk ? "Starting..." : `Run ${numSelected || ""} Tests`}
+              </Button>
+            </span>
+          </Tooltip>,
+        ]}
+      />
       {error && (
         <Alert severity='error' onClose={() => setError(null)}>
           {error}
@@ -984,7 +1090,7 @@ const BulkTestsPage = () => {
         </Alert>
       )}
 
-      <Paper variant='outlined' sx={{ p: 3 }}>
+      {/* <Paper variant='outlined' sx={{ p: 3 }}>
         <Stack
           spacing={2}
           direction={{ xs: "column", md: "row" }}
@@ -1001,7 +1107,7 @@ const BulkTestsPage = () => {
                 label='Test Type'
                 value={testType}
                 onChange={(event) => setTestType(event.target.value)}>
-                {/* {<MenuItem value='global'>Global Noise</MenuItem>} */}
+                {<MenuItem value='global'>Global Noise</MenuItem>}
                 <MenuItem value='full'>Full CHO</MenuItem>
               </Select>
             </FormControl>
@@ -1046,7 +1152,7 @@ const BulkTestsPage = () => {
             </span>
           </Tooltip>
         </Stack>
-      </Paper>
+      </Paper> */}
 
       <Paper variant='outlined' sx={{ p: 2 }}>
         <Stack
@@ -1106,25 +1212,30 @@ const BulkTestsPage = () => {
 
         <Box sx={{ width: "100%" }}>
           {console.log("Filtered Rows:", filteredRows)}
-          {console.log("Columns:", columns)}
+          {/* {console.log("Columns:", columns)}
           {console.log("Loading:", loading)}
-          {console.log("Selection Model:", selectionModel)}
+          {console.log("Selection Model:", selectionModel)} */}
 
           <DataGrid
-            rows={filteredRows}
+            rows={loading ? [] : (filteredRows ?? [])}
             columns={columns}
+            getRowId={getRowId}
+            rowCount={pagination.total ?? filteredRows?.length ?? 0}
+            paginationMode='server'
+            paginationModel={paginationModel}
+            onPaginationModelChange={handlePaginationModelChange}
             // disableRowSelectionExcludeModel
             checkboxSelection
             disableRowSelectionOnClick
             loading={loading}
             pageSizeOptions={[25, 50, 100]}
             initialState={{
-              pagination: { paginationModel: { pageSize: 25 } },
+              pagination: { paginationModel: paginationModel },
               sorting: {
                 sortModel: [{ field: "latestAnalysis", sort: "desc" }],
               },
             }}
-            showToolbar
+            // showToolbar
             onRowSelectionModelChange={(model) => setSelectionModel(model)}
             rowSelectionModel={selectionModel}
             slotProps={{

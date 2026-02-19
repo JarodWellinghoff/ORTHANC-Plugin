@@ -15,17 +15,19 @@ import Tooltip from "@mui/material/Tooltip";
 
 const mainNavItems = [
   {
-    text: "Results",
-    icon: ContentPasteSearchIcon,
-    to: "/",
-    isActive: (pathname) => pathname === "/" || pathname.startsWith("/results"),
-  },
-  {
     text: "Bulk Tests",
     icon: ScienceRoundedIcon,
-    to: "/bulk-tests",
-    isActive: (pathname) => pathname.startsWith("/bulk-tests"),
+    to: "/main-dashboard",
+    isActive: (pathname) =>
+      pathname.startsWith("/main-dashboard") || pathname.startsWith("/results"),
   },
+  //   {
+  //     text: "Results",
+  //     icon: ContentPasteSearchIcon,
+  //     to: "/results",
+  //     isActive: (pathname) =>
+  //       pathname === "/results" || pathname.startsWith("/results"),
+  //   },
   {
     text: "DICOM Pulls",
     icon: CloudDownloadRoundedIcon,

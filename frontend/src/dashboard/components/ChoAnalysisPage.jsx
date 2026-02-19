@@ -341,7 +341,7 @@ const ChoAnalysisPage = () => {
   const [seriesInstances, setSeriesInstances] = React.useState([]);
   const [dicomTags, setDicomTags] = React.useState([]);
   const currentStageIndex = stageOrder.indexOf(
-    progress?.stage ?? "initialization"
+    progress?.stage ?? "initialization",
   );
   React.useEffect(() => {
     fetch("/mtfc_data.csv")
@@ -398,7 +398,7 @@ const ChoAnalysisPage = () => {
         const childTags = new Set();
         elem.Value.forEach((seqItem) => {
           Object.keys(seqItem || {}).forEach((childTag) =>
-            childTags.add(childTag)
+            childTags.add(childTag),
           );
         });
 
@@ -504,7 +504,7 @@ const ChoAnalysisPage = () => {
         <Stack
           spacing={1.5}
           sx={{
-            height: { sm: "100%", md: "55vh" },
+            height: { sm: "100%", md: "55vh", alignItems: "left" },
           }}>
           <InfoRow label='Make' value={resolvedSummary.make} />
           <InfoRow label='Location' value={resolvedSummary.location} />
@@ -616,7 +616,7 @@ const ChoAnalysisPage = () => {
           items: section.items.filter((item) => item.value !== "N/A"),
         }))
         .filter((section) => section.items.length > 0),
-    [metadataSections]
+    [metadataSections],
   );
 
   const allMetadataContent = React.useMemo(() => {
@@ -688,7 +688,7 @@ const ChoAnalysisPage = () => {
 
   React.useEffect(() => {
     const activeTab = detailsTabs.find(
-      (tab) => tab.value === detailsTab && tab.available
+      (tab) => tab.value === detailsTab && tab.available,
     );
     if (!activeTab) {
       const fallback = detailsTabs.find((tab) => tab.available);
@@ -726,11 +726,11 @@ const ChoAnalysisPage = () => {
 
   const handleBackToDashboard = React.useCallback(() => {
     actions.closeChoModal();
-    navigate("/");
+    navigate("/main-dashboard");
   }, [actions, navigate]);
 
   const activeDetailsTab = detailsTabs.find(
-    (tab) => tab.value === detailsTab && tab.available
+    (tab) => tab.value === detailsTab && tab.available,
   );
   const hasAvailableDetails = detailsTabs.some((tab) => tab.available);
 
@@ -797,11 +797,11 @@ const ChoAnalysisPage = () => {
                 <Divider />
                 <Box sx={{ flex: 1, mt: 1 }}>
                   {hasAvailableDetails ? (
-                    activeDetailsTab?.content ?? (
+                    (activeDetailsTab?.content ?? (
                       <Typography variant='body2' color='text.secondary'>
                         Select a section to view details.
                       </Typography>
-                    )
+                    ))
                   ) : (
                     <Typography variant='body2' color='text.secondary'>
                       Select a series from the dashboard to begin.
@@ -902,7 +902,7 @@ const ChoAnalysisPage = () => {
                                       label='Contrast Dependent Spatial Resolution'
                                       value={params.spatialResolution}
                                       onChange={handleFieldChange(
-                                        "spatialResolution"
+                                        "spatialResolution",
                                       )}
                                       fullWidth>
                                       <MenuItem value='auto'>Auto</MenuItem>
@@ -987,12 +987,12 @@ const ChoAnalysisPage = () => {
                                       params.spatialResolution === "auto"
                                         ? defaultMtfc10Data[currentContrast]
                                         : params.spatialResolution ===
-                                          "custom-50"
-                                        ? "Gaussian"
-                                        : params.spatialResolution ===
-                                          "custom-full"
-                                        ? mtfc10Data[currentContrast]
-                                        : null
+                                            "custom-50"
+                                          ? "Gaussian"
+                                          : params.spatialResolution ===
+                                              "custom-full"
+                                            ? mtfc10Data[currentContrast]
+                                            : null
                                     }
                                     slotProps={{
                                       input: {
