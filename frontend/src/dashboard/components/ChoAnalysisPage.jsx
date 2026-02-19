@@ -1048,12 +1048,12 @@ const ChoAnalysisPage = () => {
                                     loading={csvLoading}
                                     error={csvError}
                                     editable50={
-                                      //   params.spatialResolution !== "auto"
-                                      false
+                                      params.spatialResolution !== "auto"
+                                      //   false
                                     }
                                     editable10={
-                                      //   params.spatialResolution === "custom-full"
-                                      false
+                                      params.spatialResolution === "custom-full"
+                                      //   false
                                     }
                                     mtfc50Data={mtfc50Data}
                                     mtfc10Data={mtfc10Data}
