@@ -32,7 +32,6 @@ class CHOResultsStorage:
         }
         self.bucket_name = "images"
         self.postgres_connection = None
-        self.minio_connection = None
         self.minio_client = None
         # SQL files paths - can be customized
         self.sql_files_path = "/src/sql"  # Default path, adjust as needed
@@ -266,22 +265,22 @@ class CHOResultsStorage:
     def init_minio_client(self):
         """Initialize MinIO client"""
         try:
-            self.minio_connection = Minio(
-                self.minio_config["endpoint"],
+            self.minio_client = Minio(
+                endpoint=self.minio_config["endpoint"],
                 access_key=self.minio_config["access_key"],
                 secret_key=self.minio_config["secret_key"],
                 secure=self.minio_config["secure"],
             )
             # Ensure bucket exists
-            if not self.minio_connection.bucket_exists(self.bucket_name):
-                self.minio_connection.make_bucket(self.bucket_name)
+            if not self.minio_client.bucket_exists(bucket_name=self.bucket_name):
+                self.minio_client.make_bucket(bucket_name=self.bucket_name)
                 print(f"Created MinIO bucket: {self.bucket_name}")
             else:
                 print(f"MinIO bucket already exists: {self.bucket_name}")
             return True
         except Exception as e:
             print(f"Failed to initialize MinIO client: {str(e)}")
-            self.minio_connection = None
+            self.minio_client = None
             return False
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -1125,7 +1124,7 @@ class CHOResultsStorage:
 
     def save_coronal_image(self, series_instance_uid, coronal_view_data):
         """Save coronal view image to MinIO"""
-        if self.minio_connection is None:
+        if self.minio_client is None:
             print("MinIO client not initialized")
             return None
 
@@ -1140,11 +1139,11 @@ class CHOResultsStorage:
             size = img_bytes.getbuffer().nbytes
 
             object_name = f"coronal/{series_instance_uid}.png"
-            self.minio_connection.put_object(
-                self.bucket_name,
-                object_name,
-                img_bytes,
-                size,
+            self.minio_client.put_object(
+                bucket_name=self.bucket_name,
+                object_name=object_name,
+                data=img_bytes,
+                length=size,
                 content_type="image/png",
             )
             print(f"Saved coronal image: {object_name}")
@@ -1159,12 +1158,15 @@ class CHOResultsStorage:
 
     def get_coronal_image(self, series_instance_uid):
         """Retrieve coronal view image from MinIO"""
-        if self.minio_connection is None:
+        if self.minio_client is None:
             return None
 
         try:
             object_name = f"coronal/{series_instance_uid}.png"
-            response = self.minio_connection.get_object(self.bucket_name, object_name)
+            response = self.minio_client.get_object(
+                bucket_name=self.bucket_name,
+                object_name=object_name,
+            )
             data = response.read()
             response.close()
             response.release_conn()
