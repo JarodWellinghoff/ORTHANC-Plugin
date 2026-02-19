@@ -309,6 +309,8 @@ const ChoAnalysisPage = () => {
     pollError,
     storedResults,
   } = choModal;
+  console.log("storedResults:", storedResults);
+  console.log("results:", results);
 
   const { availableSeries } = summary;
 

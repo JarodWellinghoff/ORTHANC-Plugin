@@ -511,6 +511,7 @@ def get_database_connection():
 
 #     _, ext = os.path.splitext(filepath)
 
+
 #     try:
 #         with open(filepath, 'rb') as f:
 #             content = f.read()
@@ -523,6 +524,41 @@ def get_database_connection():
 #     except FileNotFoundError:
 #         print(f"Static file not found: {filepath}")
 #         output.SendHttpStatusCode(404)
+def DeleteDicomSeries(output: orthanc.RestOutput, url: str, **request) -> None:
+    """Delete a DICOM series from Orthanc storage by its Orthanc UUID.
+
+    DELETE /cho-dicom/<series_uuid>
+
+    This is a separate action from deleting analysis results in the database;
+    both can co-exist independently.
+    """
+    if handle_cors_preflight(output, request):
+        return
+
+    method = request.get("method")
+    groups = request.get("groups", [])
+    series_uuid = groups[0] if groups else None
+
+    if method != "DELETE":
+        output.SendMethodNotAllowed("DELETE")
+        return
+
+    if not series_uuid:
+        error = {"error": "series_uuid is required"}
+        send_json(output, error, status=400)
+        return
+
+    try:
+        orthanc.RestApiDelete(f"/series/{series_uuid}")
+        response = {
+            "message": f"Successfully deleted DICOM series {series_uuid} from Orthanc"
+        }
+        send_json(output, response)
+        print(f"Deleted DICOM series from Orthanc: {series_uuid}")
+    except Exception as e:
+        print(f"Error deleting DICOM series {series_uuid}: {e}")
+        error_response = {"error": f"Failed to delete DICOM series: {str(e)}"}
+        send_json(output, error_response, status=500)
 
 
 def HandleCHOResult(output: orthanc.RestOutput, url: str, **request) -> None:
@@ -1567,3 +1603,4 @@ orthanc.RegisterRestCallback("/dicom-pull/batches", HandleDicomPullBatches)  # t
 orthanc.RegisterRestCallback("/dicom-pull/recover", HandleDicomPullRecover)  # type: ignore
 orthanc.RegisterRestCallback("/cho-progress/stream", StreamChoProgress)  # type: ignore
 orthanc.RegisterRestCallback("/create-lesion", CreateLesion)  # type: ignore
+orthanc.RegisterRestCallback("/cho-dicom/(.*)", DeleteDicomSeries)  # type: ignore

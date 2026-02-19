@@ -32,10 +32,19 @@ const LoadingOverlay = () => (
   </Box>
 );
 
+// Statuses that mean analysis results exist in the DB
+const RESULT_STATUSES = new Set(["full", "partial"]);
+
 const SummarySection = () => {
   const { summary, actions } = useDashboard();
   const navigate = useNavigate();
-  const { items, loading, pagination } = summary;
+  const { items, loading, pagination, availableSeries } = summary;
+
+  // Build a set of Orthanc UUIDs that are currently available on the server
+  const availableSet = React.useMemo(
+    () => new Set((availableSeries ?? []).filter(Boolean).map(String)),
+    [availableSeries],
+  );
 
   const openSeriesDetails = React.useCallback(
     (series) => {
@@ -52,7 +61,7 @@ const SummarySection = () => {
         navigate(`/results/${encodeURIComponent(String(targetId))}`);
       }
     },
-    [actions, navigate]
+    [actions, navigate],
   );
 
   const paginationModel = React.useMemo(
@@ -60,7 +69,7 @@ const SummarySection = () => {
       page: Math.max(0, (pagination.page ?? 1) - 1),
       pageSize: pagination.limit ?? 25,
     }),
-    [pagination.page, pagination.limit]
+    [pagination.page, pagination.limit],
   );
 
   const handlePaginationModelChange = React.useCallback(
@@ -72,7 +81,7 @@ const SummarySection = () => {
         actions.changePageSize(model.pageSize);
       }
     },
-    [actions, paginationModel.page, paginationModel.pageSize]
+    [actions, paginationModel.page, paginationModel.pageSize],
   );
 
   const columns = React.useMemo(
@@ -127,27 +136,41 @@ const SummarySection = () => {
         disableColumnMenu: true,
         width: 100,
         align: "center",
-        renderCell: (params) => (
-          <Tooltip title='Delete'>
-            <span>
-              <IconButton
-                size='small'
-                onClick={(event) => {
-                  event.stopPropagation();
-                  actions.openDeleteDialog(
-                    params.row.series_id,
-                    null,
-                    params.row.patient_name
-                  );
-                }}>
-                <DeleteIcon fontSize='small' />
-              </IconButton>
-            </span>
-          </Tooltip>
-        ),
+        renderCell: (params) => {
+          const row = params.row;
+          const seriesUuid = row.series_uuid ?? row.seriesUuid ?? null;
+          const hasResults = RESULT_STATUSES.has(
+            String(row.test_status ?? "none").toLowerCase(),
+          );
+          const hasDicom =
+            Boolean(seriesUuid) && availableSet.has(String(seriesUuid));
+
+          return (
+            <Tooltip title='Delete'>
+              <span>
+                <IconButton
+                  size='small'
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    actions.openDeleteDialog(row.series_id, {
+                      seriesUuid,
+                      patientName: row.patient_name,
+                      hasResults,
+                      hasDicom,
+                      // Default: delete results if they exist, otherwise offer DICOM
+                      initialDeleteResults: hasResults,
+                      initialDeleteDicom: !hasResults && hasDicom,
+                    });
+                  }}>
+                  <DeleteIcon fontSize='small' />
+                </IconButton>
+              </span>
+            </Tooltip>
+          );
+        },
       },
     ],
-    [actions]
+    [actions, availableSet],
   );
 
   const getRowId = React.useCallback((row) => {
@@ -170,7 +193,7 @@ const SummarySection = () => {
   return (
     <DataGrid
       autoHeight
-      rows={loading ? [] : items ?? []}
+      rows={loading ? [] : (items ?? [])}
       columns={columns}
       getRowId={getRowId}
       rowCount={pagination.total ?? items?.length ?? 0}

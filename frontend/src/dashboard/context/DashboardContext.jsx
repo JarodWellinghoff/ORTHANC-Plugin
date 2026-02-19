@@ -48,11 +48,30 @@ const createInitialChoState = () => ({
   pollError: null,
 });
 
+// Initial state for the delete dialog
+const createInitialDeleteDialog = () => ({
+  open: false,
+  // Identifiers
+  seriesId: null, // series_instance_uid — used for DB result delete
+  seriesUuid: null, // Orthanc UUID — used for DICOM delete
+  // Metadata
+  calculationType: null,
+  patientName: null,
+  // What exists
+  hasResults: false, // Whether DB results exist for this series
+  hasDicom: false, // Whether DICOMs are present in Orthanc
+  // User's current selections
+  deleteResults: false,
+  deleteDicom: false,
+  // Loading state
+  loading: false,
+});
+
 const fetchJson = async (url, options) => {
-  const response = await fetch(
-    `${import.meta.env.VITE_API_URL}${url}`,
-    options
-  );
+  const response = await fetch(`${import.meta.env.VITE_API_URL}${url}`, {
+    credentials: "include",
+    ...options,
+  });
   if (response.status === 204) return null;
   if (!response.ok) {
     const text = await response.text();
@@ -111,28 +130,6 @@ const deriveSeriesSummary = (data, fallback = null) => {
       data.patient_name ??
       fallback?.patient_name ??
       null,
-    protocol_name:
-      series.protocol_name ??
-      data.protocol_name ??
-      fallback?.protocol_name ??
-      null,
-    institution_name:
-      scanner.institution_name ??
-      study.institution_name ??
-      data.institution_name ??
-      fallback?.institution_name ??
-      null,
-    scanner_model:
-      scanner.model_name ??
-      scanner.scanner_model ??
-      data.scanner_model ??
-      fallback?.scanner_model ??
-      null,
-    station_name:
-      scanner.station_name ??
-      data.station_name ??
-      fallback?.station_name ??
-      null,
     series_uuid:
       series.series_instance_uid ??
       series.series_uuid ??
@@ -151,7 +148,7 @@ const deriveSeriesSummary = (data, fallback = null) => {
   };
 
   const hasValue = Object.values(summary).some(
-    (value) => value !== null && value !== undefined && value !== ""
+    (value) => value !== null && value !== undefined && value !== "",
   );
 
   if (!hasValue) {
@@ -188,13 +185,7 @@ export const DashboardProvider = ({ children }) => {
   });
   const [availableSeries, setAvailableSeries] = useState([]);
   const [choModal, setChoModal] = useState(createInitialChoState);
-  const [deleteDialog, setDeleteDialog] = useState({
-    open: false,
-    seriesId: null,
-    calculationType: null,
-    patientName: null,
-    loading: false,
-  });
+  const [deleteDialog, setDeleteDialog] = useState(createInitialDeleteDialog);
   const [calculationStates, setCalculationStates] = useState({});
 
   const pollingRef = useRef(null);
@@ -231,106 +222,106 @@ export const DashboardProvider = ({ children }) => {
 
   const updateFilter = useCallback((name, value) => {
     setFilters((prev) => ({ ...prev, [name]: value ?? "" }));
-    setPagination((prev) => ({ ...prev, page: 1 }));
   }, []);
 
-  const clearFilterValue = useCallback(
-    (name) => {
-      updateFilter(name, "");
-    },
-    [updateFilter]
-  );
+  const clearFilterValue = useCallback((name) => {
+    setFilters((prev) => ({ ...prev, [name]: "" }));
+  }, []);
 
   const toggleAdvancedFilters = useCallback(() => {
     setAdvancedFiltersOpen((prev) => !prev);
   }, []);
 
-  const buildFilterParams = useCallback(() => {
-    return {
-      patient_search: filters.patientSearch,
-      institute: filters.institute,
-      scanner_station: filters.scannerStation,
-      protocol_name: filters.protocolName,
-      scanner_model: filters.scannerModel,
-      exam_date_from: filters.examDateFrom,
-      exam_date_to: filters.examDateTo,
-      patient_age_min: filters.ageMin,
-      patient_age_max: filters.ageMax,
-    };
-  }, [filters]);
+  const buildFilterParams = useCallback(
+    (overrides = {}) => {
+      const p = { ...filters, ...overrides };
+      const params = {};
+      if (p.patientSearch) params.patient_search = p.patientSearch;
+      if (p.institute) params.institute = p.institute;
+      if (p.scannerStation) params.scanner_station = p.scannerStation;
+      if (p.protocolName) params.protocol_name = p.protocolName;
+      if (p.scannerModel) params.scanner_model = p.scannerModel;
+      if (p.examDateFrom) params.exam_date_from = p.examDateFrom;
+      if (p.examDateTo) params.exam_date_to = p.examDateTo;
+      if (p.ageMin) params.age_min = p.ageMin;
+      if (p.ageMax) params.age_max = p.ageMax;
+      return params;
+    },
+    [filters],
+  );
 
   const loadFilterOptions = useCallback(async () => {
     try {
       const data = await fetchJson("/cho-filter-options");
       if (mountedRef.current && data) {
-        setFilterOptions(data);
+        setFilterOptions({
+          institutes: data.institutes ?? [],
+          scanner_stations: data.scanner_stations ?? [],
+          protocol_names: data.protocol_names ?? [],
+          scanner_models: data.scanner_models ?? [],
+          date_range: data.date_range ?? null,
+          age_range: data.age_range ?? null,
+        });
       }
     } catch (error) {
       console.error("Failed to load filter options", error);
-      setStatus(`Failed to load filter options: ${error.message}`, "error");
     }
-  }, [setStatus]);
+  }, []);
 
   const loadSummary = useCallback(
     async (overrides = {}) => {
-      const targetPage = overrides.page ?? pagination.page;
-      const targetLimit = overrides.limit ?? pagination.limit;
-
+      if (!mountedRef.current) return;
       setSummaryLoading(true);
-      setStatus("Loading data...", "loading");
 
       try {
-        const params = buildFilterParams();
-        params.page = targetPage;
-        params.limit = targetLimit;
-        const search = toSearchParams(params);
+        const targetPage = overrides.page ?? pagination.page ?? 1;
+        const targetLimit = overrides.limit ?? pagination.limit ?? 25;
 
-        const [statsResponse, summaryResponse, orthancSeries] =
-          await Promise.all([
-            fetchJson("/results-statistics"),
-            fetchJson(`/cho-results?${search.toString()}`),
-            fetchJson("/series/"),
-          ]);
-        console.debug("Stats Response:", statsResponse);
-        console.debug("Summary Response:", summaryResponse);
-        console.debug("Orthanc Series:", orthancSeries);
-        console.debug("mountedRef.current:", mountedRef.current);
-        if (mountedRef.current) {
-          if (statsResponse) {
-            setStats({
-              total: statsResponse.total_results_count ?? 0,
-              detectability: statsResponse.detectability_count ?? 0,
-              noise: statsResponse.global_noise_count ?? 0,
-              errors: statsResponse.error_count ?? 0,
-            });
-          }
+        const filterParams = buildFilterParams(overrides);
+        const searchParams = toSearchParams({
+          ...filterParams,
+          page: targetPage,
+          limit: targetLimit,
+        });
 
-          let items = [];
-          let total = 0;
-          let pages = 1;
-          let page = targetPage;
+        const [summaryResponse, orthancSeries] = await Promise.all([
+          fetchJson(`/cho-results?${searchParams.toString()}`),
+          fetchJson("/series/").catch(() => []),
+        ]);
 
-          if (Array.isArray(summaryResponse)) {
-            items = summaryResponse;
-            total = summaryResponse.length;
-            pages = Math.max(1, Math.ceil(total / targetLimit));
-          } else if (summaryResponse) {
-            items = summaryResponse.data ?? [];
-            total = summaryResponse.total ?? items.length;
-            pages =
-              summaryResponse.pages ??
-              Math.max(1, Math.ceil(total / targetLimit));
-            page = summaryResponse.page ?? targetPage;
-          }
+        if (!mountedRef.current) return;
 
-          setSummaryItems(items);
-          setPagination({ page, limit: targetLimit, total, pages });
-          setAvailableSeries(Array.isArray(orthancSeries) ? orthancSeries : []);
-          setStatus(
-            `Loaded ${items.length} series (Page ${page} of ${pages})`,
-            "success"
-          );
+        setPagination((prev) => ({
+          ...prev,
+          page: targetPage,
+          limit: targetLimit,
+        }));
+
+        let items = [];
+        let total = 0;
+        let pages = 1;
+        let page = targetPage;
+
+        if (Array.isArray(summaryResponse)) {
+          items = summaryResponse;
+          total = summaryResponse.length;
+          pages = Math.max(1, Math.ceil(total / targetLimit));
+        } else if (summaryResponse) {
+          items = summaryResponse.data ?? [];
+          total = summaryResponse.total ?? items.length;
+          pages =
+            summaryResponse.pages ??
+            Math.max(1, Math.ceil(total / targetLimit));
+          page = summaryResponse.page ?? targetPage;
         }
+
+        setSummaryItems(items);
+        setPagination({ page, limit: targetLimit, total, pages });
+        setAvailableSeries(Array.isArray(orthancSeries) ? orthancSeries : []);
+        setStatus(
+          `Loaded ${items.length} series (Page ${page} of ${pages})`,
+          "success",
+        );
       } catch (error) {
         console.error("Failed to load dashboard data", error);
         if (mountedRef.current) {
@@ -342,7 +333,7 @@ export const DashboardProvider = ({ children }) => {
         }
       }
     },
-    [buildFilterParams, pagination.page, pagination.limit, setStatus]
+    [buildFilterParams, pagination.page, pagination.limit, setStatus],
   );
 
   useEffect(() => {
@@ -362,7 +353,7 @@ export const DashboardProvider = ({ children }) => {
       setPagination((prev) => ({ ...prev, page }));
       loadSummary({ page });
     },
-    [loadSummary]
+    [loadSummary],
   );
 
   const changePageSize = useCallback(
@@ -370,54 +361,129 @@ export const DashboardProvider = ({ children }) => {
       setPagination((prev) => ({ ...prev, page: 1, limit }));
       loadSummary({ page: 1, limit });
     },
-    [loadSummary]
+    [loadSummary],
   );
 
+  /**
+   * Open the delete dialog.
+   *
+   * @param {string|null} seriesId    - The series_instance_uid (for DB result delete)
+   * @param {object}      opts
+   * @param {string|null}   opts.seriesUuid         - Orthanc UUID (for DICOM delete)
+   * @param {string|null}   opts.calculationType
+   * @param {string|null}   opts.patientName
+   * @param {boolean}       opts.hasResults         - Whether DB results exist
+   * @param {boolean}       opts.hasDicom           - Whether DICOMs exist in Orthanc
+   * @param {boolean}       opts.initialDeleteResults - Pre-check "delete results" box
+   * @param {boolean}       opts.initialDeleteDicom   - Pre-check "delete DICOM" box
+   */
   const openDeleteDialogAction = useCallback(
-    (seriesId, calculationType, patientName) => {
+    (
+      seriesId,
+      {
+        seriesUuid = null,
+        calculationType = null,
+        patientName = null,
+        hasResults = false,
+        hasDicom = false,
+        initialDeleteResults = true,
+        initialDeleteDicom = false,
+      } = {},
+    ) => {
       setDeleteDialog({
         open: true,
-        seriesId,
+        seriesId: seriesId ?? null,
+        seriesUuid: seriesUuid ?? null,
         calculationType: calculationType ?? null,
         patientName: patientName ?? null,
+        hasResults,
+        hasDicom,
+        // Only pre-check options that are actually possible
+        deleteResults: initialDeleteResults && hasResults,
+        deleteDicom: initialDeleteDicom && hasDicom,
         loading: false,
       });
     },
-    []
+    [],
   );
 
   const closeDeleteDialog = useCallback(() => {
-    setDeleteDialog({
-      open: false,
-      seriesId: null,
-      calculationType: null,
-      patientName: null,
-      loading: false,
-    });
+    setDeleteDialog(createInitialDeleteDialog());
   }, []);
 
+  /**
+   * Toggle one of the delete checkboxes inside the dialog.
+   * @param {"deleteResults"|"deleteDicom"} field
+   */
+  const toggleDeleteOption = useCallback((field) => {
+    setDeleteDialog((prev) => ({ ...prev, [field]: !prev[field] }));
+  }, []);
+
+  /**
+   * Execute the confirmed deletion(s).
+   * Runs result-delete and/or DICOM-delete based on the user's checkbox selections.
+   */
   const confirmDelete = useCallback(async () => {
-    if (!deleteDialog.seriesId) return;
+    const {
+      seriesId,
+      seriesUuid,
+      calculationType,
+      deleteResults,
+      deleteDicom,
+    } = deleteDialog;
+
+    if (!deleteResults && !deleteDicom) return;
 
     setDeleteDialog((prev) => ({ ...prev, loading: true }));
     setStatus("Deleting...", "loading");
 
+    const errors = [];
+
     try {
-      const query = deleteDialog.calculationType
-        ? `?calculation_type=${encodeURIComponent(
-            deleteDialog.calculationType
-          )}`
-        : "";
-      await fetchJson(`/cho-results/${deleteDialog.seriesId}${query}`, {
-        method: "DELETE",
-      });
-      if (mountedRef.current) {
-        setStatus("Successfully deleted", "success");
-        closeDeleteDialog();
-        loadSummary();
+      // ── Delete DB results ─────────────────────────────────────────────
+      if (deleteResults && seriesId) {
+        try {
+          const query = calculationType
+            ? `?calculation_type=${encodeURIComponent(calculationType)}`
+            : "";
+          await fetchJson(`/cho-results/${seriesId}${query}`, {
+            method: "DELETE",
+          });
+        } catch (err) {
+          console.error("Failed to delete results", err);
+          errors.push(`Results: ${err.message}`);
+        }
       }
+
+      // ── Delete DICOM from Orthanc ────────────────────────────────────
+      if (deleteDicom && seriesUuid) {
+        try {
+          await fetchJson(`/cho-dicom/${seriesUuid}`, {
+            method: "DELETE",
+          });
+        } catch (err) {
+          console.error("Failed to delete DICOM", err);
+          errors.push(`DICOM: ${err.message}`);
+        }
+      }
+
+      if (!mountedRef.current) return;
+
+      if (errors.length === 0) {
+        setStatus("Successfully deleted", "success");
+      } else if (
+        errors.length <
+        (deleteResults ? 1 : 0) + (deleteDicom ? 1 : 0)
+      ) {
+        setStatus(`Partially deleted. Errors: ${errors.join("; ")}`, "warning");
+      } else {
+        setStatus(`Error deleting: ${errors.join("; ")}`, "error");
+      }
+
+      closeDeleteDialog();
+      loadSummary();
     } catch (error) {
-      console.error("Failed to delete result", error);
+      console.error("Unexpected error during delete", error);
       if (mountedRef.current) {
         setStatus(`Error deleting: ${error.message}`, "error");
         setDeleteDialog((prev) => ({ ...prev, loading: false }));
@@ -432,7 +498,7 @@ export const DashboardProvider = ({ children }) => {
         `${import.meta.env.VITE_API_URL}/cho-results-export`,
         {
           method: "GET",
-        }
+        },
       );
       if (!response.ok) throw new Error("Failed to export");
 
@@ -497,73 +563,52 @@ export const DashboardProvider = ({ children }) => {
           const register = (entry, defaultEvent = "snapshot") => {
             if (!entry || typeof entry !== "object") return;
             const rawId =
-              entry.series_id ?? entry.seriesUuid ?? entry.seriesInstanceUid;
+              entry.series_id ?? entry.series_uuid ?? entry.seriesId ?? null;
             if (!rawId) return;
-            const key = String(rawId);
-            next[key] = {
-              ...entry,
-              eventType: entry.eventType ?? defaultEvent,
-            };
+            const id = String(rawId);
+            next[id] = { ...entry, _event: defaultEvent };
           };
-          if (Array.isArray(payload.history)) {
-            payload.history.forEach((item) => register(item, "history"));
-          }
-          if (Array.isArray(payload.active)) {
-            payload.active.forEach((item) => register(item, "snapshot"));
+
+          if (Array.isArray(payload)) {
+            payload.forEach((entry) => register(entry));
+          } else if (payload && typeof payload === "object") {
+            if (payload.calculations) {
+              Object.values(payload.calculations).forEach((entry) =>
+                register(entry),
+              );
+            } else {
+              register(payload);
+            }
           }
           return next;
         });
       });
 
-      source.addEventListener("cho-calculation", (event) => {
+      source.addEventListener("progress", (event) => {
         if (!mountedRef.current) return;
-        let payload;
+        let entry;
         try {
-          payload = JSON.parse(event.data);
-        } catch (error) {
-          console.debug("Failed to parse calculation event", error);
+          entry = JSON.parse(event.data);
+        } catch {
           return;
         }
         const rawId =
-          payload?.series_id ??
-          payload?.seriesUuid ??
-          payload?.seriesInstanceUid ??
-          null;
-        if (!rawId) {
-          return;
-        }
-        const key = String(rawId);
-        setCalculationStates((prev) => {
-          if (
-            payload?.eventType === "cleanup" ||
-            payload?.eventType === "history-cleanup" ||
-            payload?.status === "removed"
-          ) {
-            if (!(key in prev)) {
-              return prev;
-            }
-            const next = { ...prev };
-            delete next[key];
-            return next;
-          }
-          const nextState = { ...(prev[key] ?? {}), ...payload };
-          return { ...prev, [key]: nextState };
-        });
+          entry.series_id ?? entry.series_uuid ?? entry.seriesId ?? null;
+        if (!rawId) return;
+        const id = String(rawId);
+        setCalculationStates((prev) => ({
+          ...prev,
+          [id]: { ...(prev[id] ?? {}), ...entry, _event: "progress" },
+        }));
       });
 
       source.onerror = () => {
-        if (!mountedRef.current) {
-          return;
+        if (!mountedRef.current) return;
+        if (sseRef.current) {
+          sseRef.current.close();
+          sseRef.current = null;
         }
-        if (sseReconnectRef.current) {
-          return;
-        }
-        source.close();
-        sseRef.current = null;
-        sseReconnectRef.current = setTimeout(() => {
-          sseReconnectRef.current = null;
-          connect();
-        }, 5000);
+        sseReconnectRef.current = setTimeout(connect, 5000);
       };
     };
 
@@ -579,283 +624,28 @@ export const DashboardProvider = ({ children }) => {
         sseReconnectRef.current = null;
       }
     };
-  }, [stopChoPolling]);
+  }, []);
 
-  const checkChoCalculationStatus = useCallback(
-    async (seriesUuidParam) => {
-      const targetUuid = seriesUuidParam ?? choModal.seriesUuid;
-      if (!targetUuid) return;
-      try {
-        const data = await fetchJson(
-          `/cho-calculation-status?series_id=${encodeURIComponent(
-            targetUuid
-          )}&action=check`
-        );
-        if (!mountedRef.current) return;
-        if (data.status === "running") {
-          setChoModal((prev) => ({
-            ...prev,
-            stage: "progress",
-            progress: {
-              value: data.progress ?? prev.progress.value,
-              message: data.message ?? prev.progress.message,
-              stage: data.current_stage ?? prev.progress.stage,
-            },
-            pollError: null,
-          }));
-        } else if (data.status === "completed") {
-          stopChoPolling();
-          setChoModal((prev) => ({
-            ...prev,
-            stage: "results",
-            progress: { value: 100, message: "Completed", stage: "finalizing" },
-            results: data.results ?? prev.results,
-            pollError: null,
-          }));
-        } else if (data.status === "failed") {
-          stopChoPolling();
-          setChoModal((prev) => ({
-            ...prev,
-            stage: "results",
-            pollError: data.error ?? "Analysis failed",
-            results: null,
-          }));
-        }
-      } catch (error) {
-        if (mountedRef.current) {
-          setChoModal((prev) => ({ ...prev, pollError: error.message }));
-        }
-      }
-    },
-    [choModal.seriesUuid, stopChoPolling]
-  );
+  const openChoModal = useCallback((series) => {
+    if (!series) return;
+    const uuid =
+      series.series_uuid ??
+      series.seriesUuid ??
+      series.uuid ??
+      series.series_id ??
+      series.series_instance_uid ??
+      null;
+    const id =
+      series.series_id ?? series.series_instance_uid ?? series.seriesId ?? null;
 
-  const startChoPolling = useCallback(
-    (seriesUuid) => {
-      stopChoPolling();
-      pollingRef.current = setInterval(() => {
-        checkChoCalculationStatus(seriesUuid);
-      }, 1000);
-    },
-    [checkChoCalculationStatus, stopChoPolling]
-  );
-
-  const checkExistingChoCalculation = useCallback(
-    async (seriesUuid) => {
-      try {
-        const data = await fetchJson(
-          `/cho-calculation-status?series_id=${encodeURIComponent(
-            seriesUuid
-          )}&action=check`
-        );
-        if (!mountedRef.current) return;
-        if (data.status === "running") {
-          setChoModal((prev) => ({
-            ...prev,
-            stage: "progress",
-            progress: {
-              value: data.progress ?? 0,
-              message: data.message ?? "Processing...",
-              stage: data.current_stage ?? "analysis",
-            },
-            pollError: null,
-          }));
-          //   startChoPolling(seriesUuid);
-        } else if (data.status === "completed") {
-          setChoModal((prev) => ({
-            ...prev,
-            stage: "results",
-            progress: { value: 100, message: "Completed", stage: "finalizing" },
-            results: data.results ?? null,
-            pollError: null,
-          }));
-        }
-      } catch {
-        // ignore
-      }
-    },
-    [startChoPolling]
-  );
-
-  const activeChoSeriesId = choModal.seriesUuid
-    ? String(choModal.seriesUuid)
-    : null;
-
-  useEffect(() => {
-    if (!activeChoSeriesId) {
-      return;
-    }
-    const state = calculationStates[activeChoSeriesId];
-    if (!state) {
-      return;
-    }
-
-    setChoModal((prev) => {
-      if (prev.seriesUuid !== activeChoSeriesId) {
-        return prev;
-      }
-
-      const status = state.status ?? state.eventType;
-
-      if (status === "running") {
-        return {
-          ...prev,
-          stage: "progress",
-          progress: {
-            value:
-              typeof state.progress === "number"
-                ? state.progress
-                : prev.progress.value,
-            message: state.message ?? prev.progress.message ?? "Processing...",
-            stage: state.current_stage ?? prev.progress.stage ?? "analysis",
-          },
-          pollError: null,
-        };
-      }
-
-      if (status === "completed") {
-        stopChoPolling();
-        return {
-          ...prev,
-          stage: "results",
-          progress: {
-            value: 100,
-            message: state.message ?? "Completed",
-            stage: state.current_stage ?? "completed",
-          },
-          results: state.results ?? prev.results,
-          pollError: null,
-        };
-      }
-
-      if (status === "failed") {
-        stopChoPolling();
-        return {
-          ...prev,
-          stage: "results",
-          progress: {
-            value:
-              typeof state.progress === "number"
-                ? state.progress
-                : prev.progress.value ?? 0,
-            message: state.message ?? "Failed",
-            stage: state.current_stage ?? "failed",
-          },
-          pollError: state.error ?? state.message ?? "Analysis failed",
-          results: null,
-        };
-      }
-
-      if (status === "cancelled") {
-        stopChoPolling();
-        return {
-          ...prev,
-          stage: "results",
-          progress: {
-            value:
-              typeof state.progress === "number"
-                ? state.progress
-                : prev.progress.value ?? 0,
-            message: state.message ?? "Cancelled",
-            stage: state.current_stage ?? "cancelled",
-          },
-          pollError: state.message ?? "Analysis cancelled",
-        };
-      }
-
-      return prev;
-    });
-  }, [activeChoSeriesId, calculationStates, stopChoPolling]);
-
-  const loadStoredChoResults = useCallback(
-    async (seriesId) => {
-      if (!seriesId) {
-        setChoModal((prev) => ({
-          ...prev,
-          storedResults: { loading: false, data: null, error: null },
-        }));
-        return;
-      }
-      setChoModal((prev) => ({
-        ...prev,
-        storedResults: { ...prev.storedResults, loading: true, error: null },
-      }));
-      setStatus("Loading series details...", "loading");
-      try {
-        const data = await fetchJson(`/cho-results/${seriesId}`);
-        if (!mountedRef.current) return;
-        setChoModal((prev) => {
-          const derivedSummary = deriveSeriesSummary(data, prev.seriesSummary);
-          const nextSeriesUuid =
-            derivedSummary?.series_uuid ?? prev.seriesUuid ?? null;
-          const nextSeriesId =
-            derivedSummary?.series_id ?? prev.seriesId ?? null;
-          return {
-            ...prev,
-            seriesUuid: nextSeriesUuid,
-            seriesId: nextSeriesId,
-            seriesSummary: derivedSummary ?? prev.seriesSummary,
-            storedResults: { loading: false, data, error: null },
-          };
-        });
-        setStatus("", "idle");
-      } catch (error) {
-        if (!mountedRef.current) return;
-        setChoModal((prev) => ({
-          ...prev,
-          storedResults: { loading: false, data: null, error: error.message },
-        }));
-        setStatus(`Error loading details: ${error.message}`, "error");
-      }
-    },
-    [setStatus]
-  );
-
-  const reloadStoredChoResults = useCallback(() => {
-    if (choModal.seriesId) {
-      loadStoredChoResults(choModal.seriesId);
-    }
-  }, [choModal.seriesId, loadStoredChoResults]);
-
-  const openChoModal = useCallback(
-    (series) => {
-      if (!series) return;
-      stopChoPolling();
-      const seriesUuid =
-        series.series_uuid ??
-        series.series_instance_uid ??
-        series.seriesId ??
-        null;
-      const seriesId =
-        series.series_id ??
-        series.seriesId ??
-        series.series_instance_uid ??
-        null;
-      const storedResultsState = seriesId
-        ? { loading: true, data: null, error: null }
-        : {
-            loading: false,
-            data: null,
-            error: "Stored CHO results unavailable for this series.",
-          };
-      setChoModal({
-        ...createInitialChoState(),
-        open: true,
-        seriesUuid,
-        seriesId,
-        seriesSummary: series,
-        params: { ...defaultChoParams, testType: series.testType ?? "full" },
-        storedResults: storedResultsState,
-      });
-      if (seriesId) {
-        loadStoredChoResults(seriesId);
-      }
-      if (seriesUuid) {
-        checkExistingChoCalculation(seriesUuid);
-      }
-    },
-    [checkExistingChoCalculation, loadStoredChoResults, stopChoPolling]
-  );
+    setChoModal((prev) => ({
+      ...createInitialChoState(),
+      open: true,
+      seriesUuid: uuid,
+      seriesId: id,
+      seriesSummary: series,
+    }));
+  }, []);
 
   const closeChoModal = useCallback(() => {
     stopChoPolling();
@@ -863,58 +653,82 @@ export const DashboardProvider = ({ children }) => {
   }, [stopChoPolling]);
 
   const updateChoParam = useCallback((name, value) => {
-    console.debug("Updating CHO param", name, value);
     setChoModal((prev) => ({
       ...prev,
       params: { ...prev.params, [name]: value },
     }));
   }, []);
 
-  const startChoAnalysis = useCallback(async () => {
-    if (!choModal.seriesUuid) {
-      setStatus("No series selected for analysis", "error");
-      return;
-    }
-    const payload = serializeChoPayload(choModal.seriesUuid, choModal.params);
+  const reloadStoredChoResults = useCallback(async () => {
+    const { seriesId } = choModal;
+    if (!seriesId) return;
+
     setChoModal((prev) => ({
       ...prev,
-      stage: "progress",
+      storedResults: { loading: true, data: null, error: null },
+    }));
+
+    try {
+      const data = await fetchJson(`/cho-results/${seriesId}`);
+      setChoModal((prev) => ({
+        ...prev,
+        storedResults: { loading: false, data, error: null },
+      }));
+    } catch (error) {
+      setChoModal((prev) => ({
+        ...prev,
+        storedResults: {
+          loading: false,
+          data: null,
+          error: error.message ?? "Failed to load results",
+        },
+      }));
+    }
+  }, [choModal.seriesId]);
+
+  const startChoAnalysis = useCallback(async () => {
+    const { seriesUuid, params } = choModal;
+    if (!seriesUuid) {
+      setStatus("No series selected", "error");
+      return;
+    }
+
+    setChoModal((prev) => ({
+      ...prev,
+      stage: "running",
       progress: {
         value: 0,
-        message: "Initializing...",
+        message: "Starting analysis...",
         stage: "initialization",
       },
       results: null,
       pollError: null,
     }));
+
     try {
+      const payload = serializeChoPayload(seriesUuid, params);
       await fetchJson("/cho-analysis-modal", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      //   if (mountedRef.current) {
-      //     startChoPolling(choModal.seriesUuid);
-      //   }
     } catch (error) {
-      if (mountedRef.current) {
-        setChoModal((prev) => ({
-          ...prev,
-          stage: "config",
-          pollError: error.message,
-        }));
-        setStatus(`Failed to start analysis: ${error.message}`, "error");
-      }
+      setChoModal((prev) => ({
+        ...prev,
+        stage: "config",
+        pollError: error.message ?? "Failed to start analysis",
+      }));
+      setStatus(`Failed to start analysis: ${error.message}`, "error");
     }
-  }, [choModal.seriesUuid, choModal.params, setStatus]);
+  }, [choModal, setStatus]);
 
   const discardChoResults = useCallback(async () => {
     if (!choModal.seriesUuid) return;
     try {
       await fetchJson(
         `/cho-calculation-status?series_id=${encodeURIComponent(
-          choModal.seriesUuid
-        )}&action=discard`
+          choModal.seriesUuid,
+        )}&action=discard`,
       );
       if (mountedRef.current) {
         setStatus("Results discarded", "success");
@@ -938,7 +752,7 @@ export const DashboardProvider = ({ children }) => {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ series_ids: [seriesId] }),
             credentials: "include",
-          }
+          },
         );
         if (!response.ok) {
           const text = await response.text();
@@ -959,7 +773,7 @@ export const DashboardProvider = ({ children }) => {
         setStatus(`Download failed: ${error.message}`, "error");
       }
     },
-    [setStatus]
+    [setStatus],
   );
 
   const value = useMemo(() => {
@@ -989,6 +803,7 @@ export const DashboardProvider = ({ children }) => {
         changePageSize,
         openDeleteDialog: openDeleteDialogAction,
         closeDeleteDialog,
+        toggleDeleteOption,
         confirmDelete,
         exportAllResults,
         exportSeries,
@@ -1025,6 +840,7 @@ export const DashboardProvider = ({ children }) => {
     changePageSize,
     openDeleteDialogAction,
     closeDeleteDialog,
+    toggleDeleteOption,
     confirmDelete,
     exportAllResults,
     exportSeries,
