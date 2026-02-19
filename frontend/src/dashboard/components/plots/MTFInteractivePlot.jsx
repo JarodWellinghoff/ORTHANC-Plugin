@@ -244,6 +244,7 @@ const chartContainerSx = {
   position: "relative",
   p: 1,
   maxHeight: 512,
+  height: 400,
   //   flex: 1,
 };
 
@@ -310,7 +311,10 @@ const MTFInteractivePlot = ({
         return m ? Number(m[1]) : null;
       };
       //   console.log("Relayout data:", relayoutData);
-
+      const hasShapeKeys = Object.keys(relayoutData).some((k) =>
+        k.startsWith("shapes["),
+      );
+      if (!hasShapeKeys) return;
       // Gather mutated shapes centers
       const moved = {};
       for (const k in relayoutData) {
@@ -671,6 +675,7 @@ const MTFInteractivePlot = ({
     return {
       data: plotData,
       layout: buildLayout({
+        height: 400,
         hovermode: false,
         dragmode: false,
         edits: { shapePosition: true, shapeSize: false },
