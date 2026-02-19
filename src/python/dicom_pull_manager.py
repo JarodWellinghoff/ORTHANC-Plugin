@@ -119,13 +119,25 @@ class DicomPullManager:
             "user": os.getenv("DICOM_PULL_DB_USER", "postgres"),
             "password": os.getenv("DICOM_PULL_DB_PASSWORD", "pgpassword"),
         }
-        self.seconds_per_instance = float(os.getenv("DICOM_PULL_SECONDS_PER_INSTANCE", "3.0"))
+        self.seconds_per_instance = float(
+            os.getenv("DICOM_PULL_SECONDS_PER_INSTANCE", "3.0")
+        )
         self.min_item_seconds = int(os.getenv("DICOM_PULL_MIN_ITEM_SECONDS", "20"))
-        self.batch_overhead_seconds = int(os.getenv("DICOM_PULL_BATCH_OVERHEAD_SECONDS", "30"))
-        self.poll_interval_seconds = int(os.getenv("DICOM_PULL_POLL_INTERVAL_SECONDS", "30"))
-        self.job_poll_interval_seconds = float(os.getenv("DICOM_PULL_JOB_POLL_INTERVAL_SECONDS", "2.0"))
-        self.job_timeout_seconds = int(os.getenv("DICOM_PULL_JOB_TIMEOUT_SECONDS", "1800"))
-        self.max_consecutive_failures = int(os.getenv("DICOM_PULL_MAX_CONSECUTIVE_FAILURES", "3"))
+        self.batch_overhead_seconds = int(
+            os.getenv("DICOM_PULL_BATCH_OVERHEAD_SECONDS", "30")
+        )
+        self.poll_interval_seconds = int(
+            os.getenv("DICOM_PULL_POLL_INTERVAL_SECONDS", "30")
+        )
+        self.job_poll_interval_seconds = float(
+            os.getenv("DICOM_PULL_JOB_POLL_INTERVAL_SECONDS", "2.0")
+        )
+        self.job_timeout_seconds = int(
+            os.getenv("DICOM_PULL_JOB_TIMEOUT_SECONDS", "1800")
+        )
+        self.max_consecutive_failures = int(
+            os.getenv("DICOM_PULL_MAX_CONSECUTIVE_FAILURES", "3")
+        )
 
         self._pool: Optional[pool.ThreadedConnectionPool] = None
         self._worker_thread: Optional[threading.Thread] = None
@@ -372,29 +384,31 @@ class DicomPullManager:
         batch_dict = dict(batch_row)
         batch_dict["items"] = normalized_items
         return batch_dict
+
     def query_remote(
         self,
         modality: str,
         level: str,
         query: Dict[str, Any],
         limit: int = 50,
+        normalize: bool = False,
     ) -> List[Dict[str, Any]]:
         level_upper = level.title()
         payload = {
             "Level": level_upper,
             "Query": query,
             "Limit": limit,
+            "Normalize": normalize,
         }
         body = json.dumps(payload).encode("utf-8")
+        print(json.dumps(payload, indent=2))
         try:
-            response = orthanc.RestApiPost(
-                f"/modalities/{modality}/query", body
-            )
+            response = orthanc.RestApiPost(f"/modalities/{modality}/query", body)
         except Exception as exc:
             raise RuntimeError(f"Query to modality {modality} failed: {exc}")
 
         query_result = json.loads(response.decode("utf-8"))
-        print(query_result)
+        print(json.dumps(query_result, indent=2))
         query_id = query_result.get("ID") or query_result.get("Query")
         if not query_id:
             raise RuntimeError("Unexpected response from Orthanc query.")
@@ -411,7 +425,7 @@ class DicomPullManager:
                     f"/queries/{query_id}/answers/{index}/content?simplify"
                 )
                 detail = json.loads(detail_blob.decode("utf-8"))
-                print(detail)
+                print(json.dumps(detail, indent=2))
                 normalized = self._normalize_query_answer(detail, level_upper)
                 if normalized:
                     results.append(normalized)
@@ -421,6 +435,7 @@ class DicomPullManager:
                 orthanc.RestApiDelete(f"/queries/{query_id}")
             except Exception:
                 pass
+
     # -------------------------------------------------------------------------
     # Background processing
     # -------------------------------------------------------------------------
@@ -519,7 +534,9 @@ class DicomPullManager:
         updated_items = self._fetch_batch_items(batch_id)
         if all(item["status"] in self.ITEM_TERMINAL_STATUSES for item in updated_items):
             if any(item["status"] == "failed" for item in updated_items):
-                self._mark_batch_failed(batch_id, "One or more series failed to retrieve.")
+                self._mark_batch_failed(
+                    batch_id, "One or more series failed to retrieve."
+                )
             elif any(item["status"] == "expired" for item in updated_items):
                 self._mark_batch_expired(batch_id, "One or more series expired.")
             else:
@@ -555,17 +572,19 @@ class DicomPullManager:
 
         started = time.monotonic()
         try:
-            response = orthanc.RestApiPost(
-                f"/modalities/{modality}/get", payload
-            )
+            response = orthanc.RestApiPost(f"/modalities/{modality}/get", payload)
         except Exception as exc:
-            print(f"[DicomPullWorker] Failed to start retrieve for item {item['id']}: {exc}")
+            print(
+                f"[DicomPullWorker] Failed to start retrieve for item {item['id']}: {exc}"
+            )
             return False
 
         job_info = json.loads(response.decode("utf-8"))
         job_id = job_info.get("ID") or job_info.get("Job")
         if not job_id:
-            print(f"[DicomPullWorker] Unexpected job response for item {item['id']}: {job_info}")
+            print(
+                f"[DicomPullWorker] Unexpected job response for item {item['id']}: {job_info}"
+            )
             return False
 
         deadline = time.monotonic() + self.job_timeout_seconds
@@ -584,7 +603,9 @@ class DicomPullManager:
                 self._record_retrieved_series_id(item)
                 return True
             if state in ("Failure", "Cancelled"):
-                print(f"[DicomPullWorker] Job {job_id} ended in state {state}: {job_state}")
+                print(
+                    f"[DicomPullWorker] Job {job_id} ended in state {state}: {job_state}"
+                )
                 return False
 
             time.sleep(self.job_poll_interval_seconds)
@@ -640,6 +661,7 @@ class DicomPullManager:
                     (int(duration_seconds), item_id),
                 )
             conn.commit()
+
     # -------------------------------------------------------------------------
     # State transitions helpers
     # -------------------------------------------------------------------------
@@ -782,6 +804,7 @@ class DicomPullManager:
                     (reason, item_id),
                 )
             conn.commit()
+
     # -------------------------------------------------------------------------
     # Normalization helpers
     # -------------------------------------------------------------------------

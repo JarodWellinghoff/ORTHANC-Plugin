@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Alert,
+  Autocomplete,
   Box,
   Button,
   Checkbox,
@@ -10,6 +11,7 @@ import {
   FormControl,
   Grid,
   IconButton,
+  InputAdornment,
   InputLabel,
   List,
   ListItem,
@@ -25,7 +27,6 @@ import {
   TableHead,
   TableRow,
   TextField,
-  Autocomplete,
   Tooltip,
   Typography,
 } from "@mui/material";
@@ -33,7 +34,6 @@ import dayjs from "dayjs";
 import Collapse from "@mui/material/Collapse";
 import { AdapterDayjs } from "@mui/x-date-pickers/AdapterDayjs";
 import SearchIcon from "@mui/icons-material/Search";
-import InputAdornment from "@mui/material/InputAdornment";
 import CloudDownloadRoundedIcon from "@mui/icons-material/CloudDownloadRounded";
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
@@ -54,14 +54,6 @@ const statusColorMap = {
   failed: "error",
   cancelled: "default",
   expired: "warning",
-};
-
-const defaultFilters = {
-  patientId: "",
-  studyDate: null,
-  seriesDescription: "",
-  seriesInstanceUid: "",
-  limit: 50,
 };
 
 const defaultWindow = {
@@ -109,6 +101,13 @@ const sanitizeStudyDate = (value) => {
   return value.replaceAll("-", "");
 };
 
+// Normalize a filter value to an array (handles legacy string values from context)
+const toArr = (v) => {
+  if (!v) return [];
+  if (Array.isArray(v)) return v;
+  return [v];
+};
+
 const getSelectionKey = (item) =>
   item.seriesInstanceUID || item.studyInstanceUID || item.studyInstanceUid;
 
@@ -140,21 +139,82 @@ const formatDuration = (seconds) => {
   return `${hours}h ${remMinutes}m`;
 };
 
-const buildQueryFromFilters = (filters) => {
-  const query = {};
-  if (filters.patientId) {
-    query.PatientID = filters.patientId.trim();
+/**
+ * Builds an array of DICOM query objects from the current filters.
+ * When a filter field has multiple values, separate queries are generated
+ * for each combination so every selection is queried against the server.
+ * The result set is capped at MAX_QUERIES to prevent runaway requests.
+ */
+const MAX_QUERIES = 25;
+
+const buildQueriesFromFilters = (filters) => {
+  const base = {
+    PatientName: "",
+    InstitutionName: "",
+    StationName: "",
+    ProtocolName: "",
+    ManufacturerModelName: "",
+    StudyDate: "",
+    SeriesDescription: "",
+  };
+
+  // Study date range
+  if (filters.studyDateStart || filters.studyDateEnd) {
+    const start = filters.studyDateStart
+      ? dayjs(filters.studyDateStart).format("YYYYMMDD")
+      : "";
+    const end = filters.studyDateEnd
+      ? dayjs(filters.studyDateEnd).format("YYYYMMDD")
+      : "";
+    if (start && end) base.StudyDate = `${start}-${end}`;
+    else if (start) base.StudyDate = `${start}-`;
+    else base.StudyDate = `-${end}`;
   }
-  if (filters.studyDate) {
-    query.StudyDate = sanitizeStudyDate(filters.studyDate);
+
+  // Multi-value filter axes
+  const patientValues = toArr(filters.patientSearch);
+  const instituteValues = toArr(filters.institute);
+  const stationValues = toArr(filters.scannerStation);
+  const protocolValues = toArr(filters.protocolName);
+  const modelValues = toArr(filters.scannerModel);
+
+  // Use sentinel [null] so a missing filter still participates in the product
+  const axes = [
+    patientValues.length ? patientValues : [null],
+    instituteValues.length ? instituteValues : [null],
+    stationValues.length ? stationValues : [null],
+    protocolValues.length ? protocolValues : [null],
+    modelValues.length ? modelValues : [null],
+  ];
+
+  const queries = [];
+
+  for (const patient of axes[0]) {
+    for (const institute of axes[1]) {
+      for (const station of axes[2]) {
+        for (const protocol of axes[3]) {
+          for (const model of axes[4]) {
+            if (queries.length >= MAX_QUERIES) break;
+            const q = {
+              ...base,
+              PatientName: patient ? patient.trim() : "",
+              InstitutionName: institute ? institute.trim() : "",
+              StationName: station ? station.trim() : "",
+              ProtocolName: protocol ? protocol.trim() : "",
+              ManufacturerModelName: model ? model.trim() : "",
+            };
+            queries.push(q);
+          }
+          if (queries.length >= MAX_QUERIES) break;
+        }
+        if (queries.length >= MAX_QUERIES) break;
+      }
+      if (queries.length >= MAX_QUERIES) break;
+    }
+    if (queries.length >= MAX_QUERIES) break;
   }
-  if (filters.seriesDescription) {
-    query.SeriesDescription = filters.seriesDescription.trim();
-  }
-  if (filters.seriesInstanceUid) {
-    query.SeriesInstanceUID = filters.seriesInstanceUid.trim();
-  }
-  return query;
+
+  return queries.length ? queries : [base];
 };
 
 const BatchStatusChip = ({ status }) => {
@@ -207,6 +267,7 @@ const ResultsList = ({
         {results.map((item) => {
           const key = getSelectionKey(item);
           const checked = !!selectedMap[key];
+          console.log("Rendering item", key, { item });
           return (
             <ListItem
               key={key}
@@ -225,7 +286,7 @@ const ResultsList = ({
               <ListItemText
                 primary={
                   <Typography variant='body2' sx={{ fontWeight: 600 }}>
-                    {item.seriesDescription || "Unnamed Series"}
+                    {item.description || "Unnamed Series"}
                   </Typography>
                 }
                 secondary={
@@ -342,7 +403,6 @@ const DicomPullsPage = () => {
   const { filters, filterOptions, advancedFiltersOpen, actions } =
     useDashboard();
   const [modalities, setModalities] = useState([]);
-  //   const [filters, setFilters] = useState(defaultFilters);
   const [schedule, setSchedule] = useState(defaultWindow);
   const [selectedModality, setSelectedModality] = useState("");
   const [results, setResults] = useState([]);
@@ -354,36 +414,33 @@ const DicomPullsPage = () => {
   const [loadingResults, setLoadingResults] = useState(false);
   const [loadingBatches, setLoadingBatches] = useState(false);
   const [creatingBatch, setCreatingBatch] = useState(false);
+
   const { date_range: dateRange, age_range: ageRange } = filterOptions;
+
   const examDateFromValue = useMemo(() => {
-    if (!filters.examDateFrom) {
-      return null;
-    }
+    if (!filters.examDateFrom) return null;
     const parsed = dayjs(filters.examDateFrom);
     return parsed.isValid() ? parsed : null;
   }, [filters.examDateFrom]);
+
   const minExamDate = useMemo(() => {
-    if (!dateRange?.min) {
-      return undefined;
-    }
+    if (!dateRange?.min) return undefined;
     const parsed = dayjs(dateRange.min);
     return parsed.isValid() ? parsed : undefined;
   }, [dateRange]);
 
   const maxExamDate = useMemo(() => {
-    if (!dateRange?.max) {
-      return undefined;
-    }
+    if (!dateRange?.max) return undefined;
     const parsed = dayjs(dateRange.max);
     return parsed.isValid() ? parsed : undefined;
   }, [dateRange]);
+
   const examDateToValue = useMemo(() => {
-    if (!filters.examDateTo) {
-      return null;
-    }
+    if (!filters.examDateTo) return null;
     const parsed = dayjs(filters.examDateTo);
     return parsed.isValid() ? parsed : null;
   }, [filters.examDateTo]);
+
   const selectedItems = useMemo(
     () => Object.values(selectedMap),
     [selectedMap],
@@ -430,16 +487,16 @@ const DicomPullsPage = () => {
   useEffect(() => {
     loadModalities();
     loadBatches();
+    // Load filter options so Autocomplete dropdowns are populated
+    actions.loadFilterOptions?.();
   }, [loadModalities, loadBatches]);
 
-  const handleFilterChange = (event) => {
-    const { name, value } = event.target;
-    setFilters((prev) => ({ ...prev, [name]: value }));
+  // Generic handler for Autocomplete multi-select fields
+  const handleAutocompleteChange = (name) => (_event, newValue) => {
+    actions.updateFilter(name, newValue);
   };
 
   const handleScheduleChange = (event) => {
-    console.log("event:", event);
-    console.log("event.target:", event.target);
     const { name, value } = event.target;
     setSchedule((prev) => ({ ...prev, [name]: value }));
   };
@@ -452,8 +509,8 @@ const DicomPullsPage = () => {
     setSchedule((prev) => ({ ...prev, end: value }));
   };
 
-  const handleStudyDateChange = (value) => {
-    setFilters((prev) => ({ ...prev, studyDate: value }));
+  const handleStudyDateChange = (name) => (value) => {
+    actions.updateFilter(name, value);
   };
 
   const handleRunQuery = async () => {
@@ -465,27 +522,53 @@ const DicomPullsPage = () => {
       return;
     }
 
-    const query = buildQueryFromFilters(filters);
+    const queries = buildQueriesFromFilters(filters);
+    const limit = 50;
+
     setLoadingResults(true);
     setStatusMessage(null);
+
     try {
-      const payload = {
-        modality: selectedModality,
-        level: "Series",
-        query,
-        limit: Number(filters.limit) || 50,
-      };
-      const data = await apiRequest("/dicom-store/query", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
-      const series = data?.results ?? [];
-      setResults(series);
+      // Run all queries in parallel and merge results
+      const responses = await Promise.all(
+        queries.map((query) =>
+          apiRequest("/dicom-store/query", {
+            method: "POST",
+            body: JSON.stringify({
+              modality: selectedModality,
+              level: "Series",
+              query,
+              limit,
+            }),
+          }),
+        ),
+      );
+
+      // Merge and deduplicate by series instance UID
+      const seen = new Set();
+      const merged = [];
+      for (const data of responses) {
+        for (const item of data?.results ?? []) {
+          const key = getSelectionKey(item);
+          if (!seen.has(key)) {
+            seen.add(key);
+            merged.push(item);
+          }
+        }
+      }
+
+      setResults(merged);
       setSelectedMap({});
-      if (!series.length) {
+
+      if (!merged.length) {
         setStatusMessage({
           severity: "info",
           text: "No series matched the query.",
+        });
+      } else if (queries.length > 1) {
+        setStatusMessage({
+          severity: "info",
+          text: `Ran ${queries.length} queries — ${merged.length} unique series found.`,
         });
       }
     } catch (error) {
@@ -538,82 +621,68 @@ const DicomPullsPage = () => {
 
     setCreatingBatch(true);
     setStatusMessage(null);
-    try {
-      const payload = {
-        modality: selectedModality,
-        startTime: schedule.start,
-        endTime: schedule.end,
-        displayName: schedule.displayName || undefined,
-        notes: schedule.notes || undefined,
-        items: selectedItems.map((item) => ({
-          studyInstanceUID: item.studyInstanceUID || item.studyInstanceUid,
-          seriesInstanceUID: item.seriesInstanceUID,
-          patientId: item.patientId,
-          patientName: item.patientName,
-          description: item.seriesDescription || item.description,
-          modality: item.modality,
-          bodyPart: item.bodyPart,
-          studyDate: item.studyDate,
-          seriesDate: item.seriesDate,
-          numberOfInstances: item.numberOfInstances,
-          estimatedSeconds: item.estimatedSeconds,
-        })),
-      };
 
-      const data = await apiRequest("/dicom-pull/batches", {
+    try {
+      const startIso = toIsoOrNull(schedule.start);
+      const endIso = toIsoOrNull(schedule.end);
+
+      await apiRequest("/dicom-pull/batch", {
         method: "POST",
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          modality: selectedModality,
+          items: selectedItems,
+          start_time: startIso,
+          end_time: endIso,
+          display_name: schedule.displayName || null,
+          notes: schedule.notes || null,
+        }),
       });
 
       setStatusMessage({
         severity: "success",
-        text: `Scheduled pull batch #${data.id} successfully.`,
+        text: `Scheduled ${selectedItems.length} series for pull.`,
       });
       setSelectedMap({});
-      setSchedule(defaultWindow);
-      loadBatches();
+      await loadBatches();
     } catch (error) {
       setStatusMessage({
         severity: "error",
-        text: `Failed to create pull batch: ${error.message}`,
+        text: `Failed to create batch: ${error.message}`,
       });
     } finally {
       setCreatingBatch(false);
     }
   };
 
-  const disableScheduling =
-    creatingBatch || !selectedItems.length || !schedule.start || !schedule.end;
+  // Normalize filter values to arrays for Autocomplete
+  const patientSearchValue = toArr(filters.patientSearch);
+  const instituteValue = toArr(filters.institute);
+  const scannerStationValue = toArr(filters.scannerStation);
+  const protocolNameValue = toArr(filters.protocolName);
+  const scannerModelValue = toArr(filters.scannerModel);
+
+  const pickerButtonSx = {
+    "&&": {
+      border: "none",
+      boxShadow: "none",
+      bgcolor: "transparent",
+      width: 36,
+      height: 36,
+      p: 0.5,
+      "&:hover": { bgcolor: "transparent", borderColor: "transparent" },
+      "&:active": { bgcolor: "transparent" },
+      "& .MuiSvgIcon-root": { fontSize: 18 },
+    },
+  };
+
+  const pickerSlotProps = {
+    actionBar: { actions: ["clear", "today", "accept"] },
+    openPickerButton: { sx: pickerButtonSx },
+    textField: { placeholder: "", InputLabelProps: { shrink: true } },
+  };
 
   return (
     <Stack spacing={3}>
-      <Stack direction='row' justifyContent='space-between' alignItems='center'>
-        <Typography variant='h4' component='h2'>
-          DICOM Pull Scheduler
-        </Typography>
-        <Stack direction='row' spacing={1}>
-          <Tooltip title='Refresh scheduled pulls'>
-            <Button
-              variant='outlined'
-              size='small'
-              startIcon={<RefreshRoundedIcon />}
-              onClick={loadBatches}
-              disabled={loadingBatches}>
-              Refresh pulls
-            </Button>
-          </Tooltip>
-          <Tooltip title='Reload modalities'>
-            <Button
-              variant='outlined'
-              size='small'
-              onClick={loadModalities}
-              disabled={loadingModalities}>
-              Modalities
-            </Button>
-          </Tooltip>
-        </Stack>
-      </Stack>
-
       {statusMessage ? (
         <Alert
           severity={statusMessage.severity}
@@ -629,38 +698,60 @@ const DicomPullsPage = () => {
               <Typography variant='h6'>Remote Query</Typography>
 
               <Stack spacing={3}>
+                {/* ── Primary search + server selector ── */}
                 <Stack
                   direction={{ xs: "column", md: "row" }}
                   spacing={2}
                   alignItems={{ xs: "stretch", md: "center" }}>
-                  <TextField
-                    name='patientSearch'
-                    value={filters.patientSearch}
-                    //   onChange={handleChange}
-                    placeholder='Search by patient name or ID'
-                    // sx={{
-                    //   width: "50%",
-                    // }}
+                  <Autocomplete
+                    multiple
+                    freeSolo
+                    filterSelectedOptions
+                    options={[]}
+                    value={patientSearchValue}
+                    onChange={handleAutocompleteChange("patientSearch")}
+                    renderTags={(value, getTagProps) =>
+                      value.map((option, index) => (
+                        <Chip
+                          size='small'
+                          label={option}
+                          {...getTagProps({ index })}
+                        />
+                      ))
+                    }
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        placeholder={
+                          patientSearchValue.length
+                            ? ""
+                            : "Search by patient name or ID"
+                        }
+                        slotProps={{
+                          input: {
+                            ...params.InputProps,
+                            startAdornment: (
+                              <>
+                                <InputAdornment position='start'>
+                                  <SearchIcon fontSize='small' />
+                                </InputAdornment>
+                                {params.InputProps.startAdornment}
+                              </>
+                            ),
+                          },
+                        }}
+                      />
+                    )}
                     fullWidth
-                    slotProps={{
-                      input: {
-                        startAdornment: (
-                          <InputAdornment position='start'>
-                            <SearchIcon fontSize='small' />
-                          </InputAdornment>
-                        ),
-                      },
-                    }}
                   />
+
                   <FormControl size='small'>
                     <InputLabel id='modality-label'>Server</InputLabel>
                     <Select
                       labelId='modality-label'
                       label='Server'
                       value={selectedModality}
-                      sx={{
-                        minWidth: 150,
-                      }}
+                      sx={{ minWidth: 150 }}
                       onChange={(event) =>
                         setSelectedModality(event.target.value)
                       }
@@ -674,387 +765,150 @@ const DicomPullsPage = () => {
                   </FormControl>
                 </Stack>
 
+                {/* ── Secondary filters ── */}
                 <Grid container spacing={2} columns={15}>
                   <Grid size={{ sm: 5, md: 3 }}>
-                    <TextField
-                      name='institute'
-                      value={filters.institute}
-                      //   onChange={handleChange}
-                      placeholder='Institute'
-                      fullWidth
-                    />
-                  </Grid>
-                  {/* <FormControl sx={{ m: 1, width: 300 }}>
-                      <InputLabel id='institute-label'>Institute</InputLabel>
-                      <Select
-                        labelId='institute-label'
-                        name='institute'
-                        value={filters.institute}
-                        // onChange={handleChange}
-                        fullWidth>
-                        {filterOptions.institutes?.map((option) => (
-                          <MenuItem key={option} value={option}>
-                            {option}
-                          </MenuItem>
-                        ))}
-                      </Select>
-                    </FormControl> */}
-                  <Grid size={{ sm: 5, md: 3 }}>
-                    <TextField
-                      name='scannerStation'
-                      value={filters.scannerStation}
-                      //   onChange={handleChange}
-                      placeholder='Scanner Name'
-                      fullWidth
-                    />
-                  </Grid>
-                  {/* <FormControl sx={{ m: 1, width: 300 }}>
-                      <InputLabel id='scannerStation-label'>
-                        Scanner Name
-                      </InputLabel>
-                      <Select
-                        labelId='scannerStation-label'
-                        name='scannerStation'
-                        value={filters.scannerStation}
-                        // onChange={handleChange}
-                        fullWidth>
-                        {filterOptions.scanner_stations?.map((option) => (
-                          <MenuItem key={option} value={option}>
-                            {option}
-                          </MenuItem>
-                        ))}
-                      </Select>
-                    </FormControl> */}
-                  <Grid size={{ sm: 5, md: 3 }}>
-                    <TextField
-                      name='protocolName'
-                      value={filters.protocolName}
-                      //   onChange={handleChange}
-                      placeholder='Protocol Name'
-                      fullWidth
-                    />
-                  </Grid>
-                  {/* <FormControl sx={{ m: 1, width: 300 }}>
-                      <InputLabel id='protocolName-label'>
-                        Protocol Name
-                      </InputLabel>
-                      <Select
-                        labelId='protocolName-label'
-                        name='protocolName'
-                        value={filters.protocolName}
-                        // onChange={handleChange}
-                        fullWidth>
-                        {filterOptions.protocol_names?.map((option) => (
-                          <MenuItem key={option} value={option}>
-                            {option}
-                          </MenuItem>
-                        ))}
-                      </Select>
-                    </FormControl> */}
-                  <Grid size={{ sm: 5, md: 3 }}>
-                    <TextField
-                      name='scannerModel'
-                      value={filters.scannerModel}
-                      //   onChange={handleChange}
-                      placeholder='Scanner Model'
-                      fullWidth
-                    />
-                  </Grid>
-                  {/* <FormControl sx={{ m: 1, width: 300 }}>
-                      <InputLabel id='scannerModel-label'>
-                        Scanner Model
-                      </InputLabel>
-                      <Select
-                        labelId='scannerModel-label'
-                        name='scannerModel'
-                        value={filters.scannerModel}
-                        // onChange={handleChange}
-                        fullWidth>
-                        {filterOptions.scanner_models?.map((option) => (
-                          <MenuItem key={option} value={option}>
-                            {option}
-                          </MenuItem>
-                        ))}
-                      </Select>
-                    </FormControl> */}
-                  <Grid size={{ sm: 5, md: 3 }}>
-                    <TextField
-                      name='seriesDescription'
-                      value={filters.seriesDescription}
-                      //   onChange={handleChange}
-                      placeholder='Series Description'
-                      fullWidth
-                    />
                     <Autocomplete
                       multiple
-                      id='seriesDescription'
                       freeSolo
-                      options={[]}
-                      defaultValue={[]}
-                      renderValue={(value, getItemProps) =>
-                        value.map((option, index) => {
-                          const { key, ...itemProps } = getItemProps({ index });
-                          return (
-                            <Chip
-                              variant='outlined'
-                              label={option}
-                              key={key}
-                              {...itemProps}
-                            />
-                          );
-                        })
+                      filterSelectedOptions
+                      options={filterOptions.institutes ?? []}
+                      value={instituteValue}
+                      onChange={handleAutocompleteChange("institute")}
+                      renderTags={(value, getTagProps) =>
+                        value.map((option, index) => (
+                          <Chip
+                            size='small'
+                            label={option}
+                            {...getTagProps({ index })}
+                          />
+                        ))
                       }
                       renderInput={(params) => (
                         <TextField
                           {...params}
-                          label='Series Description'
-                          placeholder='Series Description'
+                          label='Institute'
+                          placeholder={instituteValue.length ? "" : "Any"}
                         />
                       )}
+                      fullWidth
                     />
                   </Grid>
-                </Grid>
-                <Grid container spacing={2} columns={15}>
+
+                  <Grid size={{ sm: 5, md: 3 }}>
+                    <Autocomplete
+                      multiple
+                      freeSolo
+                      filterSelectedOptions
+                      options={filterOptions.scanner_stations ?? []}
+                      value={scannerStationValue}
+                      onChange={handleAutocompleteChange("scannerStation")}
+                      renderTags={(value, getTagProps) =>
+                        value.map((option, index) => (
+                          <Chip
+                            size='small'
+                            label={option}
+                            {...getTagProps({ index })}
+                          />
+                        ))
+                      }
+                      renderInput={(params) => (
+                        <TextField
+                          {...params}
+                          label='Scanner Name'
+                          placeholder={scannerStationValue.length ? "" : "Any"}
+                        />
+                      )}
+                      fullWidth
+                    />
+                  </Grid>
+
+                  <Grid size={{ sm: 5, md: 3 }}>
+                    <Autocomplete
+                      multiple
+                      freeSolo
+                      filterSelectedOptions
+                      options={filterOptions.protocol_names ?? []}
+                      value={protocolNameValue}
+                      onChange={handleAutocompleteChange("protocolName")}
+                      renderTags={(value, getTagProps) =>
+                        value.map((option, index) => (
+                          <Chip
+                            size='small'
+                            label={option}
+                            {...getTagProps({ index })}
+                          />
+                        ))
+                      }
+                      renderInput={(params) => (
+                        <TextField
+                          {...params}
+                          label='Protocol Name'
+                          placeholder={protocolNameValue.length ? "" : "Any"}
+                        />
+                      )}
+                      fullWidth
+                    />
+                  </Grid>
+
+                  <Grid size={{ sm: 5, md: 3 }}>
+                    <Autocomplete
+                      multiple
+                      freeSolo
+                      filterSelectedOptions
+                      options={filterOptions.scanner_models ?? []}
+                      value={scannerModelValue}
+                      onChange={handleAutocompleteChange("scannerModel")}
+                      renderTags={(value, getTagProps) =>
+                        value.map((option, index) => (
+                          <Chip
+                            size='small'
+                            label={option}
+                            {...getTagProps({ index })}
+                          />
+                        ))
+                      }
+                      renderInput={(params) => (
+                        <TextField
+                          {...params}
+                          label='Scanner Model'
+                          placeholder={scannerModelValue.length ? "" : "Any"}
+                        />
+                      )}
+                      fullWidth
+                    />
+                  </Grid>
+
+                  {/* ── Study date range (DatePickers — kept as-is) ── */}
                   <LocalizationProvider dateAdapter={AdapterDayjs}>
                     <Grid size={{ sm: 5, md: 3 }}>
                       <DatePicker
                         enableAccessibleFieldDOMStructure={false}
-                        slots={{
-                          textField: TextField,
-                        }}
-                        slotProps={{
-                          actionBar: {
-                            actions: ["clear", "today", "accept"],
-                          },
-                          openPickerButton: {
-                            sx: {
-                              "&&": {
-                                border: "none",
-                                boxShadow: "none",
-                                bgcolor: "transparent",
-                                width: 36,
-                                height: 36,
-                                p: 0.5,
-                                "&:hover": {
-                                  bgcolor: "transparent",
-                                  borderColor: "transparent",
-                                },
-                                "&:active": { bgcolor: "transparent" },
-                                "& .MuiSvgIcon-root": { fontSize: 18 },
-                              },
-                            },
-                          },
-                          textField: {
-                            placeholder: "",
-                            InputLabelProps: { shrink: true },
-                          },
-                        }}
+                        slots={{ textField: TextField }}
+                        slotProps={pickerSlotProps}
                         label='Study Date Start'
                         name='studyDateStart'
-                        value={filters.studyDateStart}
-                        onChange={handleStudyDateChange}
-                        sx={{
-                          width: "100%",
-                        }}
+                        value={filters.studyDateStart ?? null}
+                        onChange={handleStudyDateChange("studyDateStart")}
+                        sx={{ width: "100%" }}
                       />
                     </Grid>
                     <Grid size={{ sm: 5, md: 3 }}>
                       <DatePicker
                         enableAccessibleFieldDOMStructure={false}
-                        slots={{
-                          textField: TextField,
-                        }}
-                        slotProps={{
-                          actionBar: {
-                            actions: ["clear", "today", "accept"],
-                          },
-                          openPickerButton: {
-                            sx: {
-                              "&&": {
-                                border: "none",
-                                boxShadow: "none",
-                                bgcolor: "transparent",
-                                width: 36,
-                                height: 36,
-                                p: 0.5,
-                                "&:hover": {
-                                  bgcolor: "transparent",
-                                  borderColor: "transparent",
-                                },
-                                "&:active": { bgcolor: "transparent" },
-                                "& .MuiSvgIcon-root": { fontSize: 18 },
-                              },
-                            },
-                          },
-                          textField: {
-                            placeholder: "",
-                            InputLabelProps: { shrink: true },
-                          },
-                        }}
+                        slots={{ textField: TextField }}
+                        slotProps={pickerSlotProps}
                         label='Study Date End'
                         name='studyDateEnd'
-                        value={filters.studyDateEnd}
-                        onChange={handleStudyDateChange}
-                        sx={{
-                          width: "100%",
-                        }}
+                        value={filters.studyDateEnd ?? null}
+                        onChange={handleStudyDateChange("studyDateEnd")}
+                        sx={{ width: "100%" }}
                       />
                     </Grid>
                   </LocalizationProvider>
                 </Grid>
-                {/* <Grid item size={{ xs: 12, md: 6 }}>
-                      <Stack
-                        direction={{ xs: "column", sm: "row" }}
-                        spacing={2}
-                        sx={{ width: "100%" }}>
-                        <FormControl sx={{ m: 1, width: 300 }}>
-                          <InputLabel id='ageMin-label'>Age Min</InputLabel>
-                          <TextField
-                            labelId='ageMin-label'
-                            name='ageMin'
-                            type='number'
-                            value={filters.ageMin}
-                            // onChange={handleChange}
-                            slotProps={{
-                              input: {
-                                min: ageRange?.min ?? 0,
-                                max: ageRange?.max ?? 150,
-                                endAdornment: (
-                                  <InputAdornment position='end'>
-                                    years
-                                  </InputAdornment>
-                                ),
-                              },
-                            }}
-                          />
-                        </FormControl>
-                        <FormControl sx={{ m: 1, width: 300 }}>
-                          <InputLabel id='ageMax-label'>Age Max</InputLabel>
-                          <TextField
-                            labelId='ageMax-label'
-                            name='ageMax'
-                            type='number'
-                            value={filters.ageMax}
-                            // onChange={handleChange}
-                            slotProps={{
-                              input: {
-                                min: ageRange?.min ?? 0,
-                                max: ageRange?.max ?? 150,
-                                endAdornment: (
-                                  <InputAdornment position='end'>
-                                    years
-                                  </InputAdornment>
-                                ),
-                              },
-                            }}
-                          />
-                        </FormControl>
-                      </Stack>
-                    </Grid> */}
-
-                {/* {activeFilters.length > 0 && (
-                    <Stack
-                      direction='row'
-                      spacing={1}
-                      flexWrap='wrap'
-                      alignItems='center'>
-                      <Typography variant='body2' color='text.secondary'>
-                        Active Filters:
-                      </Typography>
-                      {activeFilters.map((filter) => (
-                        <Chip
-                          key={filter.key}
-                          label={filter.label}
-                          onDelete={() => clearFilterValue(filter.key)}
-                          size='small'
-                        />
-                      ))}
-                    </Stack>
-                  )} */}
               </Stack>
 
-              {/* <Grid container spacing={2}>
-                <Grid item size={{ xs: 12, sm: 6 }}>
-                  <TextField
-                    fullWidth
-                    size='small'
-                    label='Patient ID'
-                    name='patientId'
-                    value={filters.patientId}
-                    onChange={handleFilterChange}
-                  />
-                </Grid>
-                <Grid item size={{ xs: 12, sm: 6 }}>
-                  <DatePicker
-                    enableAccessibleFieldDOMStructure={false}
-                    slots={{
-                      textField: TextField,
-                    }}
-                    slotProps={{
-                      actionBar: {
-                        actions: ["clear", "today", "accept"],
-                      },
-                      openPickerButton: {
-                        sx: {
-                          "&&": {
-                            border: "none",
-                            boxShadow: "none",
-                            bgcolor: "transparent",
-                            width: 36,
-                            height: 36,
-                            p: 0.5,
-                            "&:hover": {
-                              bgcolor: "transparent",
-                              borderColor: "transparent",
-                            },
-                            "&:active": { bgcolor: "transparent" },
-                            "& .MuiSvgIcon-root": { fontSize: 18 },
-                          },
-                        },
-                      },
-                    }}
-                    label='Study Date'
-                    name='studyDate'
-                    value={filters.studyDate}
-                    onChange={handleStudyDateChange}
-                    sx={{
-                      width: "100%",
-                    }}
-                  />
-                </Grid>
-                <Grid item size={{ xs: 12, sm: 6 }}>
-                  <TextField
-                    fullWidth
-                    size='small'
-                    label='Series Description'
-                    name='seriesDescription'
-                    value={filters.seriesDescription}
-                    onChange={handleFilterChange}
-                  />
-                </Grid>
-                <Grid item size={{ xs: 12, sm: 6 }}>
-                  <TextField
-                    fullWidth
-                    size='small'
-                    label='Series Instance UID'
-                    name='seriesInstanceUid'
-                    value={filters.seriesInstanceUid}
-                    onChange={handleFilterChange}
-                  />
-                </Grid>
-                <Grid item size={{ xs: 12, sm: 6 }}>
-                  <TextField
-                    fullWidth
-                    size='small'
-                    label='Max results'
-                    name='limit'
-                    type='number'
-                    inputProps={{ min: 1, max: 200 }}
-                    value={filters.limit}
-                    onChange={handleFilterChange}
-                  />
-                </Grid>
-              </Grid> */}
               <Box>
                 <Button
                   variant='contained'
@@ -1087,7 +941,6 @@ const DicomPullsPage = () => {
                 <Grid item size={{ xs: 12, sm: 3 }}>
                   <TextField
                     fullWidth
-                    // size='small'
                     label='Schedule Name'
                     name='displayName'
                     value={schedule.displayName}
@@ -1098,7 +951,6 @@ const DicomPullsPage = () => {
                 <Grid item size={{ xs: 12, sm: 3 }}>
                   <TextField
                     fullWidth
-                    // size='small'
                     label='Notes'
                     name='notes'
                     value={schedule.notes}
@@ -1109,130 +961,75 @@ const DicomPullsPage = () => {
                   />
                 </Grid>
                 <Grid item size={{ xs: 12, sm: 3 }}>
-                  <DateTimePicker
-                    enableAccessibleFieldDOMStructure={false}
-                    slots={{
-                      textField: TextField,
-                    }}
-                    slotProps={{
-                      actionBar: {
-                        actions: ["clear", "today", "accept"],
-                      },
-                      openPickerButton: {
-                        sx: {
-                          "&&": {
-                            border: "none",
-                            boxShadow: "none",
-                            bgcolor: "transparent",
-                            width: 36,
-                            height: 36,
-                            p: 0.5,
-                            "&:hover": {
-                              bgcolor: "transparent",
-                              borderColor: "transparent",
-                            },
-                            "&:active": { bgcolor: "transparent" },
-                            "& .MuiSvgIcon-root": { fontSize: 18 },
-                          },
+                  <LocalizationProvider dateAdapter={AdapterDayjs}>
+                    <DateTimePicker
+                      enableAccessibleFieldDOMStructure={false}
+                      slots={{ textField: TextField }}
+                      slotProps={{
+                        actionBar: { actions: ["clear", "today", "accept"] },
+                        openPickerButton: { sx: pickerButtonSx },
+                        textField: {
+                          placeholder: "",
+                          InputLabelProps: { shrink: true },
                         },
-                      },
-                      textField: {
-                        placeholder: "Leave empty to start now",
-                        InputLabelProps: { shrink: true },
-                      },
-                    }}
-                    label='Start time'
-                    name='start'
-                    value={schedule.start}
-                    onChange={handleStartDatePickerChange}
-                    sx={{
-                      width: "100%",
-                    }}
-                  />
+                      }}
+                      label='Start Time'
+                      value={schedule.start}
+                      onChange={handleStartDatePickerChange}
+                      sx={{ width: "100%" }}
+                    />
+                  </LocalizationProvider>
                 </Grid>
                 <Grid item size={{ xs: 12, sm: 3 }}>
-                  <DateTimePicker
-                    enableAccessibleFieldDOMStructure={false}
-                    slots={{
-                      textField: TextField,
-                      actionBar: CustomActionBar,
-                    }}
-                    slotProps={{
-                      actionBar: {
-                        actions: ["today", "clear", "cancel", "accept"],
-                        add12Label: "+12 hours",
-                        onAdd12Hours: () =>
-                          handleEndDatePickerChange(
-                            schedule.start.add(12, "hour"),
-                          ),
-                      },
-                      openPickerButton: {
-                        sx: {
-                          "&&": {
-                            border: "none",
-                            boxShadow: "none",
-                            bgcolor: "transparent",
-                            width: 36,
-                            height: 36,
-                            p: 0.5,
-                            "&:hover": {
-                              bgcolor: "transparent",
-                              borderColor: "transparent",
-                            },
-                            "&:active": { bgcolor: "transparent" },
-                            "& .MuiSvgIcon-root": { fontSize: 18 },
-                          },
+                  <LocalizationProvider dateAdapter={AdapterDayjs}>
+                    <DateTimePicker
+                      enableAccessibleFieldDOMStructure={false}
+                      slots={{ textField: TextField }}
+                      slotProps={{
+                        actionBar: { actions: ["clear", "today", "accept"] },
+                        openPickerButton: { sx: pickerButtonSx },
+                        textField: {
+                          placeholder: "",
+                          InputLabelProps: { shrink: true },
                         },
-                      },
-                      textField: {
-                        placeholder: "Leave empty to run indefinitely",
-                        InputLabelProps: { shrink: true },
-                      },
-                    }}
-                    disablePast
-                    label='End time'
-                    name='end'
-                    value={schedule.end}
-                    minDate={schedule.start}
-                    onChange={handleEndDatePickerChange}
-                    sx={{
-                      width: "100%",
-                    }}
-                  />
-                  {/* <TextField
-                    fullWidth
-                    size='small'
-                    type='datetime-local'
-                    label='End time'
-                    name='end'
-                    value={schedule.end}
-                    onChange={handleScheduleChange}
-                    slotProps={{ inputLabel: { shrink: true } }}
-                  /> */}
+                      }}
+                      label='End Time'
+                      value={schedule.end}
+                      onChange={handleEndDatePickerChange}
+                      sx={{ width: "100%" }}
+                    />
+                  </LocalizationProvider>
                 </Grid>
               </Grid>
-              <Paper
-                variant='outlined'
-                sx={{ p: 2, bgcolor: "background.default" }}>
-                <Stack spacing={1}>
-                  <Typography variant='subtitle2'>Selection summary</Typography>
-                  <Typography variant='body2' color='text.secondary'>
-                    {selectedItems.length} series selected · Estimated transfer
-                    time {formatDuration(estimatedSeconds)}
-                  </Typography>
-                </Stack>
-              </Paper>
-              <Button
-                variant='contained'
-                startIcon={<ScheduleRoundedIcon />}
-                // disabled={disableScheduling}
-                onClick={handleCreateBatch}>
-                {creatingBatch
-                  ? "Scheduling…"
-                  : schedule.start === null
-                    ? "Pull now"
-                    : "Schedule pull"}
-              </Button>
+
+              {selectedItems.length > 0 && (
+                <Typography variant='body2' color='text.secondary'>
+                  {selectedItems.length} series selected · est.{" "}
+                  {formatDuration(estimatedSeconds)}
+                </Typography>
+              )}
+
+              <Stack direction='row' spacing={2}>
+                <Button
+                  variant='contained'
+                  startIcon={
+                    creatingBatch ? (
+                      <CircularProgress size={16} color='inherit' />
+                    ) : (
+                      <ScheduleRoundedIcon />
+                    )
+                  }
+                  onClick={handleCreateBatch}
+                  disabled={
+                    creatingBatch || !selectedItems.length || !selectedModality
+                  }>
+                  {creatingBatch
+                    ? "Scheduling…"
+                    : schedule.start === null
+                      ? "Pull now"
+                      : "Schedule pull"}
+                </Button>
+              </Stack>
             </Stack>
           </Paper>
         </Grid>
