@@ -626,7 +626,7 @@ const DicomPullsPage = () => {
       const startIso = toIsoOrNull(schedule.start);
       const endIso = toIsoOrNull(schedule.end);
 
-      await apiRequest("/dicom-pull/batch", {
+      await apiRequest("/dicom-pull/batches", {
         method: "POST",
         body: JSON.stringify({
           modality: selectedModality,

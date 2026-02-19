@@ -427,7 +427,7 @@ class CHOResultsStorage:
     def _get_or_create_ct_technique(self, cursor, ct_info, series_id):
         """Get or create CT technique record"""
         cursor.execute(
-            "SELECT id FROM dicom.ct_technique WHERE series_id_fk = %s",
+            "SELECT series_id_fk FROM dicom.ct_technique WHERE series_id_fk = %s",
             (series_id,),
         )
         result = cursor.fetchone()
@@ -446,7 +446,7 @@ class CHOResultsStorage:
                 exposure_modulation_type
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                       %s, %s, %s, %s, %s)
-            RETURNING id
+            RETURNING series_id_fk
         """,
             (
                 series_id,
