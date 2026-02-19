@@ -659,8 +659,14 @@ export const DashboardProvider = ({ children }) => {
     }));
   }, []);
 
+  const choModalRef = useRef(choModal);
+  useEffect(() => {
+    choModalRef.current = choModal;
+  }, [choModal]);
+
+  // Fix reloadStoredChoResults to read from the ref
   const reloadStoredChoResults = useCallback(async () => {
-    const { seriesId } = choModal;
+    const { seriesId } = choModalRef.current;
     if (!seriesId) return;
 
     setChoModal((prev) => ({
@@ -684,7 +690,14 @@ export const DashboardProvider = ({ children }) => {
         },
       }));
     }
-  }, [choModal.seriesId]);
+  }, []); // no stale dependency
+
+  // Auto-fetch stored results whenever seriesId is set
+  useEffect(() => {
+    if (choModal.seriesId) {
+      reloadStoredChoResults();
+    }
+  }, [choModal.seriesId, reloadStoredChoResults]);
 
   const startChoAnalysis = useCallback(async () => {
     const { seriesUuid, params } = choModal;

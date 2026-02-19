@@ -33,6 +33,7 @@ class CHOResultsStorage:
         self.bucket_name = "images"
         self.postgres_connection = None
         self.minio_connection = None
+        self.minio_client = None
         # SQL files paths - can be customized
         self.sql_files_path = "/src/sql"  # Default path, adjust as needed
         self.dicom_sql_file = "dicom.sql"
