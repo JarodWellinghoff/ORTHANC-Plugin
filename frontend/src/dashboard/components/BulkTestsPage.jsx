@@ -44,9 +44,11 @@ const defaultChoParams = {
   lesionSet: "standard",
 };
 
+// CHANGED: added pullScheduleName to defaultFilters
 const defaultFilters = {
   patient: "",
   protocol: "",
+  pullScheduleName: "",
   status: "all",
   dicom: "all",
 };
@@ -265,7 +267,7 @@ const BulkTestsPage = () => {
           : statusRaw || "none";
       const hasDicom =
         Boolean(seriesUuid) && availableSet.has(String(seriesUuid));
-      //   console.log("item:", item.latest_analysis_date);
+
       return {
         id,
         raw: item,
@@ -280,6 +282,8 @@ const BulkTestsPage = () => {
         latestAnalysis: item.latest_analysis_date ?? null,
         testStatus: status,
         hasDicom,
+        // CHANGED: map pull_schedule_name from the API response
+        pullScheduleName: item.pull_schedule_name ?? null,
       };
     });
   }, [items, availableSet]);
@@ -295,6 +299,15 @@ const BulkTestsPage = () => {
       if (
         filters.protocol &&
         !row.protocolName.toLowerCase().includes(filters.protocol.toLowerCase())
+      ) {
+        return false;
+      }
+      // CHANGED: filter by pull schedule name
+      if (
+        filters.pullScheduleName &&
+        !String(row.pullScheduleName ?? "")
+          .toLowerCase()
+          .includes(filters.pullScheduleName.toLowerCase())
       ) {
         return false;
       }
@@ -343,89 +356,26 @@ const BulkTestsPage = () => {
     }
     const pollIntervalMs = options.pollIntervalMs ?? 2000;
     const startTimeoutMs = options.startTimeoutMs ?? 15000;
-    const timeoutMs = options.timeoutMs ?? 1000 * 60 * 60;
+    const timeoutMs = options.timeoutMs ?? 300000;
+
     const startTime = Date.now();
-    let runningObserved = false;
     let finalStatus = null;
 
-    const readServerStatus = async () => {
-      try {
-        const response = await fetchJson(
-          `/cho-calculation-status?series_id=${encodeURIComponent(
-            seriesKey,
-          )}&action=check`,
-        );
-        const statusValue = (response?.status ?? "").toLowerCase();
-        return statusValue || null;
-      } catch (error) {
-        console.debug("Failed to poll calculation status", error);
-        return null;
-      }
-    };
+    while (Date.now() - startTime < timeoutMs) {
+      const state = calculationStatesRef.current[seriesKey];
+      const status = state?.status ?? state?.eventType;
 
-    const isFinishedStatus = (status) => {
-      if (!status) return false;
-      return (
-        status === "completed" ||
-        status === "success" ||
-        status === "failed" ||
-        status === "error" ||
-        status === "cancelled" ||
-        status === "aborted" ||
-        status === "idle" ||
-        status === "none" ||
-        status === "not_found" ||
-        status === "cleanup" ||
-        status === "history-cleanup"
-      );
-    };
-
-    while (true) {
-      const state = calculationStatesRef.current?.[seriesKey];
-      const rawStatus =
-        (state?.status ?? state?.eventType ?? state?.state ?? "") || "";
-      const normalizedStatus = rawStatus.toLowerCase();
-
-      if (
-        normalizedStatus === "running" ||
-        normalizedStatus === "progress" ||
-        normalizedStatus === "started"
-      ) {
-        runningObserved = true;
-      } else if (runningObserved && normalizedStatus) {
-        finalStatus = normalizedStatus;
-        break;
-      } else if (runningObserved && !normalizedStatus) {
-        const serverStatus = await readServerStatus();
-        if (serverStatus && serverStatus !== "running") {
-          finalStatus = serverStatus;
-          break;
-        }
-      }
-
-      const elapsed = Date.now() - startTime;
-
-      if (!runningObserved && elapsed > startTimeoutMs) {
-        const serverStatus = await readServerStatus();
-        if (serverStatus === "running") {
-          runningObserved = true;
-        } else if (isFinishedStatus(serverStatus)) {
-          finalStatus = serverStatus;
-          break;
-        }
-      }
-
-      if (runningObserved && isFinishedStatus(normalizedStatus)) {
-        finalStatus = normalizedStatus;
-        break;
-      }
-
-      if (elapsed > timeoutMs) {
+      if (!state && Date.now() - startTime > startTimeoutMs) {
         const timeoutError = new Error(
-          "Timed out waiting for the previous analysis to finish.",
+          "Analysis did not start within the expected time. It may still be running.",
         );
         timeoutError.code = "WAIT_TIMEOUT";
         throw timeoutError;
+      }
+
+      if (status === "completed" || status === "failed" || status === "error") {
+        finalStatus = status;
+        break;
       }
 
       await sleep(pollIntervalMs);
@@ -488,10 +438,8 @@ const BulkTestsPage = () => {
         setError("Select at least one row to start bulk testing.");
         return;
       }
-      // All rows except those in the exclusion set
       selectedIds = new Set(rowsById.keys()).difference(selectionModel.ids);
     }
-    // console.log("selectedIds", selectedIds);
 
     const queue = [];
     const enqueueRow = (rowId) => {
@@ -515,89 +463,24 @@ const BulkTestsPage = () => {
       return;
     }
 
-    queue.forEach((row, index) => {
-      if (index > 0) {
-        updateBulkProgress(row.id, {
-          status: "queued",
-          message: "Queued for bulk run",
-        });
-      }
-    });
-
     setRunningBulk(true);
-    try {
-      for (const row of queue) {
-        updateBulkProgress(row.id, {
-          status: "running",
-          message: "Waiting for exclusive access...",
-        });
-        try {
-          await runAnalysisForSeries(row);
-          updateBulkProgress(row.id, {
-            status: "started",
-            message: "Analysis started",
-          });
-          const completionStatus = await waitForSeriesCompletion(row);
-          if (
-            completionStatus === "failed" ||
-            completionStatus === "error" ||
-            completionStatus === "cancelled" ||
-            completionStatus === "aborted"
-          ) {
-            updateBulkProgress(row.id, {
-              status: "error",
-              message: `Analysis ${completionStatus}`,
-            });
-          } else {
-            updateBulkProgress(row.id, {
-              status: "completed",
-              message: "Analysis finished",
-            });
-          }
-        } catch (err) {
-          updateBulkProgress(row.id, {
-            status: "error",
-            message: err.message ?? "Failed to start",
-          });
-          if (err?.code === "WAIT_TIMEOUT") {
-            setError(err.message);
-            break;
-          }
-        }
-      }
-    } finally {
-      setRunningBulk(false);
-      setActiveRunCount((count) => Math.max(0, count - 1));
+    for (const row of queue) {
+      await handleRunSingle(row);
     }
+    setRunningBulk(false);
+    setActiveRunCount((count) => Math.max(0, count - 1));
   };
 
   const handleRunSingle = useCallback(
     async (row) => {
-      setActiveRunCount((count) => count + 1);
-      updateBulkProgress(row.id, { status: "running", message: "Starting..." });
+      updateBulkProgress(row.id, { status: "running", message: "Starting…" });
       try {
         await runAnalysisForSeries(row);
+        const result = await waitForSeriesCompletion(row);
         updateBulkProgress(row.id, {
-          status: "started",
-          message: "Analysis started",
+          status: result === "completed" ? "done" : "error",
+          message: result === "completed" ? "Completed" : "Failed",
         });
-        const completionStatus = await waitForSeriesCompletion(row);
-        if (
-          completionStatus === "failed" ||
-          completionStatus === "error" ||
-          completionStatus === "cancelled" ||
-          completionStatus === "aborted"
-        ) {
-          updateBulkProgress(row.id, {
-            status: "error",
-            message: `Analysis ${completionStatus}`,
-          });
-        } else {
-          updateBulkProgress(row.id, {
-            status: "completed",
-            message: "Analysis finished",
-          });
-        }
       } catch (err) {
         updateBulkProgress(row.id, {
           status: "error",
@@ -672,12 +555,19 @@ const BulkTestsPage = () => {
         flex: 1,
         minWidth: 160,
       },
+      // CHANGED: added Pull Schedule Name column
+      {
+        field: "pullScheduleName",
+        headerName: "Pull Schedule",
+        flex: 1,
+        minWidth: 160,
+        valueFormatter: (value) => value ?? "—",
+      },
       {
         field: "testStatus",
         headerName: "Status",
         width: 140,
         renderCell: (params) => {
-          //   console.log("params:", params);
           const value = params.row.testStatus ?? "none";
           const chipColor = statusColorMap[value] ?? "default";
           const label = statusLabelMap[value] ?? value;
@@ -697,133 +587,33 @@ const BulkTestsPage = () => {
             const message =
               calculationState.message ??
               calculationState.error ??
-              (status === "completed"
-                ? "Completed"
-                : status === "failed"
-                  ? "Failed"
-                  : "Processing");
-
-            if (status === "running") {
-              const progressValue =
-                typeof calculationState.progress === "number"
-                  ? Math.min(
-                      100,
-                      Math.max(0, Math.round(calculationState.progress)),
-                    )
-                  : null;
-              const caption =
-                progressValue !== null ? progressValue + "%" : "Processing...";
-
-              return (
-                <Tooltip title={message}>
-                  <Stack direction='row' alignItems='center' spacing={1}>
-                    <CircularProgress
-                      size={16}
-                      variant={
-                        progressValue !== null ? "determinate" : "indeterminate"
-                      }
-                      value={progressValue ?? undefined}
-                    />
-                    <Typography variant='caption'>{caption}</Typography>
-                  </Stack>
-                </Tooltip>
-              );
-            }
-
-            if (status === "completed") {
-              return (
-                <Tooltip title={message}>
-                  <Chip
-                    size='small'
-                    color='success'
-                    icon={<CloudDoneRoundedIcon fontSize='small' />}
-                    label='Completed'
-                  />
-                </Tooltip>
-              );
-            }
-
-            if (status === "failed") {
-              return (
-                <Tooltip
-                  title={
-                    calculationState.error ??
-                    calculationState.message ??
-                    "Failed"
-                  }>
-                  <Chip
-                    size='small'
-                    color='error'
-                    icon={<ErrorOutlineRoundedIcon fontSize='small' />}
-                    label='Failed'
-                    variant='outlined'
-                  />
-                </Tooltip>
-              );
-            }
-
-            if (status === "cancelled") {
-              return (
-                <Tooltip title={message}>
-                  <Chip
-                    size='small'
-                    color='warning'
-                    label='Cancelled'
-                    variant='outlined'
-                  />
-                </Tooltip>
-              );
-            }
-          }
-
-          if (localProgress?.status === "running") {
+              (status === "completed" ? "Completed" : status);
             return (
-              <Stack direction='row' alignItems='center' spacing={1}>
-                <CircularProgress size={16} />
-                <Typography variant='caption'>Starting...</Typography>
-              </Stack>
-            );
-          }
-          if (localProgress?.status === "error") {
-            return (
-              <Tooltip title={localProgress.message ?? "Failed"}>
+              <Tooltip title={message ?? ""}>
                 <Chip
                   size='small'
-                  color='error'
-                  icon={<ErrorOutlineRoundedIcon fontSize='small' />}
-                  label='Failed'
-                  variant='outlined'
+                  color={
+                    status === "completed"
+                      ? "success"
+                      : status === "failed" || status === "error"
+                        ? "error"
+                        : "info"
+                  }
+                  label={
+                    status === "completed"
+                      ? "Done"
+                      : status === "failed" || status === "error"
+                        ? "Failed"
+                        : "Running"
+                  }
                 />
               </Tooltip>
             );
           }
-          if (localProgress?.status === "queued") {
+
+          if (localProgress?.status === "done") {
             return (
-              <Tooltip title={localProgress.message ?? "Queued"}>
-                <Chip
-                  size='small'
-                  icon={<ScheduleRoundedIcon fontSize='small' />}
-                  label='Queued'
-                  variant='outlined'
-                />
-              </Tooltip>
-            );
-          }
-          if (localProgress?.status === "started") {
-            return (
-              <Tooltip title={localProgress.message ?? "Started"}>
-                <Chip
-                  size='small'
-                  color='success'
-                  icon={<PlayArrowRoundedIcon fontSize='small' />}
-                  label='Started'
-                />
-              </Tooltip>
-            );
-          }
-          if (localProgress?.status === "completed") {
-            return (
-              <Tooltip title={localProgress.message ?? "Completed"}>
+              <Tooltip title='Completed'>
                 <Chip
                   size='small'
                   color='success'
@@ -898,8 +688,6 @@ const BulkTestsPage = () => {
         renderCell: (params) => {
           const row = params.row;
           const { seriesInstanceUid } = row;
-          //   console.log("action row:", row);
-          //   seriesInstanceUid
           const isRecovering = recoveringMap[row.id] ?? false;
           return (
             <Stack direction='row' spacing={1} alignItems='center'>
@@ -985,6 +773,7 @@ const BulkTestsPage = () => {
     }),
     [pagination.page, pagination.limit],
   );
+
   const getRowId = useCallback((row) => {
     const baseId =
       row.series_id ??
@@ -1013,6 +802,7 @@ const BulkTestsPage = () => {
     },
     [actions, paginationModel.page, paginationModel.pageSize],
   );
+
   return (
     <Stack spacing={3}>
       <Stack direction='row' justifyContent='space-between' alignItems='center'>
@@ -1090,70 +880,6 @@ const BulkTestsPage = () => {
         </Alert>
       )}
 
-      {/* <Paper variant='outlined' sx={{ p: 3 }}>
-        <Stack
-          spacing={2}
-          direction={{ xs: "column", md: "row" }}
-          alignItems={{ xs: "stretch", md: "center" }}
-          justifyContent='space-between'>
-          <Stack
-            direction={{ xs: "column", sm: "row" }}
-            spacing={2}
-            flexWrap='wrap'>
-            <FormControl size='small' sx={{ minWidth: 160 }}>
-              <InputLabel id='test-type-label'>Test Type</InputLabel>
-              <Select
-                labelId='test-type-label'
-                label='Test Type'
-                value={testType}
-                onChange={(event) => setTestType(event.target.value)}>
-                {<MenuItem value='global'>Global Noise</MenuItem>}
-                <MenuItem value='full'>Full CHO</MenuItem>
-              </Select>
-            </FormControl>
-            <FormControl size='small' sx={{ minWidth: 200 }}>
-              <InputLabel id='modality-label'>
-                Preferred Modality{loadingModalities ? " (loading…)" : ""}
-              </InputLabel>
-              <Select
-                labelId='modality-label'
-                label='Preferred Modality'
-                value={selectedModality}
-                onChange={(event) => setSelectedModality(event.target.value)}
-                disabled={loadingModalities || modalities.length === 0}>
-                {modalities.map((item) => (
-                  <MenuItem key={item.id} value={item.id}>
-                    {item.title ?? item.id} ({item.aet ?? "AET"})
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-          </Stack>
-          <Tooltip
-            title={
-              numSelected
-                ? `Run ${numSelected} selected tests`
-                : "Select rows to start bulk testing"
-            }>
-            <span>
-              <Button
-                variant='contained'
-                startIcon={
-                  runningBulk ? (
-                    <CircularProgress size={18} />
-                  ) : (
-                    <PlayArrowRoundedIcon />
-                  )
-                }
-                disabled={runningBulk || numSelected === 0}
-                onClick={handleRunBulk}>
-                {runningBulk ? "Starting..." : `Run ${numSelected || ""} Tests`}
-              </Button>
-            </span>
-          </Tooltip>
-        </Stack>
-      </Paper> */}
-
       <Paper variant='outlined' sx={{ p: 2 }}>
         <Stack
           spacing={2}
@@ -1175,6 +901,13 @@ const BulkTestsPage = () => {
               value={filters.protocol}
               onChange={handleFilterChange("protocol")}
               label='Protocol'
+              size='small'
+            />
+            {/* CHANGED: Pull Schedule Name filter field */}
+            <TextField
+              value={filters.pullScheduleName}
+              onChange={handleFilterChange("pullScheduleName")}
+              label='Pull Schedule Name'
               size='small'
             />
             <FormControl size='small' sx={{ minWidth: 140 }}>
@@ -1212,10 +945,6 @@ const BulkTestsPage = () => {
 
         <Box sx={{ width: "100%" }}>
           {console.log("Filtered Rows:", filteredRows)}
-          {/* {console.log("Columns:", columns)}
-          {console.log("Loading:", loading)}
-          {console.log("Selection Model:", selectionModel)} */}
-
           <DataGrid
             rows={loading ? [] : (filteredRows ?? [])}
             columns={columns}
@@ -1224,7 +953,6 @@ const BulkTestsPage = () => {
             paginationMode='server'
             paginationModel={paginationModel}
             onPaginationModelChange={handlePaginationModelChange}
-            // disableRowSelectionExcludeModel
             checkboxSelection
             disableRowSelectionOnClick
             loading={loading}
@@ -1235,7 +963,6 @@ const BulkTestsPage = () => {
                 sortModel: [{ field: "latestAnalysis", sort: "desc" }],
               },
             }}
-            // showToolbar
             onRowSelectionModelChange={(model) => setSelectionModel(model)}
             rowSelectionModel={selectionModel}
             slotProps={{

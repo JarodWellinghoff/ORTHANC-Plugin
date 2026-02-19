@@ -105,17 +105,12 @@ class CHOResultsStorage:
     def _find_sql_files(self):
         """Find SQL files in various possible locations"""
         possible_paths = [
-            # Current directory
             ".",
-            # SQL directory
             "sql",
             "/src/sql",
-            # Parent directories
             "../sql",
             "../../sql",
-            # Root of project
             "/src",
-            # Docker volume mounts
             "/app/sql",
             "/opt/app/sql",
         ]
@@ -132,7 +127,7 @@ class CHOResultsStorage:
                 print(f"Found SQL files in: {base_path}")
                 return sql_files
 
-        # If not found, try individual files
+        # If not found together, try individual files
         for base_path in possible_paths:
             if not sql_files.get("dicom"):
                 dicom_path = os.path.join(base_path, self.dicom_sql_file)
@@ -158,7 +153,6 @@ class CHOResultsStorage:
             with open(file_path, "r", encoding="utf-8") as f:
                 sql_content = f.read()
 
-            # Split by semicolons and execute each statement
             statements = [
                 stmt.strip() for stmt in sql_content.split(";") if stmt.strip()
             ]
@@ -170,12 +164,10 @@ class CHOResultsStorage:
                             cursor.execute(statement)
                             print(f"\tExecuted statement {i+1}/{len(statements)}")
                         except psycopg2.Error as e:
-                            # Some statements might fail if objects already exist, that's OK
                             if "already exists" in str(e).lower():
                                 print(f"\tStatement {i+1} - object already exists (OK)")
                             else:
                                 print(f"\tStatement {i+1} failed: {str(e)}")
-                                # Continue with other statements
 
                 self.postgres_connection.commit()
                 print(f"\tSuccessfully executed {description}")
@@ -200,416 +192,31 @@ class CHOResultsStorage:
                 missing.append(self.dicom_sql_file)
             if not sql_files.get("analysis"):
                 missing.append(self.analysis_sql_file)
-
             print(f"Could not find required SQL files: {', '.join(missing)}")
-            print("Searched in the following locations:")
-            for path in [
-                ".",
-                "sql",
-                "/src/sql",
-                "../sql",
-                "../../sql",
-                "/src",
-                "/app/sql",
-                "/opt/app/sql",
-            ]:
-                print(f"  - {path}")
             return False
 
-        # Execute DICOM schema first (has the base tables)
+        success = True
         if not self._execute_sql_file(sql_files["dicom"], "DICOM schema"):
-            return False
-
-        # Then execute analysis schema (has foreign keys to DICOM tables)
+            success = False
         if not self._execute_sql_file(sql_files["analysis"], "Analysis schema"):
-            return False
+            success = False
 
-        print("Database schema created successfully from SQL files")
-        return True
-
-    def _image_exists(self, series_instance_uid):
-        """
-        Check if the processed image exists in MinIO.
-
-        Args:
-            series_instance_uid (str): The unique identifier for the DICOM series.
-
-        Returns:
-            bool: True if the image exists, False otherwise.
-        """
-        if not self.minio_client:
-            print("MinIO client not initialized")
-            return False
-
-        # Check if image already exists
-        object_name = f"{series_instance_uid}_coronal_view.png"
-        try:
-            self.minio_client.stat_object(
-                bucket_name=self.bucket_name, object_name=object_name
-            )
-            print(f"Image already exists in MinIO: {object_name}")
-            return True
-        except S3Error as e:
-            if e.code == "NoSuchKey":
-                print(f"Image does not exist in MinIO: {object_name}")
-            else:
-                print(f"Error checking image existence in MinIO: {e}")
-            return False
-
-    def _delete_image_from_minio(self, series_instance_uid):
-        """Delete image data from MinIO"""
-        if not self.minio_client:
-            print("MinIO client not initialized")
-            return False
-
-        # Generate object name
-        object_name = f"{series_instance_uid}_coronal_view.png"
-        try:
-            self.minio_client.remove_object(
-                bucket_name=self.bucket_name, object_name=object_name
-            )
-            print(f"Successfully deleted image from MinIO: {object_name}")
-            return True
-        except S3Error as e:
-            raise e
-        except Exception as e:
-            raise e
-
-    def _save_image_to_minio(self, image_data, series_instance_uid):
-        """Save image data to MinIO with proper error handling"""
-        if not self.minio_client:
-            print("MinIO client not initialized")
-            return False
-
-        if self._image_exists(series_instance_uid):
-            try:
-                self._delete_image_from_minio(series_instance_uid)
-            except S3Error as e:
-                print(f"S3Error removing image from MinIO: {e}")
-                print(traceback.format_exc())
-                return False
-            except Exception as e:
-                print(f"Error removing image from MinIO: {str(e)}")
-                print(traceback.format_exc())
-                return False
-
-        try:
-            # Handle PIL Image objects
-            if hasattr(image_data, "save"):
-                # PIL Image - convert to bytes
-                img_buffer = io.BytesIO()
-                image_data.save(img_buffer, format="PNG")
-                img_bytes = img_buffer.getvalue()
-                img_size = len(img_bytes)
-                img_stream = io.BytesIO(img_bytes)
-            else:
-                # Assume it's already bytes or similar
-                if isinstance(image_data, bytes):
-                    img_bytes = image_data
-                    img_size = len(img_bytes)
-                    img_stream = io.BytesIO(img_bytes)
-                else:
-                    print(f"Unsupported image data type: {type(image_data)}")
-                    return False
-
-            # Generate object name
-            object_name = f"{series_instance_uid}_coronal_view.png"
-
-            # Upload to MinIO
-            result = self.minio_client.put_object(
-                bucket_name=self.bucket_name,
-                object_name=object_name,
-                data=img_stream,
-                length=img_size,
-                content_type="image/png",
-            )
-
-            print(f"Successfully uploaded image to MinIO: {object_name}")
-            return True
-        except S3Error as e:
-            print(f"S3Error saving image to MinIO: {e}")
-            print(traceback.format_exc())
-            return False
-        except Exception as e:
-            print(f"Error saving image to MinIO: {str(e)}")
-            print(traceback.format_exc())
-            return False
-
-    def _get_or_create_patient(self, cursor, patient_info):
-        """Get or create patient record"""
-        # Check if patient exists
-        cursor.execute(
-            """
-            SELECT id FROM dicom.patient 
-            WHERE patient_id = %s
-        """,
-            (patient_info.get("patient_id"),),
-        )
-
-        result = cursor.fetchone()
-        if result:
-            return result[0]
-
-        # Create new patient
-        cursor.execute(
-            """
-            INSERT INTO dicom.patient (patient_id, name, birth_date, sex, weight_kg)
-            VALUES (%s, %s, %s, %s, %s)
-            RETURNING id
-        """,
-            (
-                patient_info.get("patient_id"),
-                patient_info.get("name"),
-                patient_info.get("birth_date"),
-                patient_info.get("sex"),
-                patient_info.get("weight_kg"),
-            ),
-        )
-
-        return cursor.fetchone()[0]
-
-    def _get_or_create_scanner(self, cursor, scanner_info):
-        """Get or create scanner record"""
-        # Check if scanner exists
-        cursor.execute(
-            """
-            SELECT id FROM dicom.scanner 
-            WHERE manufacturer = %s AND model_name = %s 
-            AND device_serial_number = %s AND station_name = %s
-        """,
-            (
-                scanner_info.get("manufacturer"),
-                scanner_info.get("model_name"),
-                scanner_info.get("device_serial_number"),
-                scanner_info.get("station_name"),
-            ),
-        )
-
-        result = cursor.fetchone()
-        if result:
-            return result[0]
-
-        # Create new scanner
-        cursor.execute(
-            """
-            INSERT INTO dicom.scanner (
-                manufacturer, model_name, device_serial_number, 
-                software_versions, station_name, institution_name
-            ) VALUES (%s, %s, %s, %s, %s, %s)
-            RETURNING id
-        """,
-            (
-                scanner_info.get("manufacturer"),
-                scanner_info.get("model_name"),
-                scanner_info.get("device_serial_number"),
-                scanner_info.get("software_versions"),
-                scanner_info.get("station_name"),
-                scanner_info.get("institution_name"),
-            ),
-        )
-
-        return cursor.fetchone()[0]
-
-    def _get_or_create_study(self, cursor, study_info, patient_id):
-        """Get or create study record"""
-        # Check if study exists
-        cursor.execute(
-            """
-            SELECT id FROM dicom.study 
-            WHERE study_instance_uid = %s
-        """,
-            (study_info.get("study_instance_uid"),),
-        )
-
-        result = cursor.fetchone()
-        if result:
-            return result[0]
-
-        # Create new study
-        cursor.execute(
-            """
-            INSERT INTO dicom.study (
-                patient_id_fk, study_instance_uid, study_id, accession_number,
-                study_date, study_time, description, referring_physician,
-                institution_name, institution_address
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id
-        """,
-            (
-                patient_id,
-                study_info.get("study_instance_uid"),
-                study_info.get("study_id"),
-                study_info.get("accession_number"),
-                study_info.get("study_date"),
-                study_info.get("study_time"),
-                study_info.get("description"),
-                study_info.get("referring_physician"),
-                study_info.get("institution_name"),
-                study_info.get("institution_address"),
-            ),
-        )
-
-        return cursor.fetchone()[0]
-
-    def _get_or_create_series(self, cursor, series_info, study_id, scanner_id):
-        """Get or create series record"""
-        # Check if series exists
-        cursor.execute(
-            """
-            SELECT id FROM dicom.series 
-            WHERE series_instance_uid = %s
-        """,
-            (series_info.get("series_instance_uid"),),
-        )
-
-        result = cursor.fetchone()
-        if result:
-            return result[0]
-
-        # Create new series
-        cursor.execute(
-            """
-            INSERT INTO dicom.series (
-                uuid, study_id_fk, series_instance_uid, series_number,
-                description, modality, body_part_examined, protocol_name,
-                convolution_kernel, patient_position, series_date, series_time,
-                frame_of_reference_uid, image_type, slice_thickness_mm,
-                pixel_spacing_mm, rows, columns, scanner_id_fk,
-                image_count, scan_length_cm
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id
-        """,
-            (
-                series_info.get("uuid"),
-                study_id,
-                series_info.get("series_instance_uid"),
-                series_info.get("series_number"),
-                series_info.get("description"),
-                series_info.get("modality"),
-                series_info.get("body_part_examined"),
-                series_info.get("protocol_name"),
-                series_info.get("convolution_kernel"),
-                series_info.get("patient_position"),
-                series_info.get("series_date"),
-                series_info.get("series_time"),
-                series_info.get("frame_of_reference_uid"),
-                series_info.get("image_type"),
-                series_info.get("slice_thickness_mm"),
-                series_info.get("pixel_spacing_mm"),
-                series_info.get("rows"),
-                series_info.get("columns"),
-                scanner_id,
-                series_info.get("image_count"),
-                series_info.get("scan_length_cm"),
-            ),
-        )
-
-        return cursor.fetchone()[0]
-
-    def _save_ct_technique(self, cursor, ct_info, series_id):
-        """Save CT technique information"""
-        cursor.execute(
-            """
-            INSERT INTO dicom.ct_technique (
-                series_id_fk, kvp, exposure_time_ms, generator_power_kw,
-                focal_spots_mm, filter_type, data_collection_diam_mm,
-                recon_diameter_mm, dist_src_detector_mm, dist_src_patient_mm,
-                gantry_detector_tilt_deg, single_collimation_width_mm,
-                total_collimation_width_mm, table_speed_mm_s,
-                table_feed_per_rot_mm, spiral_pitch_factor, exposure_modulation_type
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (series_id_fk) DO UPDATE SET
-                kvp = EXCLUDED.kvp,
-                exposure_time_ms = EXCLUDED.exposure_time_ms,
-                generator_power_kw = EXCLUDED.generator_power_kw,
-                focal_spots_mm = EXCLUDED.focal_spots_mm,
-                filter_type = EXCLUDED.filter_type,
-                data_collection_diam_mm = EXCLUDED.data_collection_diam_mm,
-                recon_diameter_mm = EXCLUDED.recon_diameter_mm,
-                dist_src_detector_mm = EXCLUDED.dist_src_detector_mm,
-                dist_src_patient_mm = EXCLUDED.dist_src_patient_mm,
-                gantry_detector_tilt_deg = EXCLUDED.gantry_detector_tilt_deg,
-                single_collimation_width_mm = EXCLUDED.single_collimation_width_mm,
-                total_collimation_width_mm = EXCLUDED.total_collimation_width_mm,
-                table_speed_mm_s = EXCLUDED.table_speed_mm_s,
-                table_feed_per_rot_mm = EXCLUDED.table_feed_per_rot_mm,
-                spiral_pitch_factor = EXCLUDED.spiral_pitch_factor,
-                exposure_modulation_type = EXCLUDED.exposure_modulation_type
-        """,
-            (
-                series_id,
-                ct_info.get("kvp"),
-                ct_info.get("exposure_time_ms"),
-                ct_info.get("generator_power_kW"),
-                ct_info.get("focal_spots_mm"),
-                ct_info.get("filter_type"),
-                ct_info.get("data_collection_diam_mm"),
-                ct_info.get("recon_diameter_mm"),
-                ct_info.get("dist_src_detector_mm"),
-                ct_info.get("dist_src_patient_mm"),
-                ct_info.get("gantry_detector_tilt_deg"),
-                ct_info.get("single_collimation_width_mm"),
-                ct_info.get("total_collimation_width_mm"),
-                ct_info.get("table_speed_mm_s"),
-                ct_info.get("table_feed_per_rot_mm"),
-                ct_info.get("spiral_pitch_factor"),
-                ct_info.get("exposure_modulation_type"),
-            ),
-        )
-
-    def init_minio_client(self):
-        """Initialize MinIO client with better error handling"""
-        try:
-            self.minio_client = Minio(
-                endpoint=self.minio_config["endpoint"],
-                access_key=self.minio_config["access_key"],
-                secret_key=self.minio_config["secret_key"],
-                secure=self.minio_config["secure"],
-            )
-
-            # Test connection
-            try:
-                self.minio_client.list_buckets()
-                print("Successfully connected to MinIO")
-            except Exception as e:
-                print(f"Failed to connect to MinIO: {str(e)}")
-                return False
-
-            # Create bucket if it doesn't exist
-            try:
-                if not self.minio_client.bucket_exists(bucket_name=self.bucket_name):
-                    self.minio_client.make_bucket(bucket_name=self.bucket_name)
-                    print(f"Created MinIO bucket: {self.bucket_name}")
-                else:
-                    print(f"MinIO bucket '{self.bucket_name}' already exists")
-            except S3Error as e:
-                print(f"Failed to create/check MinIO bucket: {str(e)}")
-                return False
-
-        except Exception as e:
-            print(f"Failed to initialize MinIO client: {str(e)}")
-            print(traceback.format_exc())
-            return False
-
-        return True
+        return success
 
     def init_postgres_database(self):
-        """Initialize the database - create schema from SQL files if it doesn't exist"""
+        """Initialize the PostgreSQL database"""
         if not self.connect_postgres() or self.postgres_connection is None:
-            print("Failed to connect to PostgreSQL")
+            print("Failed to connect to PostgreSQL for initialization")
             return False
 
         try:
-            # Check if database already exists
             if self._check_database_exists():
-                print("Database schema already exists")
+                print("Database schema already exists, skipping creation")
             else:
-                # Create database from SQL files
                 if not self._create_database_from_sql_files():
                     print("Failed to create database schema from SQL files")
                     return False
 
-            # Create additional performance indices
             with self.postgres_connection.cursor() as cursor:
                 indices_to_create = [
                     (
@@ -655,7 +262,217 @@ class CHOResultsStorage:
                 self.postgres_connection.rollback()
             return False
 
-        return True
+    def init_minio_client(self):
+        """Initialize MinIO client"""
+        try:
+            self.minio_connection = Minio(
+                self.minio_config["endpoint"],
+                access_key=self.minio_config["access_key"],
+                secret_key=self.minio_config["secret_key"],
+                secure=self.minio_config["secure"],
+            )
+            # Ensure bucket exists
+            if not self.minio_connection.bucket_exists(self.bucket_name):
+                self.minio_connection.make_bucket(self.bucket_name)
+                print(f"Created MinIO bucket: {self.bucket_name}")
+            else:
+                print(f"MinIO bucket already exists: {self.bucket_name}")
+            return True
+        except Exception as e:
+            print(f"Failed to initialize MinIO client: {str(e)}")
+            self.minio_connection = None
+            return False
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Internal DB helpers
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _get_or_create_patient(self, cursor, patient_info):
+        """Get or create patient record"""
+        cursor.execute(
+            "SELECT id FROM dicom.patient WHERE patient_id = %s",
+            (patient_info.get("patient_id"),),
+        )
+        result = cursor.fetchone()
+        if result:
+            return result[0]
+
+        cursor.execute(
+            """
+            INSERT INTO dicom.patient (patient_id, name, birth_date, sex)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id
+        """,
+            (
+                patient_info.get("patient_id"),
+                patient_info.get("name"),
+                patient_info.get("birth_date"),
+                patient_info.get("sex"),
+            ),
+        )
+        return cursor.fetchone()[0]
+
+    def _get_or_create_scanner(self, cursor, scanner_info):
+        """Get or create scanner record"""
+        cursor.execute(
+            "SELECT id FROM dicom.scanner WHERE device_serial_number = %s",
+            (scanner_info.get("device_serial_number"),),
+        )
+        result = cursor.fetchone()
+        if result:
+            return result[0]
+
+        cursor.execute(
+            """
+            INSERT INTO dicom.scanner (
+                manufacturer, model_name, device_serial_number,
+                software_versions, station_name, institution_name
+            ) VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """,
+            (
+                scanner_info.get("manufacturer"),
+                scanner_info.get("model_name"),
+                scanner_info.get("device_serial_number"),
+                scanner_info.get("software_versions"),
+                scanner_info.get("station_name"),
+                scanner_info.get("institution_name"),
+            ),
+        )
+        return cursor.fetchone()[0]
+
+    def _get_or_create_study(self, cursor, study_info, patient_id):
+        """Get or create study record"""
+        cursor.execute(
+            "SELECT id FROM dicom.study WHERE study_instance_uid = %s",
+            (study_info.get("study_instance_uid"),),
+        )
+        result = cursor.fetchone()
+        if result:
+            return result[0]
+
+        cursor.execute(
+            """
+            INSERT INTO dicom.study (
+                patient_id_fk, study_instance_uid, study_id, accession_number,
+                study_date, study_time, description, referring_physician,
+                institution_name, institution_address
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """,
+            (
+                patient_id,
+                study_info.get("study_instance_uid"),
+                study_info.get("study_id"),
+                study_info.get("accession_number"),
+                study_info.get("study_date"),
+                study_info.get("study_time"),
+                study_info.get("description"),
+                study_info.get("referring_physician"),
+                study_info.get("institution_name"),
+                study_info.get("institution_address"),
+            ),
+        )
+        return cursor.fetchone()[0]
+
+    def _get_or_create_series(self, cursor, series_info, study_id, scanner_id):
+        """Get or create series record"""
+        cursor.execute(
+            "SELECT id FROM dicom.series WHERE series_instance_uid = %s",
+            (series_info.get("series_instance_uid"),),
+        )
+        result = cursor.fetchone()
+        if result:
+            return result[0]
+
+        cursor.execute(
+            """
+            INSERT INTO dicom.series (
+                uuid, study_id_fk, series_instance_uid, series_number,
+                description, modality, body_part_examined, protocol_name,
+                convolution_kernel, patient_position, series_date, series_time,
+                frame_of_reference_uid, image_type, slice_thickness_mm,
+                pixel_spacing_mm, rows, columns, scanner_id_fk,
+                image_count, scan_length_cm
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                      %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """,
+            (
+                series_info.get("uuid"),
+                study_id,
+                series_info.get("series_instance_uid"),
+                series_info.get("series_number"),
+                series_info.get("description"),
+                series_info.get("modality"),
+                series_info.get("body_part_examined"),
+                series_info.get("protocol_name"),
+                series_info.get("convolution_kernel"),
+                series_info.get("patient_position"),
+                series_info.get("series_date"),
+                series_info.get("series_time"),
+                series_info.get("frame_of_reference_uid"),
+                series_info.get("image_type"),
+                series_info.get("slice_thickness_mm"),
+                series_info.get("pixel_spacing_mm"),
+                series_info.get("rows"),
+                series_info.get("columns"),
+                scanner_id,
+                series_info.get("image_count"),
+                series_info.get("scan_length_cm"),
+            ),
+        )
+        return cursor.fetchone()[0]
+
+    def _get_or_create_ct_technique(self, cursor, ct_info, series_id):
+        """Get or create CT technique record"""
+        cursor.execute(
+            "SELECT id FROM dicom.ct_technique WHERE series_id_fk = %s",
+            (series_id,),
+        )
+        result = cursor.fetchone()
+        if result:
+            return result[0]
+
+        cursor.execute(
+            """
+            INSERT INTO dicom.ct_technique (
+                series_id_fk, kvp, exposure_time_ms, generator_power_kw,
+                focal_spots_mm, filter_type, data_collection_diam_mm,
+                recon_diameter_mm, dist_src_detector_mm, dist_src_patient_mm,
+                gantry_detector_tilt_deg, single_collimation_width_mm,
+                total_collimation_width_mm, table_speed_mm_s,
+                table_feed_per_rot_mm, spiral_pitch_factor,
+                exposure_modulation_type
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                      %s, %s, %s, %s, %s)
+            RETURNING id
+        """,
+            (
+                series_id,
+                ct_info.get("kvp"),
+                ct_info.get("exposure_time_ms"),
+                ct_info.get("generator_power_kW"),
+                ct_info.get("focal_spots_mm"),
+                ct_info.get("filter_type"),
+                ct_info.get("data_collection_diam_mm"),
+                ct_info.get("recon_diameter_mm"),
+                ct_info.get("dist_src_detector_mm"),
+                ct_info.get("dist_src_patient_mm"),
+                ct_info.get("gantry_detector_tilt_deg"),
+                ct_info.get("single_collimation_width_mm"),
+                ct_info.get("total_collimation_width_mm"),
+                ct_info.get("table_speed_mm_s"),
+                ct_info.get("table_feed_per_rot_mm"),
+                ct_info.get("spiral_pitch_factor"),
+                ct_info.get("exposure_modulation_type"),
+            ),
+        )
+        return cursor.fetchone()[0]
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Public API
+    # ─────────────────────────────────────────────────────────────────────────
 
     def save_results(self, patient, study, scanner, series, ct, results):
         """Save CHO calculation results to the database with new schema"""
@@ -667,58 +484,34 @@ class CHOResultsStorage:
 
         try:
             with self.postgres_connection.cursor() as cursor:
-                # Create or get all the related records
                 patient_id = self._get_or_create_patient(cursor, patient)
                 scanner_id = self._get_or_create_scanner(cursor, scanner)
                 study_id = self._get_or_create_study(cursor, study, patient_id)
                 series_id = self._get_or_create_series(
                     cursor, series, study_id, scanner_id
                 )
+                self._get_or_create_ct_technique(cursor, ct, series_id)
 
-                # Save CT technique information
-                if ct:
-                    self._save_ct_technique(cursor, ct, series_id)
-
-                # Save analysis results - Update results if series_id_fk already exists
+                # Insert analysis results
                 cursor.execute(
                     """
                     INSERT INTO analysis.results (
-                        series_id_fk, average_frequency, average_index_of_detectability,
-                        average_noise_level, cho_detectability, ctdivol, ctdivol_avg,
-                        dlp, dlp_ssde, dw, dw_avg, location, location_sparse,
+                        series_id_fk,
+                        processing_time,
+                        ctdivol, ctdivol_avg, dlp, dlp_ssde, dw, dw_avg,
+                        location, ssde,
+                        average_frequency, average_index_of_detectability,
+                        average_noise_level, cho_detectability, location_sparse,
                         noise_level, nps, peak_frequency, percent_10_frequency,
-                        processing_time, spatial_frequency, spatial_resolution, ssde, ssde_inc
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (series_id_fk) DO UPDATE SET
-                        average_frequency = COALESCE(EXCLUDED.average_frequency, analysis.results.average_frequency),
-                        average_index_of_detectability = COALESCE(EXCLUDED.average_index_of_detectability, analysis.results.average_index_of_detectability),
-                        average_noise_level = COALESCE(EXCLUDED.average_noise_level, analysis.results.average_noise_level),
-                        cho_detectability = COALESCE(EXCLUDED.cho_detectability, analysis.results.cho_detectability),
-                        ctdivol = COALESCE(EXCLUDED.ctdivol, analysis.results.ctdivol),
-                        ctdivol_avg = COALESCE(EXCLUDED.ctdivol_avg, analysis.results.ctdivol_avg),
-                        dlp = COALESCE(EXCLUDED.dlp, analysis.results.dlp),
-                        dlp_ssde = COALESCE(EXCLUDED.dlp_ssde, analysis.results.dlp_ssde),
-                        dw = COALESCE(EXCLUDED.dw, analysis.results.dw),
-                        dw_avg = COALESCE(EXCLUDED.dw_avg, analysis.results.dw_avg),
-                        location = COALESCE(EXCLUDED.location, analysis.results.location),
-                        location_sparse = COALESCE(EXCLUDED.location_sparse, analysis.results.location_sparse),
-                        noise_level = COALESCE(EXCLUDED.noise_level, analysis.results.noise_level),
-                        nps = COALESCE(EXCLUDED.nps, analysis.results.nps),
-                        peak_frequency = COALESCE(EXCLUDED.peak_frequency, analysis.results.peak_frequency),
-                        percent_10_frequency = COALESCE(EXCLUDED.percent_10_frequency, analysis.results.percent_10_frequency),
-                        processing_time = EXCLUDED.processing_time,
-                        spatial_frequency = COALESCE(EXCLUDED.spatial_frequency, analysis.results.spatial_frequency),
-                        spatial_resolution = COALESCE(EXCLUDED.spatial_resolution, analysis.results.spatial_resolution),
-                        ssde = COALESCE(EXCLUDED.ssde, analysis.results.ssde),
-                        ssde_inc = COALESCE(EXCLUDED.ssde_inc, analysis.results.ssde_inc)
-                    RETURNING id
+                        spatial_frequency, spatial_resolution
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    )
                 """,
                     (
                         series_id,
-                        results.get("average_frequency"),
-                        results.get("average_index_of_detectability"),
-                        results.get("average_noise_level"),
-                        results.get("cho_detectability"),
+                        results.get("processing_time"),
                         results.get("ctdivol"),
                         results.get("ctdivol_avg"),
                         results.get("dlp"),
@@ -726,89 +519,191 @@ class CHOResultsStorage:
                         results.get("dw"),
                         results.get("dw_avg"),
                         results.get("location"),
+                        results.get("ssde"),
+                        results.get("average_frequency"),
+                        results.get("average_index_of_detectability"),
+                        results.get("average_noise_level"),
+                        results.get("cho_detectability"),
                         results.get("location_sparse"),
                         results.get("noise_level"),
                         results.get("nps"),
                         results.get("peak_frequency"),
                         results.get("percent_10_frequency"),
-                        results.get("processing_time"),
                         results.get("spatial_frequency"),
                         results.get("spatial_resolution"),
-                        results.get("ssde"),
-                        results.get("ssde_inc"),
                     ),
                 )
 
                 self.postgres_connection.commit()
-                print(
-                    f"Successfully saved CHO results for series {series.get('series_instance_uid')}"
-                )
                 success = True
+                print(f"Results saved successfully for series_id={series_id}")
 
         except Exception as e:
-            print(f"Failed to save results to PostgreSQL: {str(e)}")
+            print(f"Error saving results: {str(e)}")
             print(traceback.format_exc())
             if self.postgres_connection:
                 self.postgres_connection.rollback()
-            return False
-
-        # Save coronal view image to MinIO (separate from database transaction)
-        if success and results.get("coronal_view") is not None:
-            # Check if image already exists
-
-            image_success = self._save_image_to_minio(
-                self.create_coronal_image(results.get("coronal_view")),
-                series.get("series_instance_uid"),
-            )
-            if not image_success:
-                print(
-                    f"Warning: Failed to save coronal view image for series {series.get('series_instance_uid')}"
-                )
-                # Don't fail the entire operation just because image save failed
 
         return success
 
-    def create_coronal_image(self, coronal_view_data):
-        """Convert coronal view data to PIL Image with proper format"""
-        coronal_view_data = np.array(coronal_view_data)
-        try:
-            # Ensure we have valid image data
-            if coronal_view_data is None or len(coronal_view_data.shape) != 2:
-                print("Warning: Invalid coronal view data")
-                return None
+    def save_dicom_headers_only(self, patient, study, scanner, series, ct):
+        """Save DICOM metadata without analysis results"""
+        return self.save_results(
+            patient, study, scanner, series, ct, results={"processing_time": 0.0}
+        )
 
-            # Normalize the data to 0-255 range
-            min_val = np.min(coronal_view_data)
-            max_val = np.max(coronal_view_data)
-
-            if max_val > min_val:
-                normalized = (
-                    (coronal_view_data - min_val) / (max_val - min_val) * 255
-                ).astype(np.uint8)
-            else:
-                normalized = np.zeros_like(coronal_view_data, dtype=np.uint8)
-
-            # Create PIL Image
-            image = Image.fromarray(normalized, mode="L")  # 'L' for grayscale
-
-            # Optionally resize if too large
-            if image.size[0] > 1024 or image.size[1] > 1024:
-                image.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
-
-            return image
-
-        except Exception as e:
-            print(f"Error creating coronal image: {str(e)}")
-            return None
-
-    def get_results(self, params):
-        """Retrieve CHO results from the database"""
+    def delete_results(self, series_instance_uid):
+        """Delete CHO results for a specific series"""
         if not self.connect_postgres() or self.postgres_connection is None:
             return False
 
         try:
             with self.postgres_connection.cursor() as cursor:
-                # Get query parameters for enhanced filtering
+                cursor.execute(
+                    """
+                    DELETE FROM analysis.results
+                    WHERE series_id_fk = (
+                        SELECT id FROM dicom.series
+                        WHERE series_instance_uid = %s
+                    )
+                """,
+                    (series_instance_uid,),
+                )
+                deleted = cursor.rowcount > 0
+            self.postgres_connection.commit()
+            return deleted
+        except Exception as e:
+            print(f"Error deleting results: {str(e)}")
+            if self.postgres_connection:
+                self.postgres_connection.rollback()
+            return False
+
+    def get_result(self, series_instance_uid):
+        """Get full result record for a single series"""
+        if not self.connect_postgres() or self.postgres_connection is None:
+            raise Exception("No database connection")
+
+        try:
+            with self.postgres_connection.cursor() as cursor:
+                base_query = """
+                    SELECT 
+                        r.*,
+                        s.series_instance_uid,
+                        s.uuid as series_uuid,
+                        p.patient_id,
+                        p.name as patient_name,
+                        p.birth_date,
+                        p.sex,
+                        st.study_instance_uid,
+                        st.institution_name,
+                        st.study_date,
+                        sc.manufacturer,
+                        sc.model_name as scanner_model,
+                        sc.station_name,
+                        s.protocol_name,
+                        s.modality,
+                        s.body_part_examined,
+                        s.scan_length_cm,
+                        st.study_id,
+                        st.description as study_description,
+                        st.study_date,
+                        st.study_time,
+                        s.description as series_description,
+                        s.series_number,
+                        s.convolution_kernel,
+                        s.image_count,
+                        s.patient_position,
+                        s.pixel_spacing_mm,
+                        s.rows,
+                        s.columns,
+                        s.series_date,
+                        s.series_time,
+                        s.slice_thickness_mm,
+                        sc.device_serial_number,
+                        ct.kvp,
+                        ct.exposure_time_ms,
+                        ct.generator_power_kw,
+                        ct.focal_spots_mm,
+                        ct.filter_type,
+                        ct.data_collection_diam_mm,
+                        ct.recon_diameter_mm,
+                        ct.dist_src_detector_mm,
+                        ct.dist_src_patient_mm,
+                        ct.gantry_detector_tilt_deg,
+                        ct.single_collimation_width_mm,
+                        ct.total_collimation_width_mm,
+                        ct.table_speed_mm_s,
+                        ct.table_feed_per_rot_mm,
+                        ct.spiral_pitch_factor,
+                        ct.exposure_modulation_type
+                    FROM analysis.results r
+                    JOIN dicom.series s ON r.series_id_fk = s.id
+                    JOIN dicom.study st ON s.study_id_fk = st.id
+                    JOIN dicom.patient p ON st.patient_id_fk = p.id
+                    JOIN dicom.scanner sc ON s.scanner_id_fk = sc.id
+                    JOIN dicom.ct_technique ct ON s.id = ct.series_id_fk
+                    WHERE s.series_instance_uid = %s
+                    ORDER BY r.created_at DESC
+                    LIMIT 1
+                """
+                cursor.execute(base_query, (series_instance_uid,))
+                return cursor.fetchone(), cursor.description
+        except Exception as e:
+            self.postgres_connection.rollback()
+            raise e
+
+    def get_results_statistics(self):
+        """Get aggregate statistics for the results dashboard"""
+        if not self.connect_postgres() or self.postgres_connection is None:
+            raise Exception("No database connection")
+
+        try:
+            with self.postgres_connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    WITH counts AS (
+                        SELECT
+                        COUNT(*) AS total_results_count,
+                        COUNT(*) FILTER (
+                            WHERE (ctdivol, ctdivol_avg, dlp, dlp_ssde, dw, dw_avg, "location", ssde) is not null
+                            AND (average_frequency, average_index_of_detectability, average_noise_level, cho_detectability,
+                            location_sparse, noise_level, nps, peak_frequency, percent_10_frequency, spatial_frequency,
+                            spatial_resolution) IS NULL
+                        ) AS global_noise_count,
+                        COUNT(*) FILTER (
+                            WHERE r.* IS NOT NULL
+                        ) AS detectability_count
+                        FROM analysis.results r
+                    )
+                    SELECT
+                        total_results_count,
+                        global_noise_count,
+                        detectability_count,
+                        total_results_count
+                            - (global_noise_count + detectability_count) AS error_count
+                    FROM counts;
+                """
+                )
+                return cursor.fetchone()
+        except Exception as e:
+            self.postgres_connection.rollback()
+            raise e
+
+    def get_results(self, params):
+        """Retrieve CHO results from the database with optional filtering.
+
+        CHANGED: Now LEFT JOINs workflow.dicom_pull_items and
+        workflow.dicom_pull_batches so each row carries
+        `pull_schedule_name` (the display_name of the batch that
+        originally pulled this series).  A new `pull_schedule_name`
+        query param lets callers filter by that name.
+        """
+        if not self.connect_postgres() or self.postgres_connection is None:
+            return False
+
+        try:
+            with self.postgres_connection.cursor() as cursor:
+                # ── query parameters ──────────────────────────────────────
                 patient_id = params.get("patient_id")
                 study_id = params.get("study_id")
                 patient_search = params.get("patient_search")
@@ -820,83 +715,104 @@ class CHOResultsStorage:
                 exam_date_to = params.get("exam_date_to")
                 patient_age_min = params.get("patient_age_min")
                 patient_age_max = params.get("patient_age_max")
+                # ── CHANGED: new filter param ─────────────────────────────
+                pull_schedule_name = params.get("pull_schedule_name")
+                # ─────────────────────────────────────────────────────────
 
-                # Pagination parameters
+                # ── pagination ────────────────────────────────────────────
                 page = int(params.get("page", "1"))
                 limit = int(params.get("limit", "25"))
-
-                # Validate pagination parameters
                 page = max(1, page)
-                limit = min(max(1, limit), 1000)  # Limit max results per page to 1000
+                limit = min(max(1, limit), 1000)
                 offset = (page - 1) * limit
 
-                # Base query with enhanced joins
+                # ── CHANGED: base_query now LEFT JOINs the pull schedule ──
+                #
+                # The join path is:
+                #   dicom.series.series_instance_uid
+                #     → workflow.dicom_pull_items.series_instance_uid  (many rows possible; use the most recent)
+                #     → workflow.dicom_pull_batches.id  (carries display_name)
+                #
+                # We use a LATERAL subquery so we pick only the latest
+                # pull-item for each series, avoiding row duplication.
                 base_query = """
                     FROM dicom.series s
                     JOIN dicom.study st ON s.study_id_fk = st.id
                     JOIN dicom.patient p ON st.patient_id_fk = p.id
                     JOIN dicom.scanner sc ON s.scanner_id_fk = sc.id
                     LEFT JOIN analysis.results r ON s.id = r.series_id_fk
+                    LEFT JOIN LATERAL (
+                        SELECT dpb.display_name
+                        FROM workflow.dicom_pull_items dpi
+                        JOIN workflow.dicom_pull_batches dpb ON dpb.id = dpi.batch_id
+                        WHERE dpi.series_instance_uid = s.series_instance_uid
+                        ORDER BY dpi.created_at DESC
+                        LIMIT 1
+                    ) pull_info ON true
                 """
+                # ─────────────────────────────────────────────────────────
 
-                params = []
+                query_params = []
                 conditions = []
 
-                # Apply filters
                 if patient_id:
                     conditions.append("p.patient_id ILIKE %s")
-                    params.append(f"%{patient_id}%")
+                    query_params.append(f"%{patient_id}%")
 
                 if study_id:
                     conditions.append("st.study_instance_uid = %s")
-                    params.append(study_id)
+                    query_params.append(study_id)
 
                 if patient_search:
                     conditions.append("(p.name ILIKE %s OR p.patient_id ILIKE %s)")
-                    params.extend([f"%{patient_search}%", f"%{patient_search}%"])
+                    query_params.extend([f"%{patient_search}%", f"%{patient_search}%"])
 
                 if institute:
                     conditions.append("st.institution_name ILIKE %s")
-                    params.append(f"%{institute}%")
+                    query_params.append(f"%{institute}%")
 
                 if station_name:
                     conditions.append("sc.station_name ILIKE %s")
-                    params.append(f"%{station_name}%")
+                    query_params.append(f"%{station_name}%")
 
                 if protocol_name:
                     conditions.append("s.protocol_name ILIKE %s")
-                    params.append(f"%{protocol_name}%")
+                    query_params.append(f"%{protocol_name}%")
 
                 if scanner_model:
                     conditions.append("sc.model_name ILIKE %s")
-                    params.append(f"%{scanner_model}%")
+                    query_params.append(f"%{scanner_model}%")
 
                 if exam_date_from:
                     conditions.append("st.study_date >= %s")
-                    params.append(exam_date_from)
+                    query_params.append(exam_date_from)
 
                 if exam_date_to:
                     conditions.append("st.study_date <= %s")
-                    params.append(exam_date_to)
+                    query_params.append(exam_date_to)
 
-                # Patient age calculation (requires birth_date and study_date)
-                if patient_age_min or patient_age_max:
-                    if patient_age_min:
-                        conditions.append(
-                            "EXTRACT(YEAR FROM AGE(st.study_date::date, p.birth_date::date)) >= %s"
-                        )
-                        params.append(int(patient_age_min))
-                    if patient_age_max:
-                        conditions.append(
-                            "EXTRACT(YEAR FROM AGE(st.study_date::date, p.birth_date::date)) <= %s"
-                        )
-                        params.append(int(patient_age_max))
+                if patient_age_min:
+                    conditions.append(
+                        "EXTRACT(YEAR FROM AGE(st.study_date::date, p.birth_date::date)) >= %s"
+                    )
+                    query_params.append(int(patient_age_min))
+
+                if patient_age_max:
+                    conditions.append(
+                        "EXTRACT(YEAR FROM AGE(st.study_date::date, p.birth_date::date)) <= %s"
+                    )
+                    query_params.append(int(patient_age_max))
+
+                # ── CHANGED: pull schedule name filter ────────────────────
+                if pull_schedule_name:
+                    conditions.append("pull_info.display_name ILIKE %s")
+                    query_params.append(f"%{pull_schedule_name}%")
+                # ─────────────────────────────────────────────────────────
 
                 where_clause = ""
                 if conditions:
                     where_clause = " WHERE " + " AND ".join(conditions)
 
-                # Add filter to only show series that have results
                 having_clause = " HAVING COUNT(r.id) > 0"
 
                 # Count total results for pagination
@@ -907,18 +823,15 @@ class CHOResultsStorage:
                     GROUP BY s.id
                     {having_clause}
                 """
-
-                # Get total count using a subquery
                 total_query = f"SELECT COUNT(*) FROM ({count_query}) as counted"
-                cursor.execute(total_query, params)
+                cursor.execute(total_query, query_params)
                 total_results = cursor.fetchone()[0]
 
-                # Calculate pagination info
                 total_pages = (
                     (total_results + limit - 1) // limit if total_results > 0 else 1
                 )
 
-                # Main data query with pagination
+                # ── CHANGED: SELECT now includes pull_schedule_name ───────
                 query = f"""
                     SELECT 
                         s.series_instance_uid AS series_id,
@@ -933,56 +846,53 @@ class CHOResultsStorage:
                         sc.model_name AS scanner_model,
                         sc.station_name,
                         s.protocol_name,
+                        pull_info.display_name AS pull_schedule_name,
 
-                        -- test_status now uses the same filters as your global_noise_count
-                        -- and detectability_count from the second query:
-                    CASE
-                    -- any row in this series has *all* metrics ⇒ “full”
-                    WHEN COUNT(r.id) FILTER (
-                            WHERE 
-                            (ctdivol, ctdivol_avg, dlp, dlp_ssde, dw, dw_avg, "location", ssde) IS NOT NULL
-                        AND (average_frequency, average_index_of_detectability, average_noise_level,
-                                cho_detectability, location_sparse, noise_level, nps, peak_frequency,
-                                percent_10_frequency, spatial_frequency, spatial_resolution) IS NOT NULL
-                        ) > 0
-                        THEN 'full'
+                        CASE
+                        WHEN COUNT(r.id) FILTER (
+                                WHERE 
+                                (ctdivol, ctdivol_avg, dlp, dlp_ssde, dw, dw_avg, "location", ssde) IS NOT NULL
+                            AND (average_frequency, average_index_of_detectability, average_noise_level,
+                                    cho_detectability, location_sparse, noise_level, nps, peak_frequency,
+                                    percent_10_frequency, spatial_frequency, spatial_resolution) IS NOT NULL
+                            ) > 0
+                            THEN 'full'
 
-                    -- else, any row has only the “global noise” metrics ⇒ “partial”
-                    WHEN COUNT(r.id) FILTER (
-                            WHERE 
-                            (ctdivol, ctdivol_avg, dlp, dlp_ssde, dw, dw_avg, "location", ssde) IS NOT NULL
-                        AND (average_frequency, average_index_of_detectability, average_noise_level,
-                                cho_detectability, location_sparse, noise_level, nps, peak_frequency,
-                                percent_10_frequency, spatial_frequency, spatial_resolution) IS NULL
-                        ) > 0
-                        THEN 'partial'
+                        WHEN COUNT(r.id) FILTER (
+                                WHERE 
+                                (ctdivol, ctdivol_avg, dlp, dlp_ssde, dw, dw_avg, "location", ssde) IS NOT NULL
+                            AND (average_frequency, average_index_of_detectability, average_noise_level,
+                                    cho_detectability, location_sparse, noise_level, nps, peak_frequency,
+                                    percent_10_frequency, spatial_frequency, spatial_resolution) IS NULL
+                            ) > 0
+                            THEN 'partial'
 
-                    -- otherwise there were rows, but neither filter matched ⇒ “error”
-                    ELSE 'error'
-                    END AS test_status,
+                        ELSE 'error'
+                        END AS test_status,
+
                         MAX(r.created_at) AS latest_analysis_date
                         
                     {base_query}
                     {where_clause}
                     GROUP BY s.id, s.series_instance_uid, s.uuid, p.patient_id, p.name, p.birth_date,
                             st.study_instance_uid, st.institution_name, st.study_date,
-                            sc.manufacturer, sc.model_name, sc.station_name, s.protocol_name
+                            sc.manufacturer, sc.model_name, sc.station_name, s.protocol_name,
+                            pull_info.display_name
                     {having_clause}
                     ORDER BY MAX(r.created_at) DESC NULLS LAST 
                     LIMIT %s OFFSET %s
                 """
-                params.extend([limit, offset])
+                # ─────────────────────────────────────────────────────────
+                query_params.extend([limit, offset])
 
-                cursor.execute(query, params)
+                cursor.execute(query, query_params)
                 results = cursor.fetchall()
 
-                # Convert to list of dictionaries
                 result_list = []
                 if cursor.description is not None:
                     columns = [desc[0] for desc in cursor.description]
                     for row in results:
                         result_dict = dict(zip(columns, row))
-                        # Convert datetime fields to ISO format
                         for date_field in [
                             "first_analysis_date",
                             "latest_analysis_date",
@@ -995,7 +905,6 @@ class CHOResultsStorage:
                                         date_field
                                     ].isoformat()
                                 elif isinstance(result_dict[date_field], str):
-                                    # Handle date strings
                                     try:
                                         dt = datetime.fromisoformat(
                                             result_dict[date_field].replace(
@@ -1003,11 +912,10 @@ class CHOResultsStorage:
                                             )
                                         )
                                         result_dict[date_field] = dt.isoformat()
-                                    except:
-                                        pass  # Keep original if conversion fails
+                                    except Exception:
+                                        pass
                         result_list.append(result_dict)
 
-            # Return paginated response
             return {
                 "data": result_list,
                 "pagination": {
@@ -1029,13 +937,16 @@ class CHOResultsStorage:
             raise e
 
     def get_filter_options(self):
-        """Get filter options"""
+        """Get filter options for UI dropdowns.
+
+        CHANGED: now also returns `pull_schedule_names` — the distinct
+        display_name values from workflow.dicom_pull_batches.
+        """
         if not self.connect_postgres() or self.postgres_connection is None:
             return False
 
         try:
             with self.postgres_connection.cursor() as cursor:
-                # Get unique values for filter dropdowns - updated for new schema
                 filter_options = {}
 
                 # Institutes
@@ -1106,368 +1017,163 @@ class CHOResultsStorage:
                             else str(date_range[1])
                         ),
                     }
-                else:
-                    filter_options["date_range"] = {"min": None, "max": None}
 
-                # Age range (calculated from birth dates and study dates)
+                # ── CHANGED: pull schedule names ──────────────────────────
                 cursor.execute(
                     """
-                    SELECT 
-                        MIN(EXTRACT(YEAR FROM AGE(st.study_date::date, p.birth_date::date))) as min_age,
-                        MAX(EXTRACT(YEAR FROM AGE(st.study_date::date, p.birth_date::date))) as max_age
-                    FROM dicom.patient p
-                    JOIN dicom.study st ON p.id = st.patient_id_fk
-                    WHERE p.birth_date IS NOT NULL AND st.study_date IS NOT NULL
+                    SELECT DISTINCT dpb.display_name
+                    FROM workflow.dicom_pull_batches dpb
+                    WHERE dpb.display_name IS NOT NULL
+                    ORDER BY dpb.display_name
                 """
                 )
-                age_range = cursor.fetchone()
-                if age_range and age_range[0] is not None and age_range[1] is not None:
-                    filter_options["age_range"] = {
-                        "min": int(age_range[0]),
-                        "max": int(age_range[1]),
-                    }
-                else:
-                    filter_options["age_range"] = {"min": 0, "max": 100}
+                filter_options["pull_schedule_names"] = [
+                    row[0] for row in cursor.fetchall()
+                ]
+                # ─────────────────────────────────────────────────────────
 
-            return filter_options
-        except Exception as e:
-            self.postgres_connection.rollback()
-            raise e
-
-    def delete_results(self, series_instance_uid):
-        """Delete CHO results for a specific series"""
-        if not self.connect_postgres() or self.postgres_connection is None:
-            return False
-
-        try:
-            with self.postgres_connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    DELETE FROM analysis.results r
-                    USING dicom.series s
-                    WHERE r.series_id_fk = s.id 
-                    AND s.series_instance_uid = %s
-                    RETURNING r.id
-                """,
-                    (series_instance_uid,),
-                )
-
-                deleted_rows = cursor.fetchall()
-
-                if not deleted_rows:
-                    print(f"No results found for series {series_instance_uid}")
-                    return False
-
-                # Delete the image in the minio
-                if not self._delete_image_from_minio(series_instance_uid):
-                    print(f"Failed to delete image {series_instance_uid} from MinIO")
-                    return False
-
-                self.postgres_connection.commit()
-                print(
-                    f"Successfully deleted CHO results for series {series_instance_uid}"
-                )
-                return True
+                return filter_options
 
         except Exception as e:
-            self.postgres_connection.rollback()
+            print(f"Error getting filter options: {str(e)}")
             raise e
 
     def export_results(self):
-        """Export CHO results for a specific series"""
+        """Export all CHO results as CSV"""
         if not self.connect_postgres() or self.postgres_connection is None:
             raise Exception("No database connection")
 
         try:
             with self.postgres_connection.cursor() as cursor:
-                # Query for CSV export with flattened data - updated for new schema
                 cursor.execute(
                     """
-                    SELECT 
-                        s.series_instance_uid as series_id,
-                        p.patient_id,
-                        p.name as patient_name,
-                        st.study_instance_uid as study_id,
-                        CASE 
-                            WHEN r.average_index_of_detectability IS NOT NULL THEN 'Full Analysis'
-                            ELSE 'Global Noise'
-                        END as analysis_type,
-                        r.ctdivol_avg,
-                        r.ssde,
-                        r.dlp,
-                        r.dlp_ssde,
-                        r.dw_avg,
-                        r.spatial_resolution,
-                        r.average_noise_level,
-                        r.peak_frequency,
-                        r.average_frequency,
-                        r.percent_10_frequency,
-                        r.average_index_of_detectability,
-                        r.created_at
-                    FROM analysis.results r
-                    JOIN dicom.series s ON r.series_id_fk = s.id
-                    JOIN dicom.study st ON s.study_id_fk = st.id
-                    JOIN dicom.patient p ON st.patient_id_fk = p.id
-                    ORDER BY r.created_at DESC
-                """
-                )
-
-                results = cursor.fetchall()
-
-                # Create CSV content
-                csv_header = "Series ID,Patient ID,Patient Name,Study ID,Analysis Type,CTDI Avg,SSDE,DLP,DLP SSDE,DW Avg,Spatial Resolution,Average Noise,Peak Frequency,Average Frequency,10% Frequency,Detectability Index,Created At\n"
-
-                csv_content = csv_header
-                for row in results:
-                    # Convert datetime to string and handle None values
-                    row_data = []
-                    for item in row:
-                        if item is None:
-                            row_data.append("")
-                        elif isinstance(item, datetime):
-                            row_data.append(item.isoformat())
-                        else:
-                            row_data.append(str(item))
-                    csv_content += ",".join(row_data) + "\n"
-                return csv_content
-
-        except Exception as e:
-            self.postgres_connection.rollback()
-            raise e
-
-    def get_results_statistics(self):
-        """Export CHO results for a specific series"""
-        if not self.connect_postgres() or self.postgres_connection is None:
-            raise Exception("No database connection")
-
-        try:
-            with self.postgres_connection.cursor() as cursor:
-
-                # Count the number of results
-                cursor.execute(
-                    """
-                    WITH counts AS (
-                        SELECT
-                        COUNT(*) AS total_results_count,
-                        COUNT(*) FILTER (
-                            WHERE (ctdivol, ctdivol_avg, dlp, dlp_ssde, dw, dw_avg, "location", ssde) is not null
-                            AND (average_frequency, average_index_of_detectability, average_noise_level, cho_detectability,
-                            location_sparse, noise_level, nps, peak_frequency, percent_10_frequency, spatial_frequency,
-                            spatial_resolution) IS NULL
-                        ) AS global_noise_count,
-                        COUNT(*) FILTER (
-                            WHERE r.* IS NOT NULL
-                        ) AS detectability_count
-                        FROM analysis.results r
-                    )
                     SELECT
-                        total_results_count,
-                        global_noise_count,
-                        detectability_count,
-                        total_results_count
-                            - (global_noise_count + detectability_count) AS error_count
-                    FROM counts;
-                """
-                )
-
-                return cursor.fetchone()
-        except Exception as e:
-            self.postgres_connection.rollback()
-            raise e
-
-    def get_result(self, series_instance_uid):
-        if not self.connect_postgres() or self.postgres_connection is None:
-            raise Exception("No database connection")
-
-        try:
-            with self.postgres_connection.cursor() as cursor:
-                # Updated query for new schema
-                base_query = """
-                    SELECT 
-                        r.*,
                         s.series_instance_uid,
-                        s.uuid as series_uuid,
                         p.patient_id,
-                        p.name as patient_name,
-                        p.birth_date,
-                        p.sex,
-                        st.study_instance_uid,
-                        st.institution_name,
+                        p.name AS patient_name,
                         st.study_date,
-                        sc.manufacturer,
-                        sc.model_name as scanner_model,
+                        st.institution_name,
+                        sc.model_name AS scanner_model,
                         sc.station_name,
                         s.protocol_name,
-                        s.modality,
-                        s.body_part_examined,
-                        s.scan_length_cm,
-                        st.study_id,
-                        st.description as study_description,
-                        st.study_date,
-                        st.study_time,
-                        s.description as series_description,
-                        s.series_number,
-                        s.convolution_kernel,
-                        s.image_count,
-                        s.patient_position,
-                        s.pixel_spacing_mm,
-                        s.rows,
-                        s.columns,
-                        s.series_date,
-                        s.series_time,
-                        s.slice_thickness_mm,
-                        sc.device_serial_number,
-                        ct.kvp,
-                        ct.exposure_time_ms,
-                        ct.generator_power_kw,
-                        ct.focal_spots_mm,
-                        ct.filter_type,
-                        ct.data_collection_diam_mm,
-                        ct.recon_diameter_mm,
-                        ct.dist_src_detector_mm,
-                        ct.dist_src_patient_mm,
-                        ct.gantry_detector_tilt_deg,
-                        ct.single_collimation_width_mm,
-                        ct.total_collimation_width_mm,
-                        ct.table_speed_mm_s,
-                        ct.table_feed_per_rot_mm,
-                        ct.spiral_pitch_factor,
-                        ct.exposure_modulation_type
+                        r.ctdivol, r.ctdivol_avg, r.dlp, r.dlp_ssde,
+                        r.dw, r.dw_avg, r.location, r.ssde,
+                        r.average_frequency, r.average_index_of_detectability,
+                        r.average_noise_level, r.cho_detectability,
+                        r.location_sparse, r.noise_level, r.nps,
+                        r.peak_frequency, r.percent_10_frequency,
+                        r.spatial_frequency, r.spatial_resolution,
+                        r.processing_time, r.created_at
                     FROM analysis.results r
                     JOIN dicom.series s ON r.series_id_fk = s.id
                     JOIN dicom.study st ON s.study_id_fk = st.id
                     JOIN dicom.patient p ON st.patient_id_fk = p.id
                     JOIN dicom.scanner sc ON s.scanner_id_fk = sc.id
-                    JOIN dicom.ct_technique ct ON s.id = ct.series_id_fk
-                    WHERE s.series_instance_uid = %s
                     ORDER BY r.created_at DESC
-                    LIMIT 1
                 """
+                )
+                rows = cursor.fetchall()
+                if cursor.description is None:
+                    return ""
 
-                cursor.execute(base_query, (series_instance_uid,))
-                return cursor.fetchone(), cursor.description
+                columns = [desc[0] for desc in cursor.description]
+                lines = [",".join(columns)]
+                for row in rows:
+                    line = ",".join(
+                        "" if v is None else str(v).replace(",", ";") for v in row
+                    )
+                    lines.append(line)
+                return "\n".join(lines)
+
         except Exception as e:
             self.postgres_connection.rollback()
             raise e
 
-    def save_dicom_headers_only(self, patient, study, scanner, series, ct):
-        """Save DICOM metadata without analysis results"""
-        return self.save_results(
-            patient, study, scanner, series, ct, results={"processing_time": 0.0}
-        )
-        # if not self.connect_postgres() or self.postgres_connection is None:
-        #     return False
+    # ─────────────────────────────────────────────────────────────────────────
+    # MinIO / image helpers
+    # ─────────────────────────────────────────────────────────────────────────
 
-        # try:
-        #     with self.postgres_connection.cursor() as cursor:
-        #         # Insert/get patient
-        #         patient_id = self._get_or_create_patient(cursor, patient)
-        #         if patient_id is None:
-        #             return False
+    def _create_coronal_image(self, coronal_view_data):
+        """Convert coronal view numpy array to PIL Image format"""
+        coronal_view_data = np.array(coronal_view_data)
+        try:
+            if coronal_view_data is None or len(coronal_view_data.shape) != 2:
+                print("Warning: Invalid coronal view data")
+                return None
 
-        #         # Insert/get scanner
-        #         scanner_id = self._get_or_create_scanner(cursor, scanner)
-        #         if scanner_id is None:
-        #             return False
+            min_val = np.min(coronal_view_data)
+            max_val = np.max(coronal_view_data)
 
-        #         # Insert/get study
-        #         study_id = self._get_or_create_study(cursor, study, patient_id)
-        #         if study_id is None:
-        #             return False
+            if max_val > min_val:
+                normalized = (
+                    (coronal_view_data - min_val) / (max_val - min_val) * 255
+                ).astype(np.uint8)
+            else:
+                normalized = np.zeros_like(coronal_view_data, dtype=np.uint8)
 
-        #         # Insert/get series
-        #         series_id = self._get_or_create_series(cursor, series, study_id, scanner_id)
-        #         if series_id is None:
-        #             return False
+            image = Image.fromarray(normalized, mode="L")
 
-        #         # Insert/get CT technique
-        #         ct_id = self._save_ct_technique(cursor, ct, series_id)
-        #         if ct_id is None:
-        #             return False
+            if image.size[0] > 1024 or image.size[1] > 1024:
+                image.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
 
-        #         # Insert headers-only record in analysis.results
-        #         cursor.execute("""
-        #             INSERT INTO analysis.results (
-        #                 series_id_fk, average_frequency, average_index_of_detectability,
-        #                 average_noise_level, cho_detectability, ctdivol, ctdivol_avg,
-        #                 dlp, dlp_ssde, dw, dw_avg, location, location_sparse,
-        #                 noise_level, nps, peak_frequency, percent_10_frequency,
-        #                 processing_time, spatial_frequency, spatial_resolution, ssde
-        #             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        #             ON CONFLICT (series_id_fk) DO UPDATE SET
-        #                 average_frequency = COALESCE(EXCLUDED.average_frequency, analysis.results.average_frequency),
-        #                 average_index_of_detectability = COALESCE(EXCLUDED.average_index_of_detectability, analysis.results.average_index_of_detectability),
-        #                 average_noise_level = COALESCE(EXCLUDED.average_noise_level, analysis.results.average_noise_level),
-        #                 cho_detectability = COALESCE(EXCLUDED.cho_detectability, analysis.results.cho_detectability),
-        #                 ctdivol = COALESCE(EXCLUDED.ctdivol, analysis.results.ctdivol),
-        #                 ctdivol_avg = COALESCE(EXCLUDED.ctdivol_avg, analysis.results.ctdivol_avg),
-        #                 dlp = COALESCE(EXCLUDED.dlp, analysis.results.dlp),
-        #                 dlp_ssde = COALESCE(EXCLUDED.dlp_ssde, analysis.results.dlp_ssde),
-        #                 dw = COALESCE(EXCLUDED.dw, analysis.results.dw),
-        #                 dw_avg = COALESCE(EXCLUDED.dw_avg, analysis.results.dw_avg),
-        #                 location = COALESCE(EXCLUDED.location, analysis.results.location),
-        #                 location_sparse = COALESCE(EXCLUDED.location_sparse, analysis.results.location_sparse),
-        #                 noise_level = COALESCE(EXCLUDED.noise_level, analysis.results.noise_level),
-        #                 nps = COALESCE(EXCLUDED.nps, analysis.results.nps),
-        #                 peak_frequency = COALESCE(EXCLUDED.peak_frequency, analysis.results.peak_frequency),
-        #                 percent_10_frequency = COALESCE(EXCLUDED.percent_10_frequency, analysis.results.percent_10_frequency),
-        #                 processing_time = EXCLUDED.processing_time,
-        #                 spatial_frequency = COALESCE(EXCLUDED.spatial_frequency, analysis.results.spatial_frequency),
-        #                 spatial_resolution = COALESCE(EXCLUDED.spatial_resolution, analysis.results.spatial_resolution),
-        #                 ssde = COALESCE(EXCLUDED.ssde, analysis.results.ssde)
-        #             RETURNING id
-        #         """, (
-        #             series_id,
-        #            None,
-        #             None,
-        #             None,
-        #             None,
-        #             None,
-        #             None,
-        #             None,
-        #             None,
-        #             None,
-        #             None,
-        #             None,
-        #             None,
-        #             None,
-        #             None,
-        #             None,
-        #             None,
-        #             0.0,
-        #             None,
-        #             None,
-        #             None
-        #         ))
-        #         # cursor.execute("""
-        #         #     INSERT INTO analysis.results (
-        #         #         series_id_fk, ct_technique_id_fk, test_status,
-        #         #         analysis_timestamp, processing_time_seconds
-        #         #     ) VALUES (%s, %s, %s, %s, %s)
-        #         #     ON CONFLICT (series_id_fk)
-        #         #     DO UPDATE SET
-        #         #         test_status = EXCLUDED.test_status,
-        #         #         analysis_timestamp = EXCLUDED.analysis_timestamp,
-        #         #         processing_time_seconds = EXCLUDED.processing_time_seconds
-        #         #     RETURNING id
-        #         # """, (
-        #         #     series_id, ct_id, 'headers_only',
-        #         #     datetime.now(), 0.0
-        #         # ))
+            return image
 
-        #         # Commit the transaction
-        #         self.postgres_connection.commit()
-        #         print(f"DICOM headers saved for series {series.get('series_instance_uid')}")
-        #         return True
+        except Exception as e:
+            print(f"Error creating coronal image: {str(e)}")
+            return None
 
-        # except Exception as e:
-        #     print(f"Error saving DICOM headers: {str(e)}")
-        #     if self.postgres_connection:
-        #         self.postgres_connection.rollback()
-        #     import traceback
-        #     traceback.print_exc()
-        #     return False
+    def save_coronal_image(self, series_instance_uid, coronal_view_data):
+        """Save coronal view image to MinIO"""
+        if self.minio_connection is None:
+            print("MinIO client not initialized")
+            return None
+
+        try:
+            image = self._create_coronal_image(coronal_view_data)
+            if image is None:
+                return None
+
+            img_bytes = io.BytesIO()
+            image.save(img_bytes, format="PNG")
+            img_bytes.seek(0)
+            size = img_bytes.getbuffer().nbytes
+
+            object_name = f"coronal/{series_instance_uid}.png"
+            self.minio_connection.put_object(
+                self.bucket_name,
+                object_name,
+                img_bytes,
+                size,
+                content_type="image/png",
+            )
+            print(f"Saved coronal image: {object_name}")
+            return object_name
+
+        except S3Error as e:
+            print(f"MinIO error saving coronal image: {str(e)}")
+            return None
+        except Exception as e:
+            print(f"Error saving coronal image: {str(e)}")
+            return None
+
+    def get_coronal_image(self, series_instance_uid):
+        """Retrieve coronal view image from MinIO"""
+        if self.minio_connection is None:
+            return None
+
+        try:
+            object_name = f"coronal/{series_instance_uid}.png"
+            response = self.minio_connection.get_object(self.bucket_name, object_name)
+            data = response.read()
+            response.close()
+            response.release_conn()
+            return data
+        except S3Error:
+            return None
+        except Exception as e:
+            print(f"Error retrieving coronal image: {str(e)}")
+            return None
 
 
-# Global instance
+# Global singleton
 cho_storage = CHOResultsStorage()

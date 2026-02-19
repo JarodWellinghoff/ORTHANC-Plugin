@@ -78,7 +78,13 @@ const DicomViewerPage = () => {
   const [selectedModality, setSelectedModality] = useState("");
   const [loadingModalities, setLoadingModalities] = useState(false);
   const [recoveringMap, setRecoveringMap] = useState({});
-  const [filters, setFilters] = useState({ patient: "", protocol: "" });
+  // ─── CHANGED: added pullScheduleName to filters ───────────────────────────
+  const [filters, setFilters] = useState({
+    patient: "",
+    protocol: "",
+    pullScheduleName: "",
+  });
+  // ─────────────────────────────────────────────────────────────────────────
   const [banner, setBanner] = useState(null);
   const [error, setError] = useState(null);
 
@@ -177,6 +183,9 @@ const DicomViewerPage = () => {
         latestAnalysis: item.latest_analysis_date ?? null,
         status,
         hasDicom,
+        // ─── CHANGED: expose pull schedule name from API response ─────────
+        pullScheduleName: item.pull_schedule_name ?? null,
+        // ─────────────────────────────────────────────────────────────────
       };
     });
   }, [results, availableSet]);
@@ -184,6 +193,9 @@ const DicomViewerPage = () => {
   const filteredRows = useMemo(() => {
     const patientFilter = filters.patient.trim().toLowerCase();
     const protocolFilter = filters.protocol.trim().toLowerCase();
+    // ─── CHANGED: added schedule name filter ──────────────────────────────
+    const scheduleFilter = filters.pullScheduleName.trim().toLowerCase();
+    // ─────────────────────────────────────────────────────────────────────
 
     return normalizedRows.filter((row) => {
       const matchesPatient =
@@ -196,9 +208,21 @@ const DicomViewerPage = () => {
         String(row.protocolName ?? "")
           .toLowerCase()
           .includes(protocolFilter);
-      return matchesPatient && matchesProtocol;
+      // ─── CHANGED: evaluate schedule name match ─────────────────────────
+      const matchesSchedule =
+        !scheduleFilter ||
+        String(row.pullScheduleName ?? "")
+          .toLowerCase()
+          .includes(scheduleFilter);
+      // ─────────────────────────────────────────────────────────────────
+      return matchesPatient && matchesProtocol && matchesSchedule;
     });
-  }, [normalizedRows, filters.patient, filters.protocol]);
+  }, [
+    normalizedRows,
+    filters.patient,
+    filters.protocol,
+    filters.pullScheduleName,
+  ]);
 
   const handleRefresh = async () => {
     await Promise.all([loadResults(), loadAvailableSeries()]);
@@ -296,6 +320,15 @@ const DicomViewerPage = () => {
         flex: 1,
         minWidth: 160,
       },
+      // ─── CHANGED: added Pull Schedule column ──────────────────────────────
+      {
+        field: "pullScheduleName",
+        headerName: "Pull Schedule",
+        flex: 1,
+        minWidth: 160,
+        valueFormatter: (value) => value ?? "—",
+      },
+      // ─────────────────────────────────────────────────────────────────────
       {
         field: "status",
         headerName: "Status",
@@ -428,6 +461,20 @@ const DicomViewerPage = () => {
               size='small'
               fullWidth
             />
+            {/* ─── CHANGED: Pull Schedule Name filter ───────────────────── */}
+            <TextField
+              label='Pull Schedule Name'
+              value={filters.pullScheduleName}
+              onChange={(event) =>
+                setFilters((prev) => ({
+                  ...prev,
+                  pullScheduleName: event.target.value,
+                }))
+              }
+              size='small'
+              fullWidth
+            />
+            {/* ──────────────────────────────────────────────────────────── */}
           </Stack>
           <FormControl size='small' sx={{ maxWidth: 320 }}>
             <InputLabel id='modality-label'>Recovery modality</InputLabel>
