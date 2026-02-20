@@ -154,6 +154,7 @@ const DicomViewerPage = () => {
 
   const normalizedRows = useMemo(() => {
     return results.map((item, index) => {
+      console.log("item:", item);
       const id = String(deriveRowId(item, index));
       const seriesUuid =
         item.series_uuid ?? item.seriesUuid ?? item.series_id ?? null;

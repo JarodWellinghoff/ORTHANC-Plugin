@@ -263,7 +263,17 @@ const DicomViewerRoute = () => {
   const hasSeriesUuid = Boolean(seriesUuid);
   const displaySeriesUuid =
     availability.hasDicom && hasSeriesUuid ? seriesUuid : null;
-
+  if (loadingSummary || !seriesUuid) {
+    return (
+      <Stack
+        alignItems='center'
+        justifyContent='center'
+        sx={{ height: "60vh" }}>
+        <CircularProgress />
+        <Typography variant='body2'>Loading series…</Typography>
+      </Stack>
+    );
+  }
   return (
     <Stack spacing={3}>
       <Stack direction='row' spacing={2} alignItems='center'>
@@ -391,7 +401,18 @@ const DicomViewerRoute = () => {
       )}
 
       <Paper elevation={0} variant='outlined' sx={{ p: 2, minHeight: 800 }}>
-        <DicomMprViewer seriesUuid={displaySeriesUuid} />
+        {loadingSummary || availability.checking ? (
+          <Stack
+            alignItems='center'
+            justifyContent='center'
+            sx={{ height: 400 }}
+            spacing={1}>
+            <CircularProgress />
+            <Typography variant='body2'>Loading series…</Typography>
+          </Stack>
+        ) : (
+          <DicomMprViewer seriesUuid={displaySeriesUuid} />
+        )}
       </Paper>
     </Stack>
   );

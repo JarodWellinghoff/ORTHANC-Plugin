@@ -322,8 +322,8 @@ class DicomPullManager:
                     RETURNING *
                     """,
                     (
-                        payload.get("requestedBy"),
-                        payload.get("displayName"),
+                        payload.get("requested_by"),
+                        payload.get("display_name"),
                         remote_modality,
                         start_time,
                         end_time,
