@@ -28,10 +28,10 @@
   "PythonVerbose": true,
   "HttpVerbose": true,
   "DicomModalities": {
-    "TEST": {
+    "VENUS": {
       "AET": "ORTHANC",
-      "Port": 4343,
-      "Host": "host.docker.internal",
+      "Port": 4242,
+      "Host": "172.31.79.231",
       "Manufacturer": "Generic"
     }
   },

@@ -323,49 +323,49 @@ export const colorSchemes = {
 export const typography = {
   fontFamily: "Inter, sans-serif",
   h1: {
-    fontSize: defaultTheme.typography.pxToRem(48),
+    fontSize: defaultTheme.typography.pxToRem(55),
     fontWeight: 600,
     lineHeight: 1.2,
     letterSpacing: -0.5,
   },
   h2: {
-    fontSize: defaultTheme.typography.pxToRem(36),
+    fontSize: defaultTheme.typography.pxToRem(41),
     fontWeight: 600,
     lineHeight: 1.2,
   },
   h3: {
-    fontSize: defaultTheme.typography.pxToRem(30),
+    fontSize: defaultTheme.typography.pxToRem(34),
     lineHeight: 1.2,
   },
   h4: {
-    fontSize: defaultTheme.typography.pxToRem(24),
+    fontSize: defaultTheme.typography.pxToRem(28),
     fontWeight: 600,
     lineHeight: 1.5,
   },
   h5: {
-    fontSize: defaultTheme.typography.pxToRem(20),
+    fontSize: defaultTheme.typography.pxToRem(23),
     fontWeight: 600,
   },
   h6: {
-    fontSize: defaultTheme.typography.pxToRem(18),
+    fontSize: defaultTheme.typography.pxToRem(21),
     fontWeight: 600,
   },
   subtitle1: {
-    fontSize: defaultTheme.typography.pxToRem(18),
+    fontSize: defaultTheme.typography.pxToRem(21),
   },
   subtitle2: {
-    fontSize: defaultTheme.typography.pxToRem(14),
+    fontSize: defaultTheme.typography.pxToRem(16),
     fontWeight: 500,
   },
   body1: {
-    fontSize: defaultTheme.typography.pxToRem(14),
+    fontSize: defaultTheme.typography.pxToRem(16),
   },
   body2: {
-    fontSize: defaultTheme.typography.pxToRem(14),
+    fontSize: defaultTheme.typography.pxToRem(16),
     fontWeight: 400,
   },
   caption: {
-    fontSize: defaultTheme.typography.pxToRem(12),
+    fontSize: defaultTheme.typography.pxToRem(14),
     fontWeight: 400,
   },
 };
