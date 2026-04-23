@@ -11,15 +11,17 @@
 const DashboardContext = createContext(null);
 
 const defaultFilters = {
-  patientSearch: "",
-  institute: "",
-  scannerStation: "",
-  protocolName: "",
-  scannerModel: "",
-  examDateFrom: "",
-  examDateTo: "",
-  ageMin: "",
-  ageMax: "",
+  patientIdSearch: [],
+  patientNameSearch: [],
+  instituteSearch: [],
+  protocolNameSearch: [],
+  scannerModelSearch: [],
+  scannerStationSearch: [],
+  pullScheduleSearch: [],
+  studyDateStartSearch: null,
+  studyDateEndSearch: null,
+  ageStartSearch: 0,
+  ageEndSearch: 200,
 };
 
 const defaultChoParams = {
@@ -236,15 +238,18 @@ export const DashboardProvider = ({ children }) => {
     (overrides = {}) => {
       const p = { ...filters, ...overrides };
       const params = {};
-      if (p.patientSearch) params.patient_search = p.patientSearch;
-      if (p.institute) params.institute = p.institute;
-      if (p.scannerStation) params.scanner_station = p.scannerStation;
-      if (p.protocolName) params.protocol_name = p.protocolName;
-      if (p.scannerModel) params.scanner_model = p.scannerModel;
-      if (p.examDateFrom) params.exam_date_from = p.examDateFrom;
-      if (p.examDateTo) params.exam_date_to = p.examDateTo;
-      if (p.ageMin) params.age_min = p.ageMin;
-      if (p.ageMax) params.age_max = p.ageMax;
+      if (p.patientIdSearch) params.patient_id = p.patientIdSearch;
+      if (p.patientNameSearch) params.patient_name = p.patientNameSearch;
+      if (p.instituteSearch) params.institute = p.instituteSearch;
+      if (p.scannerStationSearch)
+        params.scanner_station = p.scannerStationSearch;
+      if (p.protocolNameSearch) params.protocol_name = p.protocolNameSearch;
+      if (p.scannerModelSearch) params.scanner_model = p.scannerModelSearch;
+      if (p.studyDateStartSearch)
+        params.exam_date_from = p.studyDateStartSearch;
+      if (p.studyDateEndSearch) params.exam_date_to = p.studyDateEndSearch;
+      if (p.ageStartSearch) params.age_min = p.ageStartSearch;
+      if (p.ageEndSearch) params.age_max = p.ageEndSearch;
       return params;
     },
     [filters],
@@ -272,12 +277,27 @@ export const DashboardProvider = ({ children }) => {
     async (overrides = {}) => {
       if (!mountedRef.current) return;
       setSummaryLoading(true);
+      // If Overrides is completely empty, make everything empty
+      if (Object.keys(overrides).length === 0) {
+        setSummaryItems([]);
+        setPagination({ page: 1, limit: 25, total: 0, pages: 1 });
+        setAvailableSeries([]);
+        setStatus("No data available", "idle");
+        setSummaryLoading(false);
+        return;
+      }
 
       try {
         const targetPage = overrides.page ?? pagination.page ?? 1;
         const targetLimit = overrides.limit ?? pagination.limit ?? 25;
 
         const filterParams = buildFilterParams(overrides);
+        console.log(
+          "Loading summary with filters:",
+          filterParams,
+          "and pagination:",
+          { page: targetPage, limit: targetLimit },
+        );
         const searchParams = toSearchParams({
           ...filterParams,
           page: targetPage,

@@ -1,8 +1,21 @@
 {
   "RemoteAccessAllowed": true,
   "AuthenticationEnabled": false,
+  "DicomAet": "TEST_ORTHANC",
   "DicomModalities": {
-    "MAIN": ["ORTHANC", "host.docker.internal", 4242]
+    "MAIN": {
+      "AET": "DOCKER",
+      "Port": 4244,
+      "Host": "host.docker.internal",
+      "Manufacturer": "Generic"
+    },
+    "VENUS": {
+      "AET": "VENUS",
+      "Port": 4243,
+      "Host": "172.31.79.231",
+      "Manufacturer": "Generic"
+    }
   },
-  "StorageDirectory": "/var/lib/orthanc/db"
+  "StorageDirectory": "/var/lib/orthanc/db",
+  "Plugins": ["/usr/local/share/orthanc/plugins/libOrthancExplorer2.so"]
 }

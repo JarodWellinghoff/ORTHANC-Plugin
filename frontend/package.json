@@ -29,6 +29,7 @@
     "dicom-parser": "^1.8.21",
     "hammerjs": "^2.0.8",
     "mui-image": "^1.0.9",
+    "notistack": "^3.0.2",
     "plotly.js-dist-min": "^2.35.2",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
@@ -45,6 +46,7 @@
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.22",
     "globals": "^16.4.0",
-    "vite": "^7.1.7"
+    "vite": "^7.1.7",
+    "vite-plugin-svgr": "^5.2.0"
   }
 }

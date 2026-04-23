@@ -9,11 +9,16 @@ from pydicom import dcmread
 import matplotlib.pyplot as plt
 from scipy import ndimage
 from skimage import feature, measure
-from scipy.interpolate import griddata
 import scipy.io as sio
 from scipy.signal import convolve2d
 from scipy.optimize import minimize
-from scipy.interpolate import interp1d
+from scipy.interpolate import (
+    interp1d,
+    make_interp_spline,
+    griddata,
+    make_smoothing_spline,
+)
+from scipy.ndimage import binary_dilation
 import gc
 
 
@@ -74,8 +79,11 @@ def NPS_statistics(nps1d, unit):
     Spatial_freq = np.squeeze(Spatial_freq)
     fav = np.sum(Spatial_freq * p)
     minfrequencyIndex = np.where(nps1d < 0.10 * np.max(nps1d))[0]
-    freq = np.where(minfrequencyIndex > peakfrequencyIndex)[0][0]
-    min10percent_frequency = minfrequencyIndex[freq] * unit
+    try:
+        freq = np.where(minfrequencyIndex > peakfrequencyIndex)[0][0]
+        min10percent_frequency = minfrequencyIndex[freq] * unit
+    except IndexError:
+        min10percent_frequency = np.nan
     npoint = 10
     k = np.polyfit(np.arange(npoint) * unit, nps1d[:npoint], 1)
     return fav, peakfrequency, k, min10percent_frequency
@@ -84,8 +92,8 @@ def NPS_statistics(nps1d, unit):
 def ROI_to_NPS_Sum(ROI_size, ROI_All, dx, dy):
     """Compute 1D NPS from ROI images, averaging over radial frequencies."""
     nnn = 8 * max(20, ROI_size)
-    cc = int(np.rint(nnn / 2))
     unit = 1 / (dx * nnn)
+    cc = int(np.rint(nnn / 2))
     oo = np.linspace(0, 2 * np.pi, 360, endpoint=False)
     radii = np.arange(cc).reshape((cc, 1))
     x_offset = radii * np.cos(oo)
@@ -105,8 +113,7 @@ def ROI_to_NPS_Sum(ROI_size, ROI_All, dx, dy):
         half_roi = int(np.ceil(ROI_size / 2))
         start_index = int(np.rint(nnn / 2 - half_roi))
         end_index = int(np.rint(nnn / 2 + half_roi))
-        ## Note: the original code had a potential off-by-one issue here, but since ROI_size is odd, this should work correctly.
-        roipad[start_index : end_index + 1, start_index : end_index + 1] = roi
+        roipad[start_index : end_index - 1, start_index : end_index - 1] = roi
         roipad_fft = np.fft.fftshift(np.abs(np.fft.fft2(roipad)))
         roipad_fft = roipad_fft**2 * dx * dy / (ROI_size * ROI_size)
         nps2D = roipad_fft
@@ -571,7 +578,6 @@ def calculate_std_dev(
     N_sub,
     Thr1,
     Thr2,
-    Edges,
     corrected=False,
 ):
     """Calculate standard deviation map for ROI selection."""
@@ -579,6 +585,8 @@ def calculate_std_dev(
     Half_Diff_Size = round((Padding_size - ROI_size2) / 2)
     Intel_Im_Sizex = Intel_Edge.shape[0]
     Intel_Im_Sizey = Intel_Edge.shape[1]
+
+    # Crop to valid region
     Intel_Edge = Intel_Edge[
         Half_Diff_Size : Intel_Im_Sizex - Half_Diff_Size,
         Half_Diff_Size : Intel_Im_Sizey - Half_Diff_Size,
@@ -594,37 +602,80 @@ def calculate_std_dev(
         Half_Diff_Size : Intel_Im_Sizey - Half_Diff_Size,
         :,
     ]
+
     m = ROI_size2
     n = ROI_size2
     Half_ROI_size = round(np.floor(ROI_size / 2))
+
     if corrected:
         normalization_factor = m * n / (m * n - 1)
     else:
         normalization_factor = 1
+
     STD_all = np.zeros([Im_Size[0], Im_Size[1], N2 + N_sub * 2 - N1], dtype=np.float32)
-    Mask_edge = np.zeros_like(Edges, dtype=np.float32)
+
     for kk in range(Intel_images.shape[-1]):
         t = Intel_images[:, :, kk]
-        mean_map = t[m:, n:] + t[:-m, :-n] - t[m:, :-n] - t[:-m, n:]
+        mean_map = (t[m:, n:] + t[:-m, :-n] - t[m:, :-n] - t[:-m, n:]) / (m * n)
+
         t2 = Intel_images_Square[:, :, kk]
-        mean_square = t2[m:, n:] + t2[:-m, :-n] - t2[m:, :-n] - t2[:-m, n:]
+        mean_square = (t2[m:, n:] + t2[:-m, :-n] - t2[m:, :-n] - t2[:-m, n:]) / (m * n)
+
+        # Use Intel_Edge (which now contains dilated Canny edges)
         t3 = Intel_Edge[:, :, kk]
-        edge_impact = t3[m:, n:] + t3[:-m, :-n] - t3[m:, :-n] - t3[:-m, n:]
-        mean_map /= m * n
-        mean_square /= m * n
-        edge_impact /= m * n
+        edge_impact = (t3[m:, n:] + t3[:-m, :-n] - t3[m:, :-n] - t3[:-m, n:]) / (m * n)
+
         Mask_mean = (mean_map < Thr1) | (mean_map > Thr2)
-        Mask_edge[edge_impact >= 1 / ROI_size] = 1
-        Mask_edge[edge_impact < 1 / ROI_size] = 0
-        Mask = np.logical_or(np.logical_or(Mask_mean, Mask_edge), Edges)
-        SD_Map = normalization_factor * (mean_square - mean_map**2)
-        # with np.errstate(invalid="ignore"):
-        SD_Map = np.sqrt(SD_Map)
+
+        # Adaptive edge exclusion based on distribution
+        valid_edge = edge_impact[~np.isnan(edge_impact)]
+        if len(valid_edge) > 20:
+            edge_threshold = np.percentile(valid_edge, 92)  # top ~8%
+        else:
+            edge_threshold = 0.05
+
+        Mask_edge = (edge_impact >= edge_threshold).astype(np.float32)
+
+        Mask = np.logical_or(Mask_mean, Mask_edge > 0)
+        # ------------------------------------------------------------------
+        # Compute local variance using the integral image method
+        # ------------------------------------------------------------------
+        variance = mean_square - mean_map**2
+
+        # Why do we get many extremely low (or slightly negative) variance values?
+        # ------------------------------------------------------------------
+        # In CT images, there are large regions that are very uniform (e.g., liver,
+        # muscle, or background). When a small ROI (such as 9x9) falls entirely
+        # inside these flat areas, almost all pixel values are nearly identical.
+        #
+        # In such cases:
+        #   - mean_square  ≈ (mean)^2
+        #   - variance     ≈ 0  (or even a tiny negative number due to
+        #                        floating-point rounding errors)
+        #
+        # These "ultra-low std" ROIs are not representative of real CT noise.
+        # Including them would pull the noise histogram peak toward zero,
+        # leading to unrealistic noise level estimation and overly optimistic d' values.
+
+        # Step 1: Remove floating-point negative values
+        variance = np.maximum(variance, 0.0)
+
+        # Step 2: Reject unrealistically uniform regions (Key Fix)
+        #         We treat ROIs with extremely low variance as "bad" data,
+        #         similar to how we reject regions with edges or extreme HU values.
+        min_acceptable_std = 0.8  # Recommended: 0.8 ~ 1.2 HU
+        min_acceptable_variance = min_acceptable_std**2
+        variance[variance < min_acceptable_variance] = np.nan
+
+        # Step 3: Convert variance to standard deviation map
+        #         NaN values will remain NaN and be excluded later in extract_ROIs()
+        SD_Map = np.sqrt(variance * normalization_factor)
         SD_Map[Mask] = np.nan
         SD_Map[0:Half_ROI_size, :] = np.nan
         SD_Map[-Half_ROI_size:, :] = np.nan
         SD_Map[:, 0:Half_ROI_size] = np.nan
         SD_Map[:, -Half_ROI_size:] = np.nan
+
         STD_all[:, :, kk] = SD_Map
     return STD_all
 
@@ -677,230 +728,419 @@ def extract_ROIs(STD_map_all, Thre_SD, Half_ROI_size, Images_Section, Im_Size):
 
 # Demo Main Program
 import time
-from glob import glob
-import os
 
 start = time.time()
 
 # Load DICOM files from directory
-dir1 = r"\\mfad.mfroot.org\rchapp\eb028591\CT_CIC_Group_Server\Staff_Folders\Zhou_Zhongxing\Zhou_ZX\For_Jarod\L067_FD_1_0_B30F_0001"
-dir1 = r"\\mfad\researchMN\EB036541\YU\PUBLIC\PatientCT_monitoring\DICOMs\5W\ROLAND, THOMAS"
-dcm_img_paths = glob(os.path.join(dir1, "**", "IMAGES"), recursive=True)
+Map_dir = r"\\mfad.mfroot.org\rchapp\eb028591\CT_CIC_Group_Server\Staff_Folders\Zhou_Zhongxing\Zhou_ZX"
+dir1 = Map_dir + "\\For_Jarod\\L067_FD_1_0_B30F_0001\\"
 
-# dir1 = Map_dir  # + "\\For_Jarod\\L067_FD_1_0_B30F_0001\\"
-# dir1 = Map_dir + "\\For_Jarod\\L067_FD_1_0_B30F_0001\\"
-for dir1 in dcm_img_paths:
-    try:
-        scan_listing = sorted(os.listdir(dir1))
-        n_images = len(scan_listing)
-        filepaths = [os.path.join(dir1, scan) for scan in scan_listing]
+dir1 = r"\\mfad\researchMN\EB036541\YU\PUBLIC\PatientCT_monitoring\DICOMs\5W\ROLAND, THOMAS\IMAGES"
+scan_listing = sorted(os.listdir(dir1))
+n_images = len(scan_listing)
+filepaths = [os.path.join(dir1, scan) for scan in scan_listing]
 
-        # Extract metadata from first two DICOM files
-        dcm_info = dcmread(filepaths[0])
-        RescaleIntercept = dcm_info.RescaleIntercept
-        RescaleSlope = dcm_info.RescaleSlope
-        SliceLocation1 = dcm_info.SliceLocation
-        dcm_info2 = dcmread(filepaths[1])
-        SliceLocation2 = dcm_info2.SliceLocation
-        Sliceinterval = abs(SliceLocation1 - SliceLocation2)
-        Im_Size = dcm_info.pixel_array.shape
-        rFOV = dcm_info.ReconstructionDiameter / 10
-        dx = rFOV / Im_Size[0]
-        dy = rFOV / Im_Size[1]
-        patient_FOV = dcm_info.ReconstructionDiameter  # FOV in mm from DICOM metadata
-        patient_matrix = (
-            dcm_info.Rows
-        )  # Matrix size from DICOM metadata (assumes square matrix)
+# Extract metadata from first two DICOM files
+dcm_info = dcmread(filepaths[0])
+RescaleIntercept = dcm_info.RescaleIntercept
+RescaleSlope = dcm_info.RescaleSlope
+SliceLocation1 = dcm_info.SliceLocation
+dcm_info2 = dcmread(filepaths[1])
+SliceLocation2 = dcm_info2.SliceLocation
+Sliceinterval = abs(SliceLocation1 - SliceLocation2)
+Im_Size = dcm_info.pixel_array.shape
+rFOV = dcm_info.ReconstructionDiameter / 10
+dx = rFOV / Im_Size[0]
+dy = rFOV / Im_Size[1]
+patient_FOV = dcm_info.ReconstructionDiameter  # FOV in mm from DICOM metadata
+patient_matrix = (
+    dcm_info.Rows
+)  # Matrix size from DICOM metadata (assumes square matrix)
 
-        # Prepare lesion signals for multiple contrast and size conditions
-        lesion_file = r"V:\\Zhou_Zhongxing\\Zhou_ZX\\\For_Jarod\\Liver_lesion_sample\\Patient02-411-920_Lesion1.mat"
-        psf_file = r"V:\\Zhou_Zhongxing\\Zhou_ZX\\For_Jarod\\Liver_lesion_sample\\EID_PSF_Br44.mat"  # Set to None to simulate PSF
-        # Spatial frequency (cycles/mm) where MTF=0.5; replace with CT-specific value
-        mtf50 = None
-        # Spatial frequency (cycles/mm) where MTF=0.1; replace or set to None for Gaussian
-        mtf10 = None
-        Lesion_Contrasts = [-30, -30, -10, -30, -50]  # HU contrast levels
-        Lesion_Size = [3, 9, 6, 6, 6]  # Lesion diameters in mm
-        ROI_sizes_mm = [14, 19, 17, 17, 17]  # ROI sizes in mm for each condition
-        pixel_size = patient_FOV / patient_matrix  # Pixel size in mm (~0.6640625)
-        wire_fov_mm = 50
-        wire_Matrix_size = 512
+# Prepare lesion signals for multiple contrast and size conditions
+lesion_file = (
+    Map_dir + "\\For_Jarod\\Liver_lesion_sample\\Patient02-411-920_Lesion1.mat"
+)
+psf_file = (
+    Map_dir + "\\For_Jarod\\Liver_lesion_sample\\EID_PSF_Br44.mat"
+)  # Set to None to simulate PSF
+mtf50 = (
+    0.434  # Spatial frequency (cycles/mm) where MTF=0.5; replace with CT-specific value
+)
+mtf10 = 0.730  # Spatial frequency (cycles/mm) where MTF=0.1; replace or set to None for Gaussian
+Lesion_Contrasts = [-30, -30, -10, -30, -50]  # HU contrast levels
+Lesion_Size = [3, 9, 6, 6, 6]  # Lesion diameters in mm
+ROI_sizes_mm = [14, 19, 17, 17, 17]  # ROI sizes in mm for each condition
+pixel_size = patient_FOV / patient_matrix  # Pixel size in mm (~0.6640625)
+wire_fov_mm = 50
+wire_Matrix_size = 512
 
-        def round_to_nearest_odd(x):
-            """Round to nearest odd integer for ROI sizes."""
-            rounded = np.round(x).astype(int)
-            return np.where(
-                rounded % 2 == 0,
-                np.where(rounded > x, rounded - 1, rounded + 1),
-                rounded,
-            )
 
-        ROI_sizes = round_to_nearest_odd(
-            np.array(ROI_sizes_mm) / pixel_size
-        )  # Convert mm to pixels
-        Lesion_sigs = []
-        for i in range(len(Lesion_Contrasts)):
-            lesion_con_target = Lesion_Contrasts[i]
-            target_lesion_width = Lesion_Size[i]
-            ROI_size = ROI_sizes[i]
-            # Generate lesion signal: scale lesion, adjust contrast, convolve with PSF
-            Lesion_sig, freq, mtf = prepare_Lesion_sig(
-                lesion_file,
-                psf_file,
-                lesion_con_target,
-                target_lesion_width,
-                patient_FOV,
-                patient_matrix,
-                ROI_size,
-                wire_fov_mm,
-                wire_Matrix_size,
-                mtf50=mtf50,
-                mtf10=mtf10,
-            )
+def round_to_nearest_odd(x):
+    """Round to nearest odd integer for ROI sizes."""
+    rounded = np.round(x).astype(int)
+    return np.where(
+        rounded % 2 == 0, np.where(rounded > x, rounded - 1, rounded + 1), rounded
+    )
 
-            Lesion_sigs.append(Lesion_sig)
 
-            # show the figure of Presampling MTF of loaded PSF or simulated PSF
-            # import matplotlib.pyplot as plt
-            # plt.figure(figsize=(7, 4.5))
-            # plt.plot(freq, mtf, 'b-', linewidth=2, label='Presampling MTF')
-            # plt.show()
-            # import matplotlib.pyplot as plt
+def spline_interpolate(x, y, points=100):
+    """Interpolate y values at new x positions using cubic spline."""
 
-            # plt.imshow(Lesion_sig, cmap="gray")
-            # plt.show()
+    cs = make_interp_spline(x, y)
+    xs = np.linspace(x[0], x[-1], points)
+    return xs, cs(xs)
 
-        # Calculate CTDIvol and water-equivalent diameter (Dw)
-        SliceLocation_end = 0
-        CTDI_All = np.zeros(n_images)
-        Dw = np.zeros(n_images)
-        pixel_roi = dx * dy * 100
-        for i in range(n_images):
-            dcm_info = dcmread(filepaths[i])
-            CTDI_All[i] = dcm_info.CTDIvol
-            im1 = dcm_info.pixel_array
-            im10 = im1 * dcm_info.RescaleSlope + dcm_info.RescaleIntercept
-            Mask = im10 >= -260
-            Mask22 = ndimage.binary_fill_holes(Mask).astype(bool)
-            labeled_image, num_labels = measure.label(Mask22, return_num=True)
-            if num_labels > 0:
-                largest_region = np.argmax(np.bincount(labeled_image.flat)[1:]) + 1
-                binaryImage = labeled_image == largest_region
-            else:
-                binaryImage = np.zeros_like(Mask22, dtype=bool)
-            pixel_No = np.sum(binaryImage)
-            A_roi = pixel_No * pixel_roi
-            im10_pat = im10[binaryImage]
-            HU_Mean = np.mean(im10_pat)
-            Dw[i] = 2 * np.sqrt((HU_Mean / 1000 + 1) * A_roi / np.pi)
-            if i == n_images - 1:
-                SliceLocation_end = dcm_info.SliceLocation
 
-        # Compute dose metrics: SSDE and DLP
-        Mean_CTDI_All = np.mean(CTDI_All)
-        Mean_Dw = np.mean(Dw) / 10
+def plot_lesion_signals(
+    Lesion_sig, freq, mtf, lesion_con_target, target_lesion_width, i
+):
+    idx = (np.gradient(np.where(np.abs(np.gradient(mtf)) > 3e-5)[0]) != 1).argmax()
+    fig, (ax1, ax2) = plt.subplots(
+        1, 2, num=f"Presampling MTF - Lesion {i+1}", figsize=(12, 5)
+    )
+    xs, cs_values = spline_interpolate(freq[:idx], mtf[:idx])
+    ax1.plot(xs, cs_values, "b-", linewidth=2, label="Presampling MTF (Interpolated)")
+    ax1.plot(freq[:idx], mtf[:idx], "r--", linewidth=2, label="Presampling MTF")
+    ax1.legend()
+    ax2.imshow(Lesion_sig, cmap="gray")
 
-        # all exams except for head
-        para_a = 3.704369
-        para_b = 0.03671937
-        # head
-        # para_a = 1.874799
-        # para_b = 0.03871313
+    ax1.set_title(f"Presampling MTF - Lesion {i+1}")
+    ax1.set_xlabel("Frequency (cycles/mm)")
+    ax1.set_ylabel("MTF")
 
-        f = para_a * np.exp(-para_b * Mean_Dw)
-        SSDE = f * Mean_CTDI_All
-        Scan_len = (SliceLocation_end - SliceLocation1) / 10
-        DLP_CTDIvol_L = Scan_len * Mean_CTDI_All
-        DLP_SSDE = Scan_len * SSDE
-        MTF_10p = 7.30  # Replace with actual MTF 10% value
-        ROI_size_N = round(0.6 / dx)
-        Half_ROI_size_N = round(np.floor(ROI_size_N / 2))
-        Thr1 = 0
-        Thr2 = 150
-        numResample = 500
-        internalNoise = 2.25
-        Resampling_method = "Bootstrap"
+    ax2.set_title(
+        f"Lesion Signal (Contrast: {lesion_con_target} HU, Size: {target_lesion_width} mm)"
+    )
+    ax2.axis("off")
 
-        # Configure Gabor channels for CHO
-        class Chnl:
-            Chnl_Toggle = "Gabor"
+    fig.tight_layout()
+    # plt.show()
 
-        Chnl_Toggle = "Gabor"
-        Chnl.Chnl_Toggle = Chnl_Toggle
-        if Chnl.Chnl_Toggle == "Gabor":
-            Gabor_passband = "[[1/64,1/32], [1/32,1/16]]"
-            Gabor_theta = "[0, pi/2]"
-            Gabor_beta = "0"
-            Chnl = channel_selection(Chnl, Gabor_passband, Gabor_theta, Gabor_beta)
-        elif Chnl.Chnl_Toggle == "Laguerre-Gauss":
-            LG_order = 6
-            LG_orien = 3
-            Chnl = channel_selection(Chnl, LG_order, LG_orien)
 
-        # Process image sections for NPS and CHO analysis
-        N_sub = round(50 / Sliceinterval)
-        All_dps = np.zeros([n_images // N_sub - 2, 5])
-        Noise_level_local = np.zeros([n_images // N_sub - 2, 1])
-        Total_NPS_Num = 0
-        NPS_1D_sum = 0
-        Spatial_freq = []
-        noise_level_sum = 0
-        NPS_Cal = True
-        Padding_size = 2 * round(1.2 / dx)
-        Padding_size = (
-            int(Padding_size) if Padding_size % 2 == 0 else int(Padding_size + 1)
+def plot_CTDI_Dw_with_image(slice_locations, CTDI_All, Dw, coronal_image):
+    fig, ax1 = plt.subplots(num="CTDI and Dw vs Slice Location", figsize=(10, 6))
+    ax2 = ax1.twinx()
+
+    ax1.plot(slice_locations, CTDI_All, "g-")
+    ax2.plot(slice_locations, Dw, "b-")
+
+    # Compute original ylim ranges before modifying
+    ctdi_ylim = ax1.get_ylim()
+    ctdi_range = np.diff(ctdi_ylim)[0]
+    ax1.set_ylim(ctdi_ylim[0], ctdi_ylim[0] + (2 * ctdi_range))
+
+    dw_ylim = ax2.get_ylim()
+    dw_range = np.diff(dw_ylim)[0]
+    ax2.set_ylim(dw_ylim[1] - (2 * dw_range), dw_ylim[1])
+
+    # --- Add the image ---
+    x_min, x_max = slice_locations.min(), slice_locations.max()
+
+    # Image occupies the full y-range of both line plots (CTDI and Dw)
+    img_extent = [x_min, x_max, ctdi_ylim[0], ctdi_ylim[0] + (2 * ctdi_range)]
+
+    ax1.imshow(
+        coronal_image,  # your (512, 560) HU array
+        extent=img_extent,
+        aspect="auto",  # stretch to fill the extent — critical
+        cmap="gray",
+        vmin=-1024,  # HU window: air
+        vmax=400,  # HU window: soft tissue / bone edge
+        origin="upper",  # row 0 at top, typical for CT
+        zorder=0,  # behind both line plots
+        alpha=0.85,
+    )
+
+    ax1.set_xlabel("Slice Locations")
+    ax1.set_ylabel("CTDI", color="g")
+    ax2.set_ylabel("Dw", color="b")
+
+    ax1.tick_params(axis="y", labelcolor="g")
+    ax2.tick_params(axis="y", labelcolor="b")
+
+    fig.tight_layout()
+    # plt.show()
+
+
+def plot_dps_with_image(dps_location, Mean_loc_dps, coronal_image):
+    fig, ax1 = plt.subplots(num="DPS", figsize=(10, 6))
+    xs, cs_values = spline_interpolate(dps_location, Mean_loc_dps)
+    ax1.plot(xs, cs_values, "b-", linewidth=2, label="DPS (Interpolated)")
+    ax1.plot(dps_location, Mean_loc_dps, "g--", linewidth=2, label="DPS", marker="o")
+
+    # Compute original ylim ranges before modifying
+    y_min, y_max = ax1.get_ylim()
+
+    # --- Add the image ---
+    x_min, x_max = location.min(), location.max()
+
+    # Image occupies the full y-range of both line plots (CTDI and Dw)
+    img_extent = [x_min, x_max, y_min, y_max]
+
+    ax1.imshow(
+        coronal_image,  # your (512, 560) HU array
+        extent=img_extent,
+        aspect="auto",  # stretch to fill the extent — critical
+        cmap="gray",
+        vmin=-1024,  # HU window: air
+        vmax=400,  # HU window: soft tissue / bone edge
+        origin="upper",  # row 0 at top, typical for CT
+        zorder=0,  # behind both line plots
+    )
+
+    ax1.set_xlabel("Slice Locations")
+    ax1.set_ylabel("DPS", color="g")
+
+    ax1.tick_params(axis="y", labelcolor="g")
+
+    fig.tight_layout()
+    # plt.show()
+
+
+def plot_NPS(Spatial_freq, NPS_1D):
+    fig, ax = plt.subplots()
+    ax.plot(Spatial_freq, NPS_1D, "b", label="average")
+    ax.set_xlabel("Spatial frequency (1/cm)", fontsize=16)
+    ax.set_ylabel("NPS (HU^2 cm^2)", fontsize=16)
+    ax.grid(True)
+    ax.legend()
+    fig.tight_layout()
+    # plt.show()
+
+
+ROI_sizes = round_to_nearest_odd(
+    np.array(ROI_sizes_mm) / pixel_size
+)  # Convert mm to pixels
+Lesion_sigs = []
+for i in range(len(Lesion_Contrasts)):
+    lesion_con_target = Lesion_Contrasts[i]
+    target_lesion_width = Lesion_Size[i]
+    ROI_size = ROI_sizes[i]
+    # Generate lesion signal: scale lesion, adjust contrast, convolve with PSF
+    Lesion_sig, freq, mtf = prepare_Lesion_sig(
+        lesion_file,
+        psf_file,
+        lesion_con_target,
+        target_lesion_width,
+        patient_FOV,
+        patient_matrix,
+        ROI_size,
+        wire_fov_mm,
+        wire_Matrix_size,
+        mtf50=mtf50,
+        mtf10=mtf10,
+    )
+
+    Lesion_sigs.append(Lesion_sig)
+    plot_lesion_signals(
+        Lesion_sig, freq, mtf, lesion_con_target, target_lesion_width, i
+    )
+
+    # show the figure of Presampling MTF of loaded PSF or simulated PSF
+
+
+# plt.imshow(Lesion_sig, cmap="gray")
+# plt.show()
+
+# Calculate CTDIvol and water-equivalent diameter (Dw)
+SliceLocation_end = 0
+CTDI_All = np.zeros(n_images)
+coronal_image = np.zeros((Im_Size[0], n_images))
+location = np.zeros(n_images)
+Dw = np.zeros(n_images)
+pixel_roi = dx * dy * 100
+for i in range(n_images):
+    dcm_info = dcmread(filepaths[i])
+    CTDI_All[i] = dcm_info.CTDIvol
+    im1 = dcm_info.pixel_array
+    im10 = im1 * dcm_info.RescaleSlope + dcm_info.RescaleIntercept
+    coronal_image[:, i] = im10[Im_Size[1] // 2, :]
+    Mask = im10 >= -260
+    Mask22 = ndimage.binary_fill_holes(Mask).astype(bool)
+    labeled_image, num_labels = measure.label(Mask22, return_num=True)
+    if num_labels > 0:
+        largest_region = np.argmax(np.bincount(labeled_image.flat)[1:]) + 1
+        binaryImage = labeled_image == largest_region
+    else:
+        binaryImage = np.zeros_like(Mask22, dtype=bool)
+    pixel_No = np.sum(binaryImage)
+    A_roi = pixel_No * pixel_roi
+    im10_pat = im10[binaryImage]
+    HU_Mean = np.mean(im10_pat)
+    Dw[i] = 2 * np.sqrt((HU_Mean / 1000 + 1) * A_roi / np.pi)
+    location[i] = dcm_info.SliceLocation
+    if i == n_images - 1:
+        SliceLocation_end = dcm_info.SliceLocation
+
+plot_CTDI_Dw_with_image(location, CTDI_All, Dw, coronal_image)
+# Compute dose metrics: SSDE and DLP
+Mean_CTDI_All = np.mean(CTDI_All)
+Mean_Dw = np.mean(Dw) / 10
+
+# all exams except for head
+para_a = 3.704369
+para_b = 0.03671937
+# head
+# para_a = 1.874799
+# para_b = 0.03871313
+f = para_a * np.exp(-para_b * Mean_Dw)
+ssde_inc = f * CTDI_All
+SSDE = f * Mean_CTDI_All
+Scan_len = (SliceLocation_end - SliceLocation1) / 10
+DLP_CTDIvol_L = Scan_len * Mean_CTDI_All
+DLP_SSDE = Scan_len * SSDE
+MTF_10p = 7.30  # Replace with actual MTF 10% value
+
+val = 0.6 / dx
+ROI_size_N = int(2 * np.round((val - 1) / 2) + 1)  # round_to_nearest_odd
+
+Half_ROI_size_N = round(np.floor(ROI_size_N / 2))
+Thr1 = 0
+Thr2 = 150
+numResample = 500
+internalNoise = 2.25
+Resampling_method = "Bootstrap"
+
+
+# Configure Gabor channels for CHO
+class Chnl:
+    Chnl_Toggle = "Gabor"
+
+
+Chnl_Toggle = "Gabor"
+Chnl.Chnl_Toggle = Chnl_Toggle
+if Chnl.Chnl_Toggle == "Gabor":
+    # Gabor_passband = '[[1/64,1/32], [1/32,1/16]]'
+    # Gabor_theta = '[0, pi/2]'
+    Gabor_passband = "[[1/64,1/32], [1/32,1/16], [1/16,1/8], [1/8,1/4]]"
+    Gabor_theta = "[0, pi/3, 2*pi/3]"
+    Gabor_beta = "0"
+    Chnl = channel_selection(Chnl, Gabor_passband, Gabor_theta, Gabor_beta)
+elif Chnl.Chnl_Toggle == "Laguerre-Gauss":
+    LG_order = 6
+    LG_orien = 3
+    Chnl = channel_selection(Chnl, LG_order, LG_orien)
+
+# Process image sections for NPS and CHO analysis
+N_sub = round(50 / Sliceinterval)
+All_dps = np.zeros([n_images // N_sub - 2, 5])
+dps_location = []
+Noise_level_local = np.zeros([n_images // N_sub - 2, 1])
+Total_NPS_Num = 0
+NPS_1D_sum = 0
+Spatial_freq = []
+noise_level_sum = 0
+NPS_Cal = True
+Padding_size = 2 * round(1.2 / dx)
+Padding_size = int(Padding_size) if Padding_size % 2 == 0 else int(Padding_size + 1)
+
+
+for mm in range(1, n_images // N_sub - 1):
+    N1 = (mm - 1) * N_sub
+    N2 = mm * N_sub
+    Intel_images = np.zeros(
+        [Im_Size[0] + Padding_size, Im_Size[1] + Padding_size, N2 + N_sub * 2 - N1],
+        dtype=np.float32,
+    )
+    Intel_images_Square = np.zeros(
+        [Im_Size[0] + Padding_size, Im_Size[1] + Padding_size, N2 + N_sub * 2 - N1],
+        dtype=np.float32,
+    )
+    Intel_Edge = np.zeros(
+        [Im_Size[0] + Padding_size, Im_Size[1] + Padding_size, N2 + N_sub * 2 - N1],
+        dtype=np.float32,
+    )
+    Images_Section = np.zeros(
+        [Im_Size[0], Im_Size[1], N2 + N_sub * 2 - N1], dtype=np.float32
+    )
+    for nn in range(N1, N2 + N_sub * 2):
+        dcm_info = dcmread(filepaths[nn])
+        dps_location.append(dcm_info.SliceLocation)
+        im1 = dcm_info.pixel_array
+        im10 = im1 * dcm_info.RescaleSlope + dcm_info.RescaleIntercept
+
+        canny_edges = feature.canny(im10, sigma=5)
+        # To exclude exact Canny edge pixels, but also pixels near the edges
+        physical_buffer_mm = (
+            1.5  # Desired buffer zone around edges (mm). Tune if needed: 1.5~2.5
         )
+        kernel_size = max(
+            3, int(np.round(physical_buffer_mm / (dx * 10)))
+        )  # gives the kernel size in pixels for the desired physical buffer in mm.
+        kernel_size = kernel_size if kernel_size % 2 == 1 else kernel_size + 1
 
-        for mm in range(1, n_images // N_sub - 1):
-            N1 = (mm - 1) * N_sub
-            N2 = mm * N_sub
-            Intel_images = np.zeros(
-                [
-                    Im_Size[0] + Padding_size,
-                    Im_Size[1] + Padding_size,
-                    N2 + N_sub * 2 - N1,
-                ],
-                dtype=np.float32,
-            )
-            Intel_images_Square = np.zeros(
-                [
-                    Im_Size[0] + Padding_size,
-                    Im_Size[1] + Padding_size,
-                    N2 + N_sub * 2 - N1,
-                ],
-                dtype=np.float32,
-            )
-            Intel_Edge = np.zeros(
-                [
-                    Im_Size[0] + Padding_size,
-                    Im_Size[1] + Padding_size,
-                    N2 + N_sub * 2 - N1,
-                ],
-                dtype=np.float32,
-            )
-            Images_Section = np.zeros(
-                [Im_Size[0], Im_Size[1], N2 + N_sub * 2 - N1], dtype=np.float32
-            )
-            for nn in range(N1, N2 + N_sub * 2):
-                dcm_info = dcmread(filepaths[nn])
-                im1 = dcm_info.pixel_array
-                im10 = im1 * dcm_info.RescaleSlope + dcm_info.RescaleIntercept
-                Edges = feature.canny(im10, sigma=5)
-                Images_Section[:, :, nn - N1] = im10
-                Intel_Edge[:, :, nn - N1] = Integral_image(
-                    Edges, [Padding_size, Padding_size], "replicate"
-                )
-                Intel_images[:, :, nn - N1] = Integral_image(
-                    im10, [Padding_size, Padding_size], "replicate"
-                )
-                Intel_images_Square[:, :, nn - N1] = Integral_image(
-                    im10**2, [Padding_size, Padding_size], "replicate"
-                )
-            STD_all = calculate_std_dev(
+        structure = np.ones((kernel_size, kernel_size), dtype=bool)
+        dilated_edges = binary_dilation(canny_edges, structure=structure)
+
+        Images_Section[:, :, nn - N1] = im10
+        Intel_Edge[:, :, nn - N1] = Integral_image(
+            dilated_edges, [Padding_size, Padding_size], "replicate"
+        )
+        Intel_images[:, :, nn - N1] = Integral_image(
+            im10, [Padding_size, Padding_size], "replicate"
+        )
+        Intel_images_Square[:, :, nn - N1] = Integral_image(
+            im10**2, [Padding_size, Padding_size], "replicate"
+        )
+    STD_all = calculate_std_dev(
+        Intel_images,
+        Intel_images_Square,
+        Intel_Edge,
+        ROI_size_N,
+        Padding_size,
+        Im_Size,
+        N1,
+        N2,
+        N_sub,
+        Thr1,
+        Thr2,
+        corrected=False,
+    )
+    max_value = np.nanmax(STD_all)
+    h_Values, edges = np.histogram(STD_all.flatten(), bins=np.arange(0, max_value, 0.2))
+    whichbin_SD = np.argmax(h_Values)
+    bin_edge = edges[whichbin_SD]
+    Noise_level_local[mm - 1] = bin_edge
+    if NPS_Cal:
+        ROI_All_NPS, Total_NPS_No = extract_ROIs(
+            STD_all, bin_edge, Half_ROI_size_N, Images_Section, Im_Size
+        )
+        Spatial_freq, NPS_1D_sum, noise_level_sum, unit = ROI_to_NPS_Sum(
+            ROI_size_N, ROI_All_NPS[:, :, 0:200], dx, dy
+        )
+        Total_NPS_Num = 200
+        NPS_Cal = False
+    del STD_all
+    gc.collect()
+    Left_Area = np.sum(h_Values[:whichbin_SD])
+    Two_sigma_area = np.zeros(whichbin_SD)
+    Two_sigma_area[0] = Left_Area
+    temp_area = Left_Area
+    for b_idx in range(1, whichbin_SD):
+        Two_sigma_area[b_idx] = temp_area - h_Values[b_idx - 1]
+        temp_area = temp_area - h_Values[b_idx - 1]
+    Ratios = Two_sigma_area / Left_Area
+    target_ratio = 0.9544
+    temp_dis = np.abs(target_ratio - Ratios)
+    closest = Ratios[np.argmin(temp_dis)]
+    loc = np.where(Ratios == closest)[0][0]
+    gap = whichbin_SD - loc
+    Thre_SD = edges[whichbin_SD + gap]
+    all_dps = []
+    for ii in range(len(Lesion_sigs)):
+        lesion_sig = Lesion_sigs[ii]
+        ROI_size = ROI_sizes[ii]
+        lesion_con_target = Lesion_Contrasts[ii]
+        Half_ROI_size = round(np.floor(ROI_size / 2))
+        if ii in [3, 4]:
+            print("use same ROI_All")
+        else:
+            STD_map_all = calculate_std_dev(
                 Intel_images,
                 Intel_images_Square,
                 Intel_Edge,
-                ROI_size_N,
+                ROI_size,
                 Padding_size,
                 Im_Size,
                 N1,
@@ -908,116 +1148,70 @@ for dir1 in dcm_img_paths:
                 N_sub,
                 Thr1,
                 Thr2,
-                Edges,
                 corrected=False,
             )
-            max_value = np.nanmax(STD_all)
-            h_Values, edges = np.histogram(
-                STD_all.flatten(), bins=np.arange(0, max_value, 0.2)
+            ROI_All, Total_NPS_No = extract_ROIs(
+                STD_map_all, Thre_SD, Half_ROI_size, Images_Section, Im_Size
             )
-            whichbin_SD = np.argmax(h_Values)
-            bin_edge = edges[whichbin_SD]
-            Noise_level_local[mm - 1] = bin_edge
-            if NPS_Cal:
-                ROI_All_NPS, Total_NPS_No = extract_ROIs(
-                    STD_all, bin_edge, Half_ROI_size_N, Images_Section, Im_Size
-                )
-                Spatial_freq, NPS_1D_sum, noise_level_sum, unit = ROI_to_NPS_Sum(
-                    ROI_size_N, ROI_All_NPS[:, :, 0:200], dx, dy
-                )
-                Total_NPS_Num = 200
-                NPS_Cal = False
-            del STD_all
-            gc.collect()
-            Left_Area = np.sum(h_Values[:whichbin_SD])
-            Two_sigma_area = np.zeros(whichbin_SD)
-            Two_sigma_area[0] = Left_Area
-            temp_area = Left_Area
-            for b_idx in range(1, whichbin_SD):
-                Two_sigma_area[b_idx] = temp_area - h_Values[b_idx - 1]
-                temp_area = temp_area - h_Values[b_idx - 1]
-            Ratios = Two_sigma_area / Left_Area
-            target_ratio = 0.9544
-            temp_dis = np.abs(target_ratio - Ratios)
-            closest = Ratios[np.argmin(temp_dis)]
-            loc = np.where(Ratios == closest)[0][0]
-            gap = whichbin_SD - loc
-            Thre_SD = edges[whichbin_SD + gap]
-            all_dps = []
-            for ii in range(len(Lesion_sigs)):
-                lesion_sig = Lesion_sigs[ii]
-                ROI_size = ROI_sizes[ii]
-                lesion_con_target = Lesion_Contrasts[ii]
-                Half_ROI_size = round(np.floor(ROI_size / 2))
-                if ii in [3, 4]:
-                    print("use same ROI_All")
-                else:
-                    STD_map_all = calculate_std_dev(
-                        Intel_images,
-                        Intel_images_Square,
-                        Intel_Edge,
-                        ROI_size,
-                        Padding_size,
-                        Im_Size,
-                        N1,
-                        N2,
-                        N_sub,
-                        Thr1,
-                        Thr2,
-                        Edges,
-                        corrected=False,
-                    )
-                    ROI_All, Total_NPS_No = extract_ROIs(
-                        STD_map_all, Thre_SD, Half_ROI_size, Images_Section, Im_Size
-                    )
-                Noise_ROI = ROI_All[:, :, 0:Total_NPS_No]
-                depth = Noise_ROI.shape[2]
-                for i in range(depth):
-                    temp = Noise_ROI[:, :, i]
-                    Noise_ROI[:, :, i] = temp - np.mean(temp)
-                N_total = Noise_ROI.shape[2]
-                sample_idx = np.random.permutation(N_total)
-                channelMatrix = ChannelMatrix_Generation(Chnl, ROI_size)
-                bkg_ordered = np.reshape(
-                    Noise_ROI[:, :, sample_idx], (ROI_size**2, len(sample_idx))
-                )
-                sig_true = np.reshape(lesion_sig, (ROI_size**2, 1))
-                dp = CHO_patient_with_resampling(
-                    sig_true,
-                    bkg_ordered,
-                    channelMatrix,
-                    internalNoise,
-                    Resampling_method,
-                )
-                all_dps.append(dp)
-            All_dps[mm - 1, :] = all_dps
-            del Intel_images, Intel_images_Square, Intel_Edge, Images_Section
-            gc.collect()
+        Noise_ROI = ROI_All[:, :, 0:Total_NPS_No]
+        depth = Noise_ROI.shape[2]
+        for i in range(depth):
+            temp = Noise_ROI[:, :, i]
+            Noise_ROI[:, :, i] = temp - np.mean(temp)
+        N_total = Noise_ROI.shape[2]
+        sample_idx = np.random.permutation(N_total)
+        channelMatrix = ChannelMatrix_Generation(Chnl, ROI_size)
+        bkg_ordered = np.reshape(
+            Noise_ROI[:, :, sample_idx], (ROI_size**2, len(sample_idx))
+        )
+        sig_true = np.reshape(lesion_sig, (ROI_size**2, 1))
+        dp = CHO_patient_with_resampling(
+            sig_true, bkg_ordered, channelMatrix, internalNoise, Resampling_method
+        )
+        all_dps.append(dp)
+    All_dps[mm - 1, :] = all_dps
+    del Intel_images, Intel_images_Square, Intel_Edge, Images_Section
+    gc.collect()
 
-        # Compute final metrics and plot NPS
-        Mean_loc_dps = np.mean(All_dps, axis=-1)
-        Mean_All_dps = np.mean(Mean_loc_dps)
-        NPS_1D = NPS_1D_sum / Total_NPS_Num
-        Ave_noise_level_NPS = noise_level_sum / Total_NPS_Num
-        Ave_noise_level = np.mean(Noise_level_local)
-        end = time.time()
-        print(end - start)
+# Compute final metrics and plot NPS
+dps_location = np.array(dps_location)
+dps_location = np.reshape(dps_location, (n_images // N_sub - 2, -1))
+dps_location = np.mean(dps_location, axis=-1)
+Mean_loc_dps = np.mean(All_dps, axis=-1)
+Mean_All_dps = np.mean(Mean_loc_dps)
+NPS_1D = NPS_1D_sum / Total_NPS_Num
+Ave_noise_level_NPS = noise_level_sum / Total_NPS_Num
+Ave_noise_level = np.mean(Noise_level_local)
+end = time.time()
 
-        # Plot NPS
-        fig, ax = plt.subplots()
-        ax.plot(Spatial_freq, NPS_1D, "b", label="average")
-        ax.set_xlabel("Spatial frequency (1/cm)", fontsize=16)
-        ax.set_ylabel("NPS (HU^2 cm^2)", fontsize=16)
-        ax.grid(True)
-        ax.legend()
-        plt.show()
-        fav, peakfrequency, k, min10percent_frequency = NPS_statistics(NPS_1D, unit)
-        print(f"peakfrequency = {peakfrequency:.3f}")
-        print(f"averagefrequency = {fav:.3f}")
-        print(f"min10percent_frequency = {min10percent_frequency:.3f}")
-        print(f"average noise level = {Ave_noise_level:.3f}")
-    except Exception as e:
-        import traceback
+plot_dps_with_image(dps_location, Mean_loc_dps, coronal_image)
+plot_NPS(Spatial_freq, NPS_1D)
 
-        traceback.print_exc()
-        print(f"Error processing directory {dir1}: {e}")
+# Plot NPS
+fav, peakfrequency, k, min10percent_frequency = NPS_statistics(NPS_1D, unit)
+print(f"peakfrequency = {peakfrequency:.3f}")
+print(f"averagefrequency = {fav:.3f}")
+print(f"min10percent_frequency = {min10percent_frequency:.3f}")
+print(f"average noise level = {Ave_noise_level:.3f}")
+results = {
+    "average_frequency": fav,
+    "average_index_of_detectability": Mean_All_dps,
+    "average_noise_level": float(Ave_noise_level),
+    "cho_detectability": Mean_loc_dps.tolist(),
+    "dps_location": dps_location.tolist(),
+    "ctdivol": CTDI_All.tolist(),
+    "ctdivol_avg": Mean_CTDI_All,
+    "dlp": DLP_CTDIvol_L,
+    "dlp_ssde": DLP_SSDE,
+    "dw": Dw.tolist(),
+    "dw_avg": Mean_Dw,
+    "location": location.tolist(),
+    "noise_level": Noise_level_local.flatten().tolist(),
+    "nps": NPS_1D.flatten().tolist(),
+    "peak_frequency": peakfrequency,
+    "percent_10_frequency": min10percent_frequency,
+    "spatial_frequency": Spatial_freq.tolist(),
+    "ssde": SSDE,
+    "ssde_inc": ssde_inc.tolist(),
+}
+plt.show()

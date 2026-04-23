@@ -4,7 +4,7 @@ services:
     container_name: orthanc-proxy
     ports:
       - "8000:80"
-      - "4242:4242"
+      - "4244:4242"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/ssl:/etc/ssl/certs
@@ -61,10 +61,6 @@ services:
     environment:
       PYTHONDONTWRITEBYTECODE: 1
       PYTHONUNBUFFERED: 1
-      ORTHANC__Name: "save-images"
-      ORTHANC__DicomAet: "SAVE_IMAGES"
-      INSTANCE_BEHAVIOR_TEST: "None"
-      INSTANCE_BEHAVIOR_SAVE: "true"
     restart: no
     depends_on:
       postgres:

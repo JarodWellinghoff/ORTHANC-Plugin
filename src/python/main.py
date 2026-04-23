@@ -24,12 +24,8 @@ from PIL import Image
 
 
 TOKEN = orthanc.GenerateRestApiAuthorizationToken()
-TEST_TYPE = os.getenv("INSTANCE_BEHAVIOR_TEST", "Global Noise")
-SAVE_TYPE = os.getenv("INSTANCE_BEHAVIOR_SAVE", "true") == "true"
 
 print(f"=== CHO Analysis Plugin Initialized ===")
-print(f" - Test Type: {TEST_TYPE}")
-print(f" - Save Type: {SAVE_TYPE}")
 
 SSE_HEARTBEAT_SECONDS = 15
 SSE_RETRY_MILLISECONDS = 4000
@@ -1550,29 +1546,13 @@ def OnChange(change_type, resource_type, resource_id):
         print(f"Stable series: {resource_id}")
         series_uuid = resource_id
         try:
-            # Check if this is a headers-only instance
-            if TEST_TYPE == "None":
-                # Save DICOM headers without running analysis
-                save_dicom_headers_only(series_uuid)
+            # Save DICOM headers without running analysis
+            save_dicom_headers_only(series_uuid)
 
-                # Delete series if not saving
-                if not SAVE_TYPE:
-                    orthanc.RestApiDelete(f"/series/{series_uuid}")
-                    print(f"Deleted series after saving headers: {series_uuid}")
-                return
-
-            test = "global" if TEST_TYPE == "Global Noise" else "full"
-
-            body = {
-                "series_uuid": series_uuid,
-                "testType": test,
-                "saveResults": True,
-                "deleteAfterCompletion": not SAVE_TYPE,
-                "report_progress": False,
-            }
-            orthanc.RestApiPostAfterPlugins(
-                "/cho-analysis-modal", json.dumps(body).encode("utf-8")
-            )
+            # Delete series if not saving
+            # if not SAVE_TYPE:
+            #     orthanc.RestApiDelete(f"/series/{series_uuid}")
+            #     print(f"Deleted series after saving headers: {series_uuid}")
         except Exception as e:
             import traceback
 

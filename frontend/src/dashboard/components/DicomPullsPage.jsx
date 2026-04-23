@@ -30,6 +30,8 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
+import GridToolbar from "./GridToolbar";
+import { DataGrid } from "@mui/x-data-grid";
 import dayjs from "dayjs";
 import Collapse from "@mui/material/Collapse";
 import { AdapterDayjs } from "@mui/x-date-pickers/AdapterDayjs";
@@ -43,6 +45,7 @@ import { DatePicker } from "@mui/x-date-pickers/DatePicker";
 import CustomActionBar from "./CustomActionBar";
 import { LocalizationProvider } from "@mui/x-date-pickers/LocalizationProvider";
 
+import FiltersPanel from "./FiltersPanel";
 import { useDashboard } from "../context/DashboardContext";
 const apiBase = import.meta.env.VITE_API_URL;
 
@@ -680,6 +683,72 @@ const DicomPullsPage = () => {
     openPickerButton: { sx: pickerButtonSx },
     textField: { placeholder: "", InputLabelProps: { shrink: true } },
   };
+  const columns = [
+    {
+      field: "patientName",
+      headerName: "Patient",
+      flex: 1.1,
+      minWidth: 160,
+    },
+    {
+      field: "institutionName",
+      headerName: "Institute",
+      flex: 1,
+      minWidth: 160,
+    },
+    {
+      field: "protocolName",
+      headerName: "Protocol",
+      flex: 1,
+      minWidth: 160,
+    },
+    {
+      field: "pullScheduleName",
+      headerName: "Pull Schedule",
+      flex: 1,
+      minWidth: 160,
+      valueFormatter: (value) => value ?? "—",
+    },
+    {
+      field: "testStatus",
+      headerName: "Status",
+      width: 140,
+    },
+    {
+      field: "latestAnalysis",
+      headerName: "Last Analysis",
+      minWidth: 190,
+      flex: 0.8,
+      valueFormatter: (value) => formatDateTime(value),
+    },
+    {
+      field: "hasDicom",
+      headerName: "DICOM",
+      width: 140,
+      renderCell: (params) => {
+        if (params.row.hasDicom) {
+          return (
+            <Chip
+              size='small'
+              color='success'
+              icon={<CloudDoneRoundedIcon fontSize='small' />}
+              label='Available'
+              variant='outlined'
+            />
+          );
+        }
+        return (
+          <Chip
+            size='small'
+            color='warning'
+            icon={<CloudOffRoundedIcon fontSize='small' />}
+            label='Missing'
+            variant='outlined'
+          />
+        );
+      },
+    },
+  ];
 
   return (
     <Stack spacing={3}>
@@ -693,234 +762,10 @@ const DicomPullsPage = () => {
 
       <Stack spacing={3}>
         <Grid item size={{ xs: 12, md: 6 }}>
-          <Paper elevation={0} variant='outlined' sx={{ p: 3 }}>
-            <Stack spacing={2}>
-              <Typography variant='h6'>Remote Query</Typography>
-
-              <Stack spacing={3}>
-                {/* ── Primary search + server selector ── */}
-                <Stack
-                  direction={{ xs: "column", md: "row" }}
-                  spacing={2}
-                  alignItems={{ xs: "stretch", md: "center" }}>
-                  <Autocomplete
-                    multiple
-                    freeSolo
-                    filterSelectedOptions
-                    options={[]}
-                    value={patientSearchValue}
-                    onChange={handleAutocompleteChange("patientSearch")}
-                    renderTags={(value, getTagProps) =>
-                      value.map((option, index) => (
-                        <Chip
-                          size='small'
-                          label={option}
-                          {...getTagProps({ index })}
-                        />
-                      ))
-                    }
-                    renderInput={(params) => (
-                      <TextField
-                        {...params}
-                        placeholder={
-                          patientSearchValue.length
-                            ? ""
-                            : "Search by patient name or ID"
-                        }
-                        slotProps={{
-                          input: {
-                            ...params.InputProps,
-                            startAdornment: (
-                              <>
-                                <InputAdornment position='start'>
-                                  <SearchIcon fontSize='small' />
-                                </InputAdornment>
-                                {params.InputProps.startAdornment}
-                              </>
-                            ),
-                          },
-                        }}
-                      />
-                    )}
-                    fullWidth
-                  />
-
-                  <FormControl size='small'>
-                    <InputLabel id='modality-label'>Server</InputLabel>
-                    <Select
-                      labelId='modality-label'
-                      label='Server'
-                      value={selectedModality}
-                      sx={{ minWidth: 150 }}
-                      onChange={(event) =>
-                        setSelectedModality(event.target.value)
-                      }
-                      disabled={loadingModalities}>
-                      {modalities.map((item) => (
-                        <MenuItem key={item.id} value={item.id}>
-                          {item.title || item.id}
-                        </MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
-                </Stack>
-
-                {/* ── Secondary filters ── */}
-                <Grid container spacing={2} columns={15}>
-                  <Grid size={{ sm: 5, md: 3 }}>
-                    <Autocomplete
-                      multiple
-                      freeSolo
-                      filterSelectedOptions
-                      options={filterOptions.institutes ?? []}
-                      value={instituteValue}
-                      onChange={handleAutocompleteChange("institute")}
-                      renderTags={(value, getTagProps) =>
-                        value.map((option, index) => (
-                          <Chip
-                            size='small'
-                            label={option}
-                            {...getTagProps({ index })}
-                          />
-                        ))
-                      }
-                      renderInput={(params) => (
-                        <TextField
-                          {...params}
-                          label='Institute'
-                          placeholder={instituteValue.length ? "" : "Any"}
-                        />
-                      )}
-                      fullWidth
-                    />
-                  </Grid>
-
-                  <Grid size={{ sm: 5, md: 3 }}>
-                    <Autocomplete
-                      multiple
-                      freeSolo
-                      filterSelectedOptions
-                      options={filterOptions.scanner_stations ?? []}
-                      value={scannerStationValue}
-                      onChange={handleAutocompleteChange("scannerStation")}
-                      renderTags={(value, getTagProps) =>
-                        value.map((option, index) => (
-                          <Chip
-                            size='small'
-                            label={option}
-                            {...getTagProps({ index })}
-                          />
-                        ))
-                      }
-                      renderInput={(params) => (
-                        <TextField
-                          {...params}
-                          label='Scanner Name'
-                          placeholder={scannerStationValue.length ? "" : "Any"}
-                        />
-                      )}
-                      fullWidth
-                    />
-                  </Grid>
-
-                  <Grid size={{ sm: 5, md: 3 }}>
-                    <Autocomplete
-                      multiple
-                      freeSolo
-                      filterSelectedOptions
-                      options={filterOptions.protocol_names ?? []}
-                      value={protocolNameValue}
-                      onChange={handleAutocompleteChange("protocolName")}
-                      renderTags={(value, getTagProps) =>
-                        value.map((option, index) => (
-                          <Chip
-                            size='small'
-                            label={option}
-                            {...getTagProps({ index })}
-                          />
-                        ))
-                      }
-                      renderInput={(params) => (
-                        <TextField
-                          {...params}
-                          label='Protocol Name'
-                          placeholder={protocolNameValue.length ? "" : "Any"}
-                        />
-                      )}
-                      fullWidth
-                    />
-                  </Grid>
-
-                  <Grid size={{ sm: 5, md: 3 }}>
-                    <Autocomplete
-                      multiple
-                      freeSolo
-                      filterSelectedOptions
-                      options={filterOptions.scanner_models ?? []}
-                      value={scannerModelValue}
-                      onChange={handleAutocompleteChange("scannerModel")}
-                      renderTags={(value, getTagProps) =>
-                        value.map((option, index) => (
-                          <Chip
-                            size='small'
-                            label={option}
-                            {...getTagProps({ index })}
-                          />
-                        ))
-                      }
-                      renderInput={(params) => (
-                        <TextField
-                          {...params}
-                          label='Scanner Model'
-                          placeholder={scannerModelValue.length ? "" : "Any"}
-                        />
-                      )}
-                      fullWidth
-                    />
-                  </Grid>
-
-                  {/* ── Study date range (DatePickers — kept as-is) ── */}
-                  <LocalizationProvider dateAdapter={AdapterDayjs}>
-                    <Grid size={{ sm: 5, md: 3 }}>
-                      <DatePicker
-                        enableAccessibleFieldDOMStructure={false}
-                        slots={{ textField: TextField }}
-                        slotProps={pickerSlotProps}
-                        label='Study Date Start'
-                        name='studyDateStart'
-                        value={filters.studyDateStart ?? null}
-                        onChange={handleStudyDateChange("studyDateStart")}
-                        sx={{ width: "100%" }}
-                      />
-                    </Grid>
-                    <Grid size={{ sm: 5, md: 3 }}>
-                      <DatePicker
-                        enableAccessibleFieldDOMStructure={false}
-                        slots={{ textField: TextField }}
-                        slotProps={pickerSlotProps}
-                        label='Study Date End'
-                        name='studyDateEnd'
-                        value={filters.studyDateEnd ?? null}
-                        onChange={handleStudyDateChange("studyDateEnd")}
-                        sx={{ width: "100%" }}
-                      />
-                    </Grid>
-                  </LocalizationProvider>
-                </Grid>
-              </Stack>
-
-              <Box>
-                <Button
-                  variant='contained'
-                  startIcon={<SearchRoundedIcon />}
-                  onClick={handleRunQuery}
-                  disabled={
-                    loadingResults || loadingModalities || !selectedModality
-                  }>
-                  Run query
-                </Button>
-              </Box>
-              <Divider />
+          <Stack spacing={2}>
+            <FiltersPanel />
+            <DataGrid rows={results} columns={columns} />
+            {/* <Divider />
               <ResultsList
                 results={results}
                 loading={loadingResults}
@@ -928,9 +773,8 @@ const DicomPullsPage = () => {
                 onToggle={handleToggleSelection}
                 onSelectAll={handleSelectAll}
                 disabled={creatingBatch}
-              />
-            </Stack>
-          </Paper>
+              /> */}
+          </Stack>
         </Grid>
 
         <Grid item size={{ xs: 12, md: 6 }}>

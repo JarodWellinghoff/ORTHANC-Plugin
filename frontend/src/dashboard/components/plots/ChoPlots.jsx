@@ -301,6 +301,7 @@ const ChoPlots = ({ children, data, comparison, direction = "column" }) => {
     const location = resultsData?.location || [];
     const ctdi = resultsData?.ctdivol || [];
     const ssde_inc = resultsData?.ssde_inc || [];
+    console.log("CTDI plot data:", { location, ctdi, ssde_inc });
     // const comparisonLocation = comparisonResults?.location || [];
     // const comparisonCtdi = comparisonResults?.ctdivol || [];
     if (
@@ -416,7 +417,6 @@ const ChoPlots = ({ children, data, comparison, direction = "column" }) => {
   const dwPlot = React.useMemo(() => {
     const location = resultsData?.location;
     const dw = resultsData?.dw;
-    const ssde_inc = resultsData?.ssde_inc;
     // const comparisonLocation = comparisonResults?.location;
     // const comparisonDw = comparisonResults?.dw;
 
@@ -429,7 +429,7 @@ const ChoPlots = ({ children, data, comparison, direction = "column" }) => {
     }
 
     const traces = [];
-    if (location && dw && ssde_inc) {
+    if (location && dw) {
       traces.push({
         name: `Water Equivalent Diameter${currentSuffix}`,
         x: location,

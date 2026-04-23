@@ -4,9 +4,11 @@
   "RegisteredUsers": {
     "demo": "demo"
   },
+  "DicomAet": "DOCKER",
   "HttpPort": 8042,
   "Plugins": [
     "/usr/local/share/orthanc/plugins/libOrthancPython.so",
+    "/usr/local/share/orthanc/plugins/libOrthancExplorer2.so",
     "/usr/local/share/orthanc/plugins/libOrthancDicomWeb.so",
     "/usr/local/share/orthanc/plugins/libOrthancPostgreSQLIndex.so",
     "/usr/local/share/orthanc/plugins/libOrthancPostgreSQLStorage.so"
@@ -28,9 +30,15 @@
   "PythonVerbose": true,
   "HttpVerbose": true,
   "DicomModalities": {
+    "TEST": {
+      "AET": "TEST_ORTHANC",
+      "Port": 4343,
+      "Host": "host.docker.internal",
+      "Manufacturer": "Generic"
+    },
     "VENUS": {
-      "AET": "ORTHANC",
-      "Port": 4242,
+      "AET": "VENUS",
+      "Port": 4243,
       "Host": "172.31.79.231",
       "Manufacturer": "Generic"
     }

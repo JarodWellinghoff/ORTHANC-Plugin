@@ -1,36 +1,90 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  Alert,
-  Box,
-  Button,
-  Chip,
-  CircularProgress,
-  FormControl,
-  IconButton,
-  InputLabel,
-  MenuItem,
-  Paper,
-  Select,
-  Stack,
-  TextField,
-  Tooltip,
-  Typography,
-} from "@mui/material";
-import FiltersPanel from "./FiltersPanel";
-import { useNavigate } from "react-router-dom";
+import Button from "@mui/material/Button";
+import Chip from "@mui/material/Chip";
+import CircularProgress from "@mui/material/CircularProgress";
+import IconButton from "@mui/material/IconButton";
+import MenuItem from "@mui/material/MenuItem";
+import Menu from "@mui/material/Menu";
+import Stack from "@mui/material/Stack";
+import Divider from "@mui/material/Divider";
+import Tooltip from "@mui/material/Tooltip";
 import ContentPasteSearchIcon from "@mui/icons-material/ContentPasteSearch";
-import { DataGrid, GridToolbar } from "@mui/x-data-grid";
 import PlayArrowRoundedIcon from "@mui/icons-material/PlayArrowRounded";
-import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 import CloudDownloadRoundedIcon from "@mui/icons-material/CloudDownloadRounded";
 import CloudOffRoundedIcon from "@mui/icons-material/CloudOffRounded";
 import CloudDoneRoundedIcon from "@mui/icons-material/CloudDoneRounded";
-import ErrorOutlineRoundedIcon from "@mui/icons-material/ErrorOutlineRounded";
-import ScheduleRoundedIcon from "@mui/icons-material/ScheduleRounded";
+import ViewColumnIcon from "@mui/icons-material/ViewColumn";
+import FileDownloadIcon from "@mui/icons-material/FileDownload";
+import { useNavigate } from "react-router-dom";
 import { useDashboard } from "../context/DashboardContext";
+import { useSnackbar } from "notistack";
+import {
+  DataGrid,
+  Toolbar,
+  ToolbarButton,
+  ColumnsPanelTrigger,
+  ExportCsv,
+  ExportPrint,
+} from "@mui/x-data-grid";
+import FiltersPanel from "./FiltersPanel";
+import { useFilters } from "../../hooks/useFilters";
 
 const apiBase = import.meta.env.VITE_API_URL;
+const GridToolbar = () => {
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const exportMenuTriggerRef = useRef(null);
 
+  return (
+    <Toolbar>
+      <Tooltip title='Columns'>
+        <ColumnsPanelTrigger render={<ToolbarButton />}>
+          <ViewColumnIcon fontSize='small' />
+        </ColumnsPanelTrigger>
+      </Tooltip>
+      <Tooltip title='Filters'></Tooltip>
+      <Divider
+        orientation='vertical'
+        variant='middle'
+        flexItem
+        sx={{ mx: 0.5 }}
+      />
+      <Tooltip title='Export'>
+        <ToolbarButton
+          ref={exportMenuTriggerRef}
+          id='export-menu-trigger'
+          aria-controls='export-menu'
+          aria-haspopup='true'
+          aria-expanded={exportMenuOpen ? "true" : undefined}
+          onClick={() => setExportMenuOpen(true)}>
+          <FileDownloadIcon fontSize='small' />
+        </ToolbarButton>
+      </Tooltip>
+      <Menu
+        id='export-menu'
+        anchorEl={exportMenuTriggerRef.current}
+        open={exportMenuOpen}
+        onClose={() => setExportMenuOpen(false)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+        transformOrigin={{ vertical: "top", horizontal: "right" }}
+        slotProps={{
+          list: {
+            "aria-labelledby": "export-menu-trigger",
+          },
+        }}>
+        <ExportPrint
+          render={<MenuItem />}
+          onClick={() => setExportMenuOpen(false)}>
+          Print
+        </ExportPrint>
+        <ExportCsv
+          render={<MenuItem />}
+          onClick={() => setExportMenuOpen(false)}>
+          Download as CSV
+        </ExportCsv>
+      </Menu>
+    </Toolbar>
+  );
+};
 const defaultChoParams = {
   resamples: 500,
   internalNoise: 2.25,
@@ -42,15 +96,6 @@ const defaultChoParams = {
   stepSize: 5,
   channelType: "Gabor",
   lesionSet: "standard",
-};
-
-// CHANGED: added pullScheduleName to defaultFilters
-const defaultFilters = {
-  patient: "",
-  protocol: "",
-  pullScheduleName: "",
-  status: "all",
-  dicom: "all",
 };
 
 const statusColorMap = {
@@ -122,16 +167,22 @@ const resolveSeriesKey = (row) => {
 
 const BulkTestsPage = () => {
   const navigate = useNavigate();
+  const { enqueueSnackbar } = useSnackbar();
+  const [filterModel, setFilterModel] = useState({ items: [] });
   const { summary, calculationStates, actions } = useDashboard();
+
+  const handleQuery = () => actions.loadSummary(filters);
+  const { filters, updateFilter, resetFilters } = useFilters();
+  //   console.log(actions.loadSummary(filters));
   const { items, pagination } = summary;
-  console.log("items:", items);
+  //   const { items, pagination } = {
+  //     items: [],
+  //     pagination: { page: 1, totalPages: 1, totalItems: 0 },
+  //   };
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [filters, setFilters] = useState(defaultFilters);
   const [availableSeries, setAvailableSeries] = useState([]);
   const [modalities, setModalities] = useState([]);
-  const [modalitiesError, setModalitiesError] = useState(null);
   const [selectedModality, setSelectedModality] = useState("");
   const [loadingModalities, setLoadingModalities] = useState(false);
   const [selectionModel, setSelectionModel] = useState({
@@ -170,7 +221,6 @@ const BulkTestsPage = () => {
 
   const loadModalities = useCallback(async () => {
     setLoadingModalities(true);
-    setModalitiesError(null);
     try {
       const data = await fetchJson("/dicom-modalities");
       const list = Array.isArray(data?.modalities) ? data.modalities : [];
@@ -180,7 +230,9 @@ const BulkTestsPage = () => {
       }
     } catch (err) {
       console.error("Failed to load modalities", err);
-      setModalitiesError(err.message);
+      enqueueSnackbar("Failed to load modalities", {
+        variant: "error",
+      });
     } finally {
       setLoadingModalities(false);
     }
@@ -202,7 +254,6 @@ const BulkTestsPage = () => {
 
   const loadResults = useCallback(async (overrides = {}) => {
     setLoading(true);
-    setError(null);
     try {
       const params = new URLSearchParams({
         limit: String(overrides.limit ?? 250),
@@ -227,7 +278,9 @@ const BulkTestsPage = () => {
       setResults(items);
     } catch (err) {
       console.error("Failed to load results", err);
-      setError(err.message);
+      enqueueSnackbar("Failed to load results", {
+        variant: "error",
+      });
       setResults([]);
     } finally {
       setLoading(false);
@@ -244,7 +297,6 @@ const BulkTestsPage = () => {
     () => new Set(availableSeries.filter(Boolean)),
     [availableSeries],
   );
-
   const normalizedResults = useMemo(() => {
     return items.map((item, index) => {
       const id = deriveRowId(item, index);
@@ -287,60 +339,6 @@ const BulkTestsPage = () => {
       };
     });
   }, [items, availableSet]);
-
-  const filteredRows = useMemo(() => {
-    return normalizedResults.filter((row) => {
-      if (
-        filters.patient &&
-        !row.patientName.toLowerCase().includes(filters.patient.toLowerCase())
-      ) {
-        return false;
-      }
-      if (
-        filters.protocol &&
-        !row.protocolName.toLowerCase().includes(filters.protocol.toLowerCase())
-      ) {
-        return false;
-      }
-      // CHANGED: filter by pull schedule name
-      if (
-        filters.pullScheduleName &&
-        !String(row.pullScheduleName ?? "")
-          .toLowerCase()
-          .includes(filters.pullScheduleName.toLowerCase())
-      ) {
-        return false;
-      }
-      if (filters.status !== "all" && row.testStatus !== filters.status) {
-        return false;
-      }
-      if (filters.dicom === "available" && !row.hasDicom) {
-        return false;
-      }
-      if (filters.dicom === "missing" && row.hasDicom) {
-        return false;
-      }
-      return true;
-    });
-  }, [normalizedResults, filters]);
-
-  const statusOptions = useMemo(() => {
-    const unique = new Set(
-      normalizedResults
-        .map((row) => row.testStatus)
-        .filter((value) => value && value !== "none"),
-    );
-    return Array.from(unique);
-  }, [normalizedResults]);
-
-  const handleFilterChange = (field) => (event) => {
-    const value = event?.target?.value ?? "";
-    setFilters((prev) => ({ ...prev, [field]: value }));
-  };
-
-  const handleResetFilters = () => {
-    setFilters(defaultFilters);
-  };
 
   const updateBulkProgress = useCallback((id, next) => {
     setBulkProgress((prev) => ({
@@ -422,20 +420,25 @@ const BulkTestsPage = () => {
     let selectedIds = null;
     if (type === "include") {
       if (selectionModel.ids.size === 0) {
-        setError("Select at least one row to start bulk testing.");
+        enqueueSnackbar("Select at least one row to start bulk testing.", {
+          variant: "warning",
+        });
         return;
       }
 
       selectedIds = selectionModel.ids.intersection(rowsById);
       if (selectedIds.size === 0) {
-        setError(
+        enqueueSnackbar(
           "Selected rows are no longer available in the current data set.",
+          { variant: "error" },
         );
         return;
       }
     } else if (type === "exclude") {
       if (selectionModel.ids.size === rowsById.size) {
-        setError("Select at least one row to start bulk testing.");
+        enqueueSnackbar("Select at least one row to start bulk testing.", {
+          variant: "warning",
+        });
         return;
       }
       selectedIds = new Set(rowsById.keys()).difference(selectionModel.ids);
@@ -459,7 +462,9 @@ const BulkTestsPage = () => {
       }
     }
     if (queue.length === 0) {
-      setError("No valid selections remain to process.");
+      enqueueSnackbar("No valid selections remain to process.", {
+        variant: "error",
+      });
       return;
     }
 
@@ -487,23 +492,36 @@ const BulkTestsPage = () => {
           message: err.message ?? "Failed to start",
         });
         if (err?.code === "WAIT_TIMEOUT") {
-          setError(err.message);
+          enqueueSnackbar(
+            `Analysis for series ${row.seriesInstanceUid} did not complete within the expected time. It may still be running.`,
+            { variant: "warning" },
+          );
         }
       } finally {
         setActiveRunCount((count) => Math.max(0, count - 1));
       }
     },
-    [runAnalysisForSeries, updateBulkProgress, waitForSeriesCompletion],
+    [
+      enqueueSnackbar,
+      runAnalysisForSeries,
+      updateBulkProgress,
+      waitForSeriesCompletion,
+    ],
   );
 
   const handleRecoverDicom = useCallback(
     async (row) => {
       if (!selectedModality) {
-        setError("Select a server to use for DICOM recovery.");
+        enqueueSnackbar("Select a server to use for DICOM recovery.", {
+          variant: "warning",
+        });
         return;
       }
       if (!row.seriesInstanceUid) {
-        setError("Series Instance UID is not available for this entry.");
+        enqueueSnackbar(
+          "Series Instance UID is required to recover DICOM for this entry.",
+          { variant: "error" },
+        );
         return;
       }
 
@@ -532,7 +550,12 @@ const BulkTestsPage = () => {
         setRecoveringMap((prev) => ({ ...prev, [row.id]: false }));
       }
     },
-    [selectedModality, updateBulkProgress, loadAvailableSeries],
+    [
+      selectedModality,
+      enqueueSnackbar,
+      updateBulkProgress,
+      loadAvailableSeries,
+    ],
   );
 
   const columns = useMemo(() => {
@@ -646,6 +669,18 @@ const BulkTestsPage = () => {
         },
       },
       {
+        field: "scannerModel",
+        headerName: "Scanner Model",
+        minWidth: 190,
+        flex: 0.8,
+      },
+      {
+        field: "stationName",
+        headerName: "Station Name",
+        minWidth: 190,
+        flex: 0.8,
+      },
+      {
         field: "latestAnalysis",
         headerName: "Last Analysis",
         minWidth: 190,
@@ -682,7 +717,7 @@ const BulkTestsPage = () => {
       {
         field: "actions",
         headerName: "Actions",
-        width: 200,
+        width: 140,
         sortable: false,
         filterable: false,
         renderCell: (params) => {
@@ -760,10 +795,11 @@ const BulkTestsPage = () => {
     calculationStates,
     bulkProgress,
     recoveringMap,
-    runningBulk,
     selectedModality,
+    runningBulk,
     handleRecoverDicom,
     handleRunSingle,
+    navigate,
   ]);
 
   const paginationModel = useMemo(
@@ -805,186 +841,62 @@ const BulkTestsPage = () => {
 
   return (
     <Stack spacing={3}>
-      <Stack direction='row' justifyContent='space-between' alignItems='center'>
-        <Typography variant='h4'>Bulk Test Runner</Typography>
-        <Stack direction='row' spacing={1}>
-          <Button
-            variant='outlined'
-            startIcon={<RefreshRoundedIcon />}
-            onClick={() => {
-              loadResults();
-              loadAvailableSeries();
-            }}
-            disabled={loading}>
-            Refresh
-          </Button>
-        </Stack>
-      </Stack>
-
       <FiltersPanel
-        actionItems={[
-          "advancedFilters",
-          "clearFilters",
-          "refresh",
-          <FormControl size='small' sx={{ minWidth: 200 }}>
-            <InputLabel id='modality-label'>
-              Preferred Server{loadingModalities ? " (loading…)" : ""}
-            </InputLabel>
-            <Select
-              labelId='modality-label'
-              label='Preferred Modality'
-              value={selectedModality}
-              onChange={(event) => setSelectedModality(event.target.value)}
-              disabled={loadingModalities || modalities.length === 0}>
-              {modalities.map((item) => (
-                <MenuItem key={item.id} value={item.id}>
-                  {item.title ?? item.id} ({item.aet ?? "AET"})
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>,
-          "exportCsv",
-          <Tooltip
-            title={
-              numSelected
-                ? `Run ${numSelected} selected tests`
-                : "Select rows to start bulk testing"
-            }>
-            <span>
-              <Button
-                variant='contained'
-                sx={{ whiteSpace: "nowrap" }}
-                startIcon={
-                  runningBulk ? (
-                    <CircularProgress size={18} />
-                  ) : (
-                    <PlayArrowRoundedIcon />
-                  )
-                }
-                disabled={runningBulk || numSelected === 0}
-                onClick={handleRunBulk}>
-                {runningBulk ? "Starting..." : `Run ${numSelected || ""} Tests`}
-              </Button>
-            </span>
-          </Tooltip>,
-        ]}
+        filters={filters}
+        onChange={updateFilter}
+        onQuery={handleQuery}
+        onReset={resetFilters}
       />
-      {error && (
-        <Alert severity='error' onClose={() => setError(null)}>
-          {error}
-        </Alert>
-      )}
-      {modalitiesError && (
-        <Alert severity='warning' onClose={() => setModalitiesError(null)}>
-          Failed to load modalities: {modalitiesError}
-        </Alert>
-      )}
 
-      <Paper variant='outlined' sx={{ p: 2 }}>
-        <Stack
-          spacing={2}
-          direction={{ xs: "column", md: "row" }}
-          alignItems={{ xs: "stretch", md: "center" }}
-          justifyContent='space-between'
-          sx={{ mb: 2 }}>
-          <Stack
-            direction={{ xs: "column", sm: "row" }}
-            spacing={2}
-            flexWrap='wrap'>
-            <TextField
-              value={filters.patient}
-              onChange={handleFilterChange("patient")}
-              label='Patient'
-              size='small'
-            />
-            <TextField
-              value={filters.protocol}
-              onChange={handleFilterChange("protocol")}
-              label='Protocol'
-              size='small'
-            />
-            {/* CHANGED: Pull Schedule Name filter field */}
-            <TextField
-              value={filters.pullScheduleName}
-              onChange={handleFilterChange("pullScheduleName")}
-              label='Pull Schedule Name'
-              size='small'
-            />
-            <FormControl size='small' sx={{ minWidth: 140 }}>
-              <InputLabel id='status-filter-label'>Status</InputLabel>
-              <Select
-                labelId='status-filter-label'
-                label='Status'
-                value={filters.status}
-                onChange={handleFilterChange("status")}>
-                <MenuItem value='all'>All</MenuItem>
-                {statusOptions.map((status) => (
-                  <MenuItem key={status} value={status}>
-                    {statusLabelMap[status] ?? status}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-            <FormControl size='small' sx={{ minWidth: 160 }}>
-              <InputLabel id='dicom-filter-label'>DICOM</InputLabel>
-              <Select
-                labelId='dicom-filter-label'
-                label='DICOM'
-                value={filters.dicom}
-                onChange={handleFilterChange("dicom")}>
-                <MenuItem value='all'>Show All</MenuItem>
-                <MenuItem value='available'>Only Available</MenuItem>
-                <MenuItem value='missing'>Only Missing</MenuItem>
-              </Select>
-            </FormControl>
-          </Stack>
-          <Button variant='text' onClick={handleResetFilters}>
-            Reset filters
-          </Button>
-        </Stack>
-
-        <Box sx={{ width: "100%" }}>
-          {console.log("Filtered Rows:", filteredRows)}
-          <DataGrid
-            rows={loading ? [] : (filteredRows ?? [])}
-            columns={columns}
-            getRowId={getRowId}
-            rowCount={pagination.total ?? filteredRows?.length ?? 0}
-            paginationMode='server'
-            paginationModel={paginationModel}
-            onPaginationModelChange={handlePaginationModelChange}
-            checkboxSelection
-            disableRowSelectionOnClick
-            loading={loading}
-            pageSizeOptions={[25, 50, 100]}
-            initialState={{
-              pagination: { paginationModel: paginationModel },
-              sorting: {
-                sortModel: [{ field: "latestAnalysis", sort: "desc" }],
-              },
-            }}
-            onRowSelectionModelChange={(model) => setSelectionModel(model)}
-            rowSelectionModel={selectionModel}
-            slotProps={{
-              toolbar: {
-                showQuickFilter: true,
-                quickFilterProps: { debounceMs: 500 },
-              },
-            }}
-            getRowClassName={(params) =>
-              params.row.hasDicom ? "" : "missing-dicom"
-            }
-            sx={{
-              "& .missing-dicom": {
-                bgcolor: (theme) =>
-                  theme.palette.mode === "light"
-                    ? "rgba(255, 214, 0, 0.08)"
-                    : "rgba(255, 214, 0, 0.16)",
-              },
-            }}
-          />
-        </Box>
-      </Paper>
+      <DataGrid
+        rows={loading ? [] : (normalizedResults ?? [])}
+        columns={columns}
+        getRowId={getRowId}
+        rowCount={pagination.total ?? normalizedResults?.length ?? 0}
+        paginationMode='server'
+        filterMode='client'
+        filterModel={filterModel}
+        onFilterModelChange={setFilterModel}
+        paginationModel={paginationModel}
+        onPaginationModelChange={handlePaginationModelChange}
+        checkboxSelection
+        disableRowSelectionOnClick
+        loading={loading}
+        pageSizeOptions={[25, 50, 100]}
+        slots={{ toolbar: GridToolbar }}
+        showToolbar
+        initialState={{
+          pagination: { paginationModel: paginationModel },
+          sorting: {
+            sortModel: [{ field: "patientName", sort: "asc" }],
+          },
+          columns: {
+            columnVisibilityModel: {
+              latestAnalysis: false,
+            },
+          },
+        }}
+        onRowSelectionModelChange={(model) => setSelectionModel(model)}
+        rowSelectionModel={selectionModel}
+        slotProps={{
+          toolbar: {
+            showQuickFilter: true,
+            quickFilterProps: { debounceMs: 500 },
+          },
+        }}
+        getRowClassName={(params) =>
+          params.row.hasDicom ? "" : "missing-dicom"
+        }
+        sx={{
+          "& .missing-dicom": {
+            bgcolor: (theme) =>
+              theme.palette.mode === "light"
+                ? "rgba(255, 214, 0, 0.08)"
+                : "rgba(255, 214, 0, 0.16)",
+          },
+        }}
+      />
+      {/* </Paper> */}
     </Stack>
   );
 };

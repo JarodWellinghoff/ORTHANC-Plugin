@@ -1,470 +1,581 @@
-import * as React from "react";
-import Box from "@mui/material/Box";
+import { useState } from "react";
 import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
-import Collapse from "@mui/material/Collapse";
-import Grid from "@mui/material/Grid";
-import InputAdornment from "@mui/material/InputAdornment";
 import Paper from "@mui/material/Paper";
+import Autocomplete from "@mui/material/Autocomplete";
+import Slider from "@mui/material/Slider";
+import SvgIcon from "@mui/material/SvgIcon";
+import PersonIcon from "@mui/icons-material/Person";
+import LocationCityIcon from "@mui/icons-material/LocationCity";
 import Stack from "@mui/material/Stack";
+import InputAdornment from "@mui/material/InputAdornment";
 import TextField from "@mui/material/TextField";
-import Typography from "@mui/material/Typography";
-import FilterAltIcon from "@mui/icons-material/FilterAlt";
-import FilterAltOffIcon from "@mui/icons-material/FilterAltOff";
+import Grid from "@mui/material/Grid";
 import SearchIcon from "@mui/icons-material/Search";
-import ExpandLessIcon from "@mui/icons-material/ExpandLess";
-import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
-import DownloadIcon from "@mui/icons-material/Download";
-import RefreshIcon from "@mui/icons-material/Refresh";
-import Select from "@mui/material/Select";
-import InputLabel from "@mui/material/InputLabel";
-import MenuItem from "@mui/material/MenuItem";
-import FormControl from "@mui/material/FormControl";
-import dayjs from "dayjs";
-import { AdapterDayjs } from "@mui/x-date-pickers/AdapterDayjs";
-import { LocalizationProvider } from "@mui/x-date-pickers/LocalizationProvider";
-import { DatePicker } from "@mui/x-date-pickers/DatePicker";
-
+import LabelIcon from "@mui/icons-material/Label";
+import PermIdentityIcon from "@mui/icons-material/PermIdentity";
 import { useDashboard } from "../context/DashboardContext";
+import { LocalizationProvider } from "@mui/x-date-pickers/LocalizationProvider";
+import { AdapterDayjs } from "@mui/x-date-pickers/AdapterDayjs";
+import { DatePicker } from "@mui/x-date-pickers/DatePicker";
+import dayjs from "dayjs";
+import ProtocolNameIcon from "../../assets/protocol_name.svg?react";
+import ScannerModelIcon from "../../assets/scanner_model.svg?react";
+import ScannerStationIcon from "../../assets/scanner_station.svg?react";
+import ClearIcon from "@mui/icons-material/Clear";
 
-const filterLabels = {
-  patientSearch: "Patient",
-  institute: "Institute",
-  scannerStation: "Station",
-  protocolName: "Protocol",
-  scannerModel: "Scanner",
-  examDateFrom: "Exam From",
-  examDateTo: "Exam To",
-  ageMin: "Age Min",
-  ageMax: "Age Max",
-};
+const MIN_AGE = 0;
+const MAX_AGE = 200;
+const ITEM_GRID_SIZE = { xs: 12, md: 6, lg: 3 };
 
-const defaultActionItems = [
-  "advancedFilters",
-  "clearFilters",
-  "refresh",
-  "exportCsv",
-];
-
-const FiltersPanel = ({ actionItems }) => {
-  const { filters, filterOptions, advancedFiltersOpen, actions } =
-    useDashboard();
-  const {
-    resetFilters,
-    toggleAdvancedFilters,
-    refresh,
-    exportAllResults,
-    clearFilterValue,
-    updateFilter,
-  } = actions;
-
-  const activeFilters = React.useMemo(() => {
-    return Object.entries(filters)
-      .filter(
-        ([, value]) => value !== undefined && value !== null && value !== "",
-      )
-      .map(([key, value]) => ({
-        key,
-        label: `${filterLabels[key] ?? key}: ${value}`,
-      }));
-  }, [filters]);
-
-  const handleChange = (event) => {
-    console.debug(event);
-    const { name, value } = event.target;
-    updateFilter(name, value);
-  };
-
-  const { date_range: dateRange, age_range: ageRange } = filterOptions;
-
-  const examDateFromValue = React.useMemo(() => {
-    if (!filters.examDateFrom) {
-      return null;
-    }
-    const parsed = dayjs(filters.examDateFrom);
-    return parsed.isValid() ? parsed : null;
-  }, [filters.examDateFrom]);
-
-  const examDateToValue = React.useMemo(() => {
-    if (!filters.examDateTo) {
-      return null;
-    }
-    const parsed = dayjs(filters.examDateTo);
-    return parsed.isValid() ? parsed : null;
-  }, [filters.examDateTo]);
-
-  const minExamDate = React.useMemo(() => {
-    if (!dateRange?.min) {
-      return undefined;
-    }
-    const parsed = dayjs(dateRange.min);
-    return parsed.isValid() ? parsed : undefined;
-  }, [dateRange]);
-
-  const maxExamDate = React.useMemo(() => {
-    if (!dateRange?.max) {
-      return undefined;
-    }
-    const parsed = dayjs(dateRange.max);
-    return parsed.isValid() ? parsed : undefined;
-  }, [dateRange]);
-
-  const handleDateChange = React.useCallback(
-    (name) => (newValue) => {
-      if (!newValue || !newValue.isValid()) {
-        updateFilter(name, "");
-        return;
-      }
-      updateFilter(name, newValue.format("YYYY-MM-DD"));
-    },
-    [updateFilter],
-  );
-
-  const resolvedActionItems = React.useMemo(() => {
-    const items =
-      Array.isArray(actionItems) && actionItems.length > 0
-        ? actionItems
-        : defaultActionItems;
-
-    const normalizeKey = (value) => {
-      if (!value) {
-        return null;
-      }
-      if (typeof value === "string" && defaultActionItems.includes(value)) {
-        return value;
-      }
-      const normalized = String(value).trim().toLowerCase();
-      switch (normalized) {
-        case "advanced":
-        case "advancedfilters":
-        case "advanced_filters":
-          return "advancedFilters";
-        case "clear":
-        case "clearfilters":
-        case "clear_filters":
-          return "clearFilters";
-        case "refresh":
-          return "refresh";
-        case "export":
-        case "exportcsv":
-        case "export_csv":
-          return "exportCsv";
-        default:
-          return null;
-      }
-    };
-
-    const actionContext = {
-      filters,
-      advancedFiltersOpen,
-      resetFilters,
-      toggleAdvancedFilters,
-      refresh,
-      exportAllResults,
-    };
-
-    return items
-      .map((item, index) => {
-        if (!item) {
-          return null;
-        }
-        if (React.isValidElement(item)) {
-          return React.cloneElement(item, {
-            key: item.key ?? `filters-panel-custom-${index}`,
-          });
-        }
-        if (typeof item === "function") {
-          const result = item(actionContext);
-          if (!React.isValidElement(result)) {
-            return null;
-          }
-          return React.cloneElement(result, {
-            key: result.key ?? `filters-panel-fn-${index}`,
-          });
-        }
-        const key = normalizeKey(item);
-        const elementKey = `filters-panel-action-${key ?? "custom"}-${index}`;
-        if (!key) {
-          return null;
-        }
-        switch (key) {
-          case "advancedFilters":
-            return (
-              <Button
-                key={elementKey}
-                variant={advancedFiltersOpen ? "contained" : "outlined"}
-                startIcon={<FilterAltIcon />}
-                endIcon={
-                  advancedFiltersOpen ? (
-                    <ExpandLessIcon fontSize='small' />
-                  ) : (
-                    <ExpandMoreIcon fontSize='small' />
-                  )
-                }
-                sx={{ whiteSpace: "nowrap" }}
-                onClick={toggleAdvancedFilters}>
-                Advanced Filters
-              </Button>
-            );
-          case "clearFilters":
-            return (
-              <Button
-                key={elementKey}
-                variant='outlined'
-                startIcon={<FilterAltOffIcon />}
-                sx={{ whiteSpace: "nowrap" }}
-                onClick={resetFilters}>
-                Clear Filters
-              </Button>
-            );
-          case "refresh":
-            return (
-              <Button
-                key={elementKey}
-                variant='outlined'
-                startIcon={<RefreshIcon />}
-                sx={{ whiteSpace: "nowrap" }}
-                onClick={refresh}>
-                Refresh
-              </Button>
-            );
-          case "exportCsv":
-            return (
-              <Button
-                key={elementKey}
-                variant='contained'
-                sx={{ whiteSpace: "nowrap" }}
-                startIcon={<DownloadIcon />}
-                onClick={exportAllResults}>
-                Export CSV
-              </Button>
-            );
-          default:
-            return null;
-        }
-      })
-      .filter(Boolean);
-  }, [
-    actionItems,
-    filters,
-    advancedFiltersOpen,
-    resetFilters,
-    toggleAdvancedFilters,
-    refresh,
-    exportAllResults,
-  ]);
+const FiltersPanel = ({ filters, onChange, onQuery, onReset }) => {
+  const { filterOptions } = useDashboard();
 
   return (
     <Paper variant='outlined' sx={{ p: 3 }}>
-      <Stack spacing={3}>
-        <Stack
-          direction={{ xs: "column", md: "row" }}
-          spacing={2}
-          alignItems={{ xs: "stretch", md: "center" }}>
-          <TextField
-            name='patientSearch'
-            value={filters.patientSearch}
-            onChange={handleChange}
-            placeholder='Search by patient name or ID'
-            // sx={{
-            //   width: "50%",
-            // }}
+      <Grid container spacing={3}>
+        <Grid item size={ITEM_GRID_SIZE}>
+          <Autocomplete
+            multiple
             fullWidth
-            slotProps={{
-              input: {
-                startAdornment: (
-                  <InputAdornment position='start'>
-                    <SearchIcon fontSize='small' />
-                  </InputAdornment>
-                ),
+            limitTags={1}
+            options={[]}
+            freeSolo
+            sx={{
+              ".MuiOutlinedInput-root": {
+                paddingY: 0,
+                height: "auto",
+                alignItems: "center",
+              },
+              ".MuiInputAdornment-root": {
+                alignSelf: "center",
               },
             }}
+            value={filters.patientIdSearch}
+            onChange={(_, newValue) => onChange("patientIdSearch", newValue)}
+            renderValue={(value, getItemProps) =>
+              value.map((option, index) => {
+                const { key, ...itemProps } = getItemProps({ index });
+                return (
+                  <Chip
+                    variant='outlined'
+                    label={option}
+                    key={key}
+                    {...itemProps}
+                  />
+                );
+              })
+            }
+            renderInput={(params) => (
+              <TextField
+                {...params}
+                name='patientIdSearch'
+                placeholder='Patient IDs'
+                slotProps={{
+                  input: {
+                    ...params.InputProps,
+                    startAdornment:
+                      filters.patientIdSearch.length === 0 ? (
+                        <InputAdornment position='start'>
+                          <PermIdentityIcon />
+                        </InputAdornment>
+                      ) : (
+                        params.InputProps.startAdornment
+                      ),
+                  },
+                }}
+              />
+            )}
           />
-          <Stack direction='row' spacing={1} justifyContent='flex-end'>
-            {resolvedActionItems}
-          </Stack>
-        </Stack>
-
-        <Collapse in={advancedFiltersOpen} unmountOnExit>
-          <Box
+        </Grid>
+        <Grid item size={ITEM_GRID_SIZE}>
+          <Autocomplete
+            multiple
+            fullWidth
+            limitTags={1}
+            options={[]}
+            freeSolo
             sx={{
-              borderRadius: 2,
-              border: "1px solid",
-              borderColor: "divider",
-              p: 2,
-              mt: 1,
-            }}>
-            <Grid container spacing={2}>
-              <FormControl sx={{ m: 1, width: 300 }}>
-                <InputLabel id='institute-label'>Institute</InputLabel>
-                <Select
-                  labelId='institute-label'
-                  name='institute'
-                  value={filters.institute}
-                  onChange={handleChange}
-                  fullWidth>
-                  {filterOptions.institutes?.map((option) => (
-                    <MenuItem key={option} value={option}>
-                      {option}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-              <FormControl sx={{ m: 1, width: 300 }}>
-                <InputLabel id='scannerStation-label'>Scanner Name</InputLabel>
-                <Select
-                  labelId='scannerStation-label'
-                  name='scannerStation'
-                  value={filters.scannerStation}
-                  onChange={handleChange}
-                  fullWidth>
-                  {filterOptions.scanner_stations?.map((option) => (
-                    <MenuItem key={option} value={option}>
-                      {option}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-              <FormControl sx={{ m: 1, width: 300 }}>
-                <InputLabel id='protocolName-label'>Protocol Name</InputLabel>
-                <Select
-                  labelId='protocolName-label'
-                  name='protocolName'
-                  value={filters.protocolName}
-                  onChange={handleChange}
-                  fullWidth>
-                  {filterOptions.protocol_names?.map((option) => (
-                    <MenuItem key={option} value={option}>
-                      {option}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-              <FormControl sx={{ m: 1, width: 300 }}>
-                <InputLabel id='scannerModel-label'>Scanner Model</InputLabel>
-                <Select
-                  labelId='scannerModel-label'
-                  name='scannerModel'
-                  value={filters.scannerModel}
-                  onChange={handleChange}
-                  fullWidth>
-                  {filterOptions.scanner_models?.map((option) => (
-                    <MenuItem key={option} value={option}>
-                      {option}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-              <LocalizationProvider dateAdapter={AdapterDayjs}>
-                <Stack
-                  direction={{ xs: "column", sm: "row" }}
-                  spacing={2}
-                  sx={{ width: "100%" }}>
-                  <DatePicker
-                    label='Exam Date From'
-                    name='examDateFrom'
-                    value={examDateFromValue}
-                    onChange={handleDateChange("examDateFrom")}
-                    format='YYYY-MM-DD'
-                    slotProps={{
-                      field: {
-                        clearable: true,
-                      },
-                    }}
-                    minDate={minExamDate}
-                    maxDate={maxExamDate}
-                    sx={{ m: 1, width: 300 }}
+              ".MuiOutlinedInput-root": {
+                paddingY: 0,
+                height: "auto",
+                alignItems: "center",
+              },
+              ".MuiInputAdornment-root": {
+                alignSelf: "center",
+              },
+            }}
+            value={filters.patientNameSearch}
+            onChange={(_, newValue) => onChange("patientNameSearch", newValue)}
+            renderValue={(value, getItemProps) =>
+              value.map((option, index) => {
+                const { key, ...itemProps } = getItemProps({ index });
+                return (
+                  <Chip
+                    variant='outlined'
+                    label={option}
+                    key={key}
+                    {...itemProps}
                   />
-                  <DatePicker
-                    label='Exam Date To'
-                    name='examDateTo'
-                    value={examDateToValue}
-                    onChange={handleDateChange("examDateTo")}
-                    format='YYYY-MM-DD'
-                    slotProps={{
-                      field: {
-                        clearable: true,
-                      },
-                    }}
-                    minDate={examDateFromValue ?? minExamDate}
-                    maxDate={maxExamDate}
-                    sx={{ m: 1, width: 300 }}
+                );
+              })
+            }
+            renderInput={(params) => (
+              <TextField
+                {...params}
+                name='patientNameSearch'
+                placeholder='Patient Names'
+                slotProps={{
+                  input: {
+                    ...params.InputProps,
+                    startAdornment:
+                      filters.patientNameSearch.length === 0 ? (
+                        <InputAdornment position='start'>
+                          <PersonIcon />
+                        </InputAdornment>
+                      ) : (
+                        params.InputProps.startAdornment
+                      ),
+                  },
+                }}
+              />
+            )}
+          />
+        </Grid>
+        <Grid item size={ITEM_GRID_SIZE}>
+          <Autocomplete
+            multiple
+            fullWidth
+            limitTags={1}
+            id='institutions'
+            options={filterOptions.institutes}
+            freeSolo
+            sx={{
+              ".MuiOutlinedInput-root": {
+                paddingY: 0,
+                height: "auto",
+                alignItems: "center",
+              },
+              ".MuiInputAdornment-root": {
+                alignSelf: "center",
+              },
+            }}
+            value={filters.instituteSearch}
+            onChange={(_, newValue) => onChange("instituteSearch", newValue)}
+            renderValue={(value, getItemProps) =>
+              value.map((option, index) => {
+                const { key, ...itemProps } = getItemProps({ index });
+                return (
+                  <Chip
+                    variant='outlined'
+                    label={option}
+                    key={key}
+                    {...itemProps}
                   />
-                </Stack>
-              </LocalizationProvider>
-              <Grid item size={{ xs: 12, md: 6 }}>
-                <Stack
-                  direction={{ xs: "column", sm: "row" }}
-                  spacing={2}
-                  sx={{ width: "100%" }}>
-                  <FormControl sx={{ m: 1, width: 300 }}>
-                    <InputLabel id='ageMin-label'>Age Min</InputLabel>
-                    <TextField
-                      labelId='ageMin-label'
-                      name='ageMin'
-                      type='number'
-                      value={filters.ageMin}
-                      onChange={handleChange}
-                      slotProps={{
-                        input: {
-                          min: ageRange?.min ?? 0,
-                          max: ageRange?.max ?? 150,
-                          endAdornment: (
-                            <InputAdornment position='end'>
-                              years
-                            </InputAdornment>
-                          ),
+                );
+              })
+            }
+            renderInput={(params) => (
+              <TextField
+                {...params}
+                name='institutesSearch'
+                placeholder='Institutes'
+                slotProps={{
+                  input: {
+                    ...params.InputProps,
+                    startAdornment:
+                      filters.instituteSearch.length === 0 ? (
+                        <InputAdornment position='start'>
+                          <LocationCityIcon />
+                        </InputAdornment>
+                      ) : (
+                        params.InputProps.startAdornment
+                      ),
+                  },
+                }}
+              />
+            )}
+          />
+        </Grid>
+        <Grid item size={ITEM_GRID_SIZE}>
+          <Autocomplete
+            multiple
+            fullWidth
+            limitTags={1}
+            id='protocol-names'
+            options={filterOptions.protocol_names ?? []}
+            freeSolo
+            sx={{
+              ".MuiOutlinedInput-root": {
+                paddingY: 0,
+                height: "auto",
+                alignItems: "center",
+              },
+              ".MuiInputAdornment-root": {
+                alignSelf: "center",
+              },
+            }}
+            value={filters.protocolNameSearch}
+            onChange={(_, newValue) => onChange("protocolNameSearch", newValue)}
+            renderValue={(value, getItemProps) =>
+              value.map((option, index) => {
+                const { key, ...itemProps } = getItemProps({ index });
+                return (
+                  <Chip
+                    variant='outlined'
+                    label={option}
+                    key={key}
+                    {...itemProps}
+                  />
+                );
+              })
+            }
+            renderInput={(params) => (
+              <TextField
+                {...params}
+                name='protocolNameSearch'
+                placeholder='Protocol Name'
+                slotProps={{
+                  input: {
+                    ...params.InputProps,
+                    startAdornment:
+                      filters.protocolNameSearch.length === 0 ? (
+                        <InputAdornment position='start'>
+                          <SvgIcon
+                            component={ProtocolNameIcon}
+                            inheritViewBox
+                          />
+                        </InputAdornment>
+                      ) : (
+                        params.InputProps.startAdornment
+                      ),
+                  },
+                }}
+              />
+            )}
+          />
+        </Grid>
+        <Grid item size={ITEM_GRID_SIZE}>
+          <Autocomplete
+            multiple
+            fullWidth
+            limitTags={1}
+            id='scanner-models'
+            options={filterOptions.scanner_models ?? []}
+            freeSolo
+            sx={{
+              ".MuiOutlinedInput-root": {
+                paddingY: 0,
+                height: "auto",
+                alignItems: "center",
+              },
+              ".MuiInputAdornment-root": {
+                alignSelf: "center",
+              },
+            }}
+            value={filters.scannerModelSearch}
+            onChange={(_, newValue) => onChange("scannerModelSearch", newValue)}
+            renderValue={(value, getItemProps) =>
+              value.map((option, index) => {
+                const { key, ...itemProps } = getItemProps({ index });
+                return (
+                  <Chip
+                    variant='outlined'
+                    label={option}
+                    key={key}
+                    {...itemProps}
+                  />
+                );
+              })
+            }
+            renderInput={(params) => (
+              <TextField
+                {...params}
+                placeholder='Scanner Models'
+                slotProps={{
+                  input: {
+                    ...params.InputProps,
+                    startAdornment:
+                      filters.scannerModelSearch.length === 0 ? (
+                        <InputAdornment position='start'>
+                          <SvgIcon
+                            component={ScannerModelIcon}
+                            inheritViewBox
+                          />
+                        </InputAdornment>
+                      ) : (
+                        params.InputProps.startAdornment
+                      ),
+                  },
+                }}
+              />
+            )}
+          />
+        </Grid>
+        <Grid item size={ITEM_GRID_SIZE}>
+          <Autocomplete
+            multiple
+            fullWidth
+            limitTags={1}
+            id='scanner-stations'
+            options={filterOptions.scanner_stations ?? []}
+            freeSolo
+            sx={{
+              ".MuiOutlinedInput-root": {
+                paddingY: 0,
+                height: "auto",
+                alignItems: "center",
+              },
+              ".MuiInputAdornment-root": {
+                alignSelf: "center",
+              },
+            }}
+            value={filters.scannerStationSearch}
+            onChange={(_, newValue) =>
+              onChange("scannerStationSearch", newValue)
+            }
+            renderValue={(value, getItemProps) =>
+              value.map((option, index) => {
+                const { key, ...itemProps } = getItemProps({ index });
+                return (
+                  <Chip
+                    variant='outlined'
+                    label={option}
+                    key={key}
+                    {...itemProps}
+                  />
+                );
+              })
+            }
+            renderInput={(params) => (
+              <TextField
+                {...params}
+                placeholder='Scanner Stations'
+                slotProps={{
+                  input: {
+                    ...params.InputProps,
+                    startAdornment:
+                      filters.scannerStationSearch.length === 0 ? (
+                        <InputAdornment position='start'>
+                          <SvgIcon
+                            component={ScannerStationIcon}
+                            inheritViewBox
+                          />
+                        </InputAdornment>
+                      ) : (
+                        params.InputProps.startAdornment
+                      ),
+                  },
+                }}
+              />
+            )}
+          />
+        </Grid>
+        <Grid item size={ITEM_GRID_SIZE}>
+          <LocalizationProvider dateAdapter={AdapterDayjs}>
+            <Stack direction='row' spacing={2} alignItems='center'>
+              <DatePicker
+                enableAccessibleFieldDOMStructure={false}
+                slots={{ textField: TextField }}
+                slotProps={{
+                  actionBar: { actions: ["clear", "today", "accept"] },
+                  openPickerButton: {
+                    sx: {
+                      "&&": {
+                        border: "none",
+                        boxShadow: "none",
+                        bgcolor: "transparent",
+                        width: 36,
+                        height: 36,
+                        p: 0.5,
+                        "&:hover": {
+                          bgcolor: "transparent",
+                          borderColor: "transparent",
                         },
-                      }}
-                    />
-                  </FormControl>
-                  <FormControl sx={{ m: 1, width: 300 }}>
-                    <InputLabel id='ageMax-label'>Age Max</InputLabel>
-                    <TextField
-                      labelId='ageMax-label'
-                      name='ageMax'
-                      type='number'
-                      value={filters.ageMax}
-                      onChange={handleChange}
-                      slotProps={{
-                        input: {
-                          min: ageRange?.min ?? 0,
-                          max: ageRange?.max ?? 150,
-                          endAdornment: (
-                            <InputAdornment position='end'>
-                              years
-                            </InputAdornment>
-                          ),
+                        "&:active": { bgcolor: "transparent" },
+                        "& .MuiSvgIcon-root": { fontSize: 18 },
+                      },
+                    },
+                  },
+                  textField: {
+                    placeholder: "",
+                    InputLabelProps: { shrink: true },
+                  },
+                }}
+                label='Study Date Start'
+                name='studyDateStart'
+                value={
+                  filters.studyDateStartSearch
+                    ? dayjs(filters.studyDateStartSearch)
+                    : null
+                }
+                onChange={(newValue) =>
+                  onChange("studyDateStartSearch", newValue)
+                }
+                sx={{ width: "100%" }}
+              />
+              <DatePicker
+                enableAccessibleFieldDOMStructure={false}
+                slots={{ textField: TextField }}
+                slotProps={{
+                  actionBar: { actions: ["clear", "today", "accept"] },
+                  openPickerButton: {
+                    sx: {
+                      "&&": {
+                        border: "none",
+                        boxShadow: "none",
+                        bgcolor: "transparent",
+                        width: 36,
+                        height: 36,
+                        p: 0.5,
+                        "&:hover": {
+                          bgcolor: "transparent",
+                          borderColor: "transparent",
                         },
-                      }}
-                    />
-                  </FormControl>
-                </Stack>
-              </Grid>
-            </Grid>
-          </Box>
-        </Collapse>
-
-        {activeFilters.length > 0 && (
+                        "&:active": { bgcolor: "transparent" },
+                        "& .MuiSvgIcon-root": { fontSize: 18 },
+                      },
+                    },
+                  },
+                  textField: {
+                    placeholder: "",
+                    InputLabelProps: { shrink: true },
+                  },
+                }}
+                label='Study Date End'
+                name='studyDateEnd'
+                value={
+                  filters.studyDateEndSearch
+                    ? dayjs(filters.studyDateEndSearch)
+                    : null
+                }
+                onChange={(newValue) =>
+                  onChange("studyDateEndSearch", newValue)
+                }
+                sx={{ width: "100%" }}
+              />
+            </Stack>
+          </LocalizationProvider>
+        </Grid>
+        <Grid item size={ITEM_GRID_SIZE}>
+          <Stack direction='row' spacing={2} alignItems='center'>
+            <TextField
+              value={filters.ageStartSearch}
+              label='Min Age'
+              type='number'
+              onChange={(e) => {
+                const value = Math.min(
+                  Math.max(Number(e.target.value), MIN_AGE),
+                  filters.ageEndSearch,
+                );
+                onChange("ageStartSearch", value);
+              }}
+            />
+            <Slider
+              getAriaLabel={() => "Age range"}
+              value={[filters.ageStartSearch, filters.ageEndSearch]}
+              min={MIN_AGE}
+              max={MAX_AGE}
+              onChange={(event, newValue) => {
+                onChange("ageStartSearch", newValue[0]);
+                onChange("ageEndSearch", newValue[1]);
+              }}
+              valueLabelDisplay='auto'
+              getAriaValueText={(value) => `${value} years`}
+            />
+            <TextField
+              value={filters.ageEndSearch}
+              label='Max Age'
+              type='number'
+              onChange={(e) => {
+                const value = Math.min(
+                  Math.max(Number(e.target.value), filters.ageStartSearch),
+                  MAX_AGE,
+                );
+                onChange("ageEndSearch", value);
+              }}
+            />
+          </Stack>
+        </Grid>
+        <Grid item size={ITEM_GRID_SIZE}>
+          <Autocomplete
+            multiple
+            fullWidth
+            limitTags={1}
+            options={[]}
+            freeSolo
+            sx={{
+              ".MuiOutlinedInput-root": {
+                paddingY: 0,
+                height: "auto",
+                alignItems: "center",
+              },
+              ".MuiInputAdornment-root": {
+                alignSelf: "center",
+              },
+            }}
+            value={filters.pullScheduleSearch}
+            onChange={(event, newValue) =>
+              onChange("pullScheduleSearch", newValue)
+            }
+            renderValue={(value, getItemProps) =>
+              value.map((option, index) => {
+                const { key, ...itemProps } = getItemProps({ index });
+                return (
+                  <Chip
+                    variant='outlined'
+                    label={option}
+                    key={key}
+                    {...itemProps}
+                  />
+                );
+              })
+            }
+            renderInput={(params) => (
+              <TextField
+                {...params}
+                name='pullScheduleSearch'
+                placeholder='Pull Schedules'
+                slotProps={{
+                  input: {
+                    ...params.InputProps,
+                    startAdornment:
+                      filters.pullScheduleSearch.length === 0 ? (
+                        <InputAdornment position='start'>
+                          <LabelIcon />
+                        </InputAdornment>
+                      ) : (
+                        params.InputProps.startAdornment
+                      ),
+                  },
+                }}
+              />
+            )}
+          />
+        </Grid>
+        <Grid item size={12}>
           <Stack
             direction='row'
-            spacing={1}
-            flexWrap='wrap'
-            alignItems='center'>
-            <Typography variant='body2' color='text.secondary'>
-              Active Filters:
-            </Typography>
-            {activeFilters.map((filter) => (
-              <Chip
-                key={filter.key}
-                label={filter.label}
-                onDelete={() => clearFilterValue(filter.key)}
-                size='small'
-              />
-            ))}
+            spacing={3}
+            alignItems='center'
+            justifyContent='flex-end'>
+            <Button
+              startIcon={<SearchIcon />}
+              variant='contained'
+              color='primary'
+              onClick={onQuery}>
+              Query
+            </Button>
+            <Button
+              startIcon={<ClearIcon />}
+              variant='contained'
+              color='secondary'
+              onClick={onReset}>
+              Clear Filters
+            </Button>
           </Stack>
-        )}
-      </Stack>
+        </Grid>
+      </Grid>
     </Paper>
   );
 };

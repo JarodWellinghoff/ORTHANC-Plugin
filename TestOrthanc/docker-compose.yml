@@ -1,6 +1,6 @@
 services:
   test-orthanc:
-    image: jodogne/orthanc:1.12.9
+    image: jodogne/orthanc-python:1.12.9
     container_name: test-orthanc
     volumes:
       - ./orthanc/orthanc.json:/etc/orthanc/orthanc.json

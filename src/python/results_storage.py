@@ -503,11 +503,33 @@ class CHOResultsStorage:
                         average_frequency, average_index_of_detectability,
                         average_noise_level, cho_detectability, location_sparse,
                         noise_level, nps, peak_frequency, percent_10_frequency,
-                        spatial_frequency, spatial_resolution
+                        spatial_frequency, spatial_resolution, ssde_inc
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                     )
+                    ON CONFLICT (series_id_fk) DO UPDATE SET
+                        processing_time = EXCLUDED.processing_time,
+                        ctdivol = EXCLUDED.ctdivol,
+                        ctdivol_avg = EXCLUDED.ctdivol_avg,
+                        dlp = EXCLUDED.dlp,
+                        dlp_ssde = EXCLUDED.dlp_ssde,
+                        dw = EXCLUDED.dw,
+                        dw_avg = EXCLUDED.dw_avg,
+                        location = EXCLUDED.location,
+                        ssde = EXCLUDED.ssde,
+                        average_frequency = EXCLUDED.average_frequency,
+                        average_index_of_detectability = EXCLUDED.average_index_of_detectability,
+                        average_noise_level = EXCLUDED.average_noise_level,
+                        cho_detectability = EXCLUDED.cho_detectability,
+                        location_sparse = EXCLUDED.location_sparse,
+                        noise_level = EXCLUDED.noise_level,
+                        nps = EXCLUDED.nps,
+                        peak_frequency = EXCLUDED.peak_frequency,
+                        percent_10_frequency = EXCLUDED.percent_10_frequency,
+                        spatial_frequency = EXCLUDED.spatial_frequency,
+                        spatial_resolution = EXCLUDED.spatial_resolution,
+                        ssde_inc = EXCLUDED.ssde_inc
                 """,
                     (
                         series_id,
@@ -531,6 +553,7 @@ class CHOResultsStorage:
                         results.get("percent_10_frequency"),
                         results.get("spatial_frequency"),
                         results.get("spatial_resolution"),
+                        results.get("ssde_inc"),
                     ),
                 )
 

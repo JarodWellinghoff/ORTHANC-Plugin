@@ -60,14 +60,12 @@ export default function Dashboard(props) {
               }}>
               {/* <StatusHeader /> */}
               <Container
-                maxWidth='xl'
+                maxWidth='false'
                 sx={{
                   py: 4,
                   width: "100%",
                 }}>
                 <Routes>
-                  {/* <Route path='/' element={<DashboardContent />} /> */}
-                  {/* <Route path='/results' element={<DashboardContent />} /> */}
                   <Route
                     path='/'
                     element={<Navigate to='/main-dashboard' replace />}
