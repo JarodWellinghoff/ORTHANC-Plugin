@@ -238,13 +238,16 @@ export const DashboardProvider = ({ children }) => {
     (overrides = {}) => {
       const p = { ...filters, ...overrides };
       const params = {};
-      if (p.patientIdSearch) params.patient_id = p.patientIdSearch;
-      if (p.patientNameSearch) params.patient_name = p.patientNameSearch;
-      if (p.instituteSearch) params.institute = p.instituteSearch;
+      if (p.patientIdSearch) params.patient_id = p.patientIdSearch.join(",");
+      if (p.patientNameSearch)
+        params.patient_name = p.patientNameSearch.join(",");
+      if (p.instituteSearch) params.institute = p.instituteSearch.join(",");
       if (p.scannerStationSearch)
-        params.scanner_station = p.scannerStationSearch;
-      if (p.protocolNameSearch) params.protocol_name = p.protocolNameSearch;
-      if (p.scannerModelSearch) params.scanner_model = p.scannerModelSearch;
+        params.scanner_station = p.scannerStationSearch.join(",");
+      if (p.protocolNameSearch)
+        params.protocol_name = p.protocolNameSearch.join(",");
+      if (p.scannerModelSearch)
+        params.scanner_model = p.scannerModelSearch.join(",");
       if (p.studyDateStartSearch)
         params.exam_date_from = p.studyDateStartSearch;
       if (p.studyDateEndSearch) params.exam_date_to = p.studyDateEndSearch;

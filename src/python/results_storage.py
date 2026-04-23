@@ -712,149 +712,134 @@ class CHOResultsStorage:
             self.postgres_connection.rollback()
             raise e
 
-    def get_results(self, params):
-        """Retrieve CHO results from the database with optional filtering.
+    def get_results(self, get: dict):
+        """Retrieve CHO results from the database with optional filtering."""
 
-        CHANGED: Now LEFT JOINs workflow.dicom_pull_items and
-        workflow.dicom_pull_batches so each row carries
-        `pull_schedule_name` (the display_name of the batch that
-        originally pulled this series).  A new `pull_schedule_name`
-        query param lets callers filter by that name.
-        """
+        def _parse_list(raw: str) -> list[str]:
+            """Split a comma-joined query param into a stripped, non-empty list."""
+            return [v.strip() for v in raw.split(",") if v.strip()] if raw else []
+
         if not self.connect_postgres() or self.postgres_connection is None:
             return False
 
+        # ── query parameters ──────────────────────────────────────
+        conditions = []
+        params = []
+
+        study_ids = _parse_list(get.get("study_id", ""))
+        pull_schedule_names = _parse_list(get.get("pull_schedule_name", ""))
+        patient_ids = _parse_list(get.get("patient_id", ""))
+        patient_names = _parse_list(get.get("patient_name", ""))
+        institutes = _parse_list(get.get("institute", ""))
+        protocol_names = _parse_list(get.get("protocol_name", ""))
+        scanner_stations = _parse_list(get.get("scanner_station", ""))
+        scanner_models = _parse_list(get.get("scanner_model", ""))
+        exam_date_from = get.get("exam_date_from")
+        exam_date_to = get.get("exam_date_to")
+        patient_age_min = get.get("patient_age_min")
+        patient_age_max = get.get("patient_age_max")
+
+        if study_ids:
+            conditions.append("st.study_instance_uid ILIKE ANY(%s)")
+            params.append([f"%{v}%" for v in study_ids])
+
+        if pull_schedule_names:
+            conditions.append("pull_info.display_name ILIKE ANY(%s)")
+            params.append([f"%{v}%" for v in pull_schedule_names])
+
+        if patient_ids:
+            conditions.append("p.patient_id ILIKE ANY(%s)")
+            params.append([f"%{v}%" for v in patient_ids])
+
+        if patient_names:
+            conditions.append("p.name ILIKE ANY(%s)")
+            params.append([f"%{v}%" for v in patient_names])
+
+        if institutes:
+            conditions.append("st.institution_name ILIKE ANY(%s)")
+            params.append([f"%{v}%" for v in institutes])
+
+        if protocol_names:
+            conditions.append("s.protocol_name ILIKE ANY(%s)")
+            params.append([f"%{v}%" for v in protocol_names])
+
+        if scanner_stations:
+            conditions.append("sc.station_name ILIKE ANY(%s)")
+            params.append([f"%{v}%" for v in scanner_stations])
+
+        if scanner_models:
+            conditions.append("sc.model_name ILIKE ANY(%s)")
+            params.append([f"%{v}%" for v in scanner_models])
+
+        if exam_date_from:
+            conditions.append("st.study_date >= %s")
+            params.append(exam_date_from)
+
+        if exam_date_to:
+            conditions.append("st.study_date <= %s")
+            params.append(exam_date_to)
+
+        if patient_age_min:
+            conditions.append(
+                "EXTRACT(YEAR FROM AGE(st.study_date::date, p.birth_date::date)) >= %s"
+            )
+            params.append(int(patient_age_min))
+
+        if patient_age_max:
+            conditions.append(
+                "EXTRACT(YEAR FROM AGE(st.study_date::date, p.birth_date::date)) <= %s"
+            )
+            params.append(int(patient_age_max))
+        # ─────────────────────────────────────────────────────────
+        # ── pagination ────────────────────────────────────────────
+        page = int(get.get("page", "1"))
+        limit = int(get.get("limit", "25"))
+        page = max(1, page)
+        limit = min(max(1, limit), 1000)
+        offset = (page - 1) * limit
+
+        base_query = """
+            FROM dicom.series s
+            JOIN dicom.study st ON s.study_id_fk = st.id
+            JOIN dicom.patient p ON st.patient_id_fk = p.id
+            JOIN dicom.scanner sc ON s.scanner_id_fk = sc.id
+            LEFT JOIN analysis.results r ON s.id = r.series_id_fk
+            LEFT JOIN LATERAL (
+                SELECT dpb.display_name
+                FROM workflow.dicom_pull_items dpi
+                JOIN workflow.dicom_pull_batches dpb ON dpb.id = dpi.batch_id
+                WHERE dpi.series_instance_uid = s.series_instance_uid
+                ORDER BY dpi.created_at DESC
+                LIMIT 1
+            ) pull_info ON true
+        """
+        # ────────────────────────────────────────────────────────
+
+        where_clause = ""
+        if conditions:
+            where_clause = " WHERE " + " AND ".join(conditions)
+
+        having_clause = " HAVING COUNT(r.id) > 0"
+
+        # Count total results for pagination
+        count_query = f"""
+            SELECT COUNT(DISTINCT s.id)
+            {base_query}
+            {where_clause}
+            GROUP BY s.id
+            {having_clause}
+        """
+        total_query = f"SELECT COUNT(*) FROM ({count_query}) as counted"
+
         try:
             with self.postgres_connection.cursor() as cursor:
-                # ── query parameters ──────────────────────────────────────
-                patient_id = params.get("patient_id")
-                study_id = params.get("study_id")
-                patient_search = params.get("patient_search")
-                institute = params.get("institute")
-                station_name = params.get("scanner_station")
-                protocol_name = params.get("protocol_name")
-                scanner_model = params.get("scanner_model")
-                exam_date_from = params.get("exam_date_from")
-                exam_date_to = params.get("exam_date_to")
-                patient_age_min = params.get("patient_age_min")
-                patient_age_max = params.get("patient_age_max")
-                # ── CHANGED: new filter param ─────────────────────────────
-                pull_schedule_name = params.get("pull_schedule_name")
-                # ─────────────────────────────────────────────────────────
-
-                # ── pagination ────────────────────────────────────────────
-                page = int(params.get("page", "1"))
-                limit = int(params.get("limit", "25"))
-                page = max(1, page)
-                limit = min(max(1, limit), 1000)
-                offset = (page - 1) * limit
-
-                # ── CHANGED: base_query now LEFT JOINs the pull schedule ──
-                #
-                # The join path is:
-                #   dicom.series.series_instance_uid
-                #     → workflow.dicom_pull_items.series_instance_uid  (many rows possible; use the most recent)
-                #     → workflow.dicom_pull_batches.id  (carries display_name)
-                #
-                # We use a LATERAL subquery so we pick only the latest
-                # pull-item for each series, avoiding row duplication.
-                base_query = """
-                    FROM dicom.series s
-                    JOIN dicom.study st ON s.study_id_fk = st.id
-                    JOIN dicom.patient p ON st.patient_id_fk = p.id
-                    JOIN dicom.scanner sc ON s.scanner_id_fk = sc.id
-                    LEFT JOIN analysis.results r ON s.id = r.series_id_fk
-                    LEFT JOIN LATERAL (
-                        SELECT dpb.display_name
-                        FROM workflow.dicom_pull_items dpi
-                        JOIN workflow.dicom_pull_batches dpb ON dpb.id = dpi.batch_id
-                        WHERE dpi.series_instance_uid = s.series_instance_uid
-                        ORDER BY dpi.created_at DESC
-                        LIMIT 1
-                    ) pull_info ON true
-                """
-                # ─────────────────────────────────────────────────────────
-
-                query_params = []
-                conditions = []
-
-                if patient_id:
-                    conditions.append("p.patient_id ILIKE %s")
-                    query_params.append(f"%{patient_id}%")
-
-                if study_id:
-                    conditions.append("st.study_instance_uid = %s")
-                    query_params.append(study_id)
-
-                if patient_search:
-                    conditions.append("(p.name ILIKE %s OR p.patient_id ILIKE %s)")
-                    query_params.extend([f"%{patient_search}%", f"%{patient_search}%"])
-
-                if institute:
-                    conditions.append("st.institution_name ILIKE %s")
-                    query_params.append(f"%{institute}%")
-
-                if station_name:
-                    conditions.append("sc.station_name ILIKE %s")
-                    query_params.append(f"%{station_name}%")
-
-                if protocol_name:
-                    conditions.append("s.protocol_name ILIKE %s")
-                    query_params.append(f"%{protocol_name}%")
-
-                if scanner_model:
-                    conditions.append("sc.model_name ILIKE %s")
-                    query_params.append(f"%{scanner_model}%")
-
-                if exam_date_from:
-                    conditions.append("st.study_date >= %s")
-                    query_params.append(exam_date_from)
-
-                if exam_date_to:
-                    conditions.append("st.study_date <= %s")
-                    query_params.append(exam_date_to)
-
-                if patient_age_min:
-                    conditions.append(
-                        "EXTRACT(YEAR FROM AGE(st.study_date::date, p.birth_date::date)) >= %s"
-                    )
-                    query_params.append(int(patient_age_min))
-
-                if patient_age_max:
-                    conditions.append(
-                        "EXTRACT(YEAR FROM AGE(st.study_date::date, p.birth_date::date)) <= %s"
-                    )
-                    query_params.append(int(patient_age_max))
-
-                # ── CHANGED: pull schedule name filter ────────────────────
-                if pull_schedule_name:
-                    conditions.append("pull_info.display_name ILIKE %s")
-                    query_params.append(f"%{pull_schedule_name}%")
-                # ─────────────────────────────────────────────────────────
-
-                where_clause = ""
-                if conditions:
-                    where_clause = " WHERE " + " AND ".join(conditions)
-
-                having_clause = " HAVING COUNT(r.id) > 0"
-
-                # Count total results for pagination
-                count_query = f"""
-                    SELECT COUNT(DISTINCT s.id)
-                    {base_query}
-                    {where_clause}
-                    GROUP BY s.id
-                    {having_clause}
-                """
-                total_query = f"SELECT COUNT(*) FROM ({count_query}) as counted"
-                cursor.execute(total_query, query_params)
+                cursor.execute(total_query, params)
                 total_results = cursor.fetchone()[0]
 
                 total_pages = (
                     (total_results + limit - 1) // limit if total_results > 0 else 1
                 )
 
-                # ── CHANGED: SELECT now includes pull_schedule_name ───────
                 query = f"""
                     SELECT 
                         s.series_instance_uid AS series_id,
@@ -906,9 +891,9 @@ class CHOResultsStorage:
                     LIMIT %s OFFSET %s
                 """
                 # ─────────────────────────────────────────────────────────
-                query_params.extend([limit, offset])
+                params.extend([limit, offset])
 
-                cursor.execute(query, query_params)
+                cursor.execute(query, params)
                 results = cursor.fetchall()
 
                 result_list = []

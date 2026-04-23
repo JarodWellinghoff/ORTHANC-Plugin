@@ -38,7 +38,6 @@ const FiltersPanel = ({ filters, onChange, onQuery, onReset }) => {
           <Autocomplete
             multiple
             fullWidth
-            limitTags={1}
             options={[]}
             freeSolo
             sx={{
@@ -92,7 +91,6 @@ const FiltersPanel = ({ filters, onChange, onQuery, onReset }) => {
           <Autocomplete
             multiple
             fullWidth
-            limitTags={1}
             options={[]}
             freeSolo
             sx={{
@@ -146,7 +144,6 @@ const FiltersPanel = ({ filters, onChange, onQuery, onReset }) => {
           <Autocomplete
             multiple
             fullWidth
-            limitTags={1}
             id='institutions'
             options={filterOptions.institutes}
             freeSolo
@@ -201,7 +198,6 @@ const FiltersPanel = ({ filters, onChange, onQuery, onReset }) => {
           <Autocomplete
             multiple
             fullWidth
-            limitTags={1}
             id='protocol-names'
             options={filterOptions.protocol_names ?? []}
             freeSolo
@@ -259,7 +255,6 @@ const FiltersPanel = ({ filters, onChange, onQuery, onReset }) => {
           <Autocomplete
             multiple
             fullWidth
-            limitTags={1}
             id='scanner-models'
             options={filterOptions.scanner_models ?? []}
             freeSolo
@@ -316,7 +311,6 @@ const FiltersPanel = ({ filters, onChange, onQuery, onReset }) => {
           <Autocomplete
             multiple
             fullWidth
-            limitTags={1}
             id='scanner-stations'
             options={filterOptions.scanner_stations ?? []}
             freeSolo
@@ -501,7 +495,6 @@ const FiltersPanel = ({ filters, onChange, onQuery, onReset }) => {
           <Autocomplete
             multiple
             fullWidth
-            limitTags={1}
             options={[]}
             freeSolo
             sx={{
