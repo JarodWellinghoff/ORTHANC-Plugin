@@ -30,6 +30,7 @@ const ITEM_GRID_SIZE = { xs: 12, md: 6, lg: 3 };
 
 const FiltersPanel = ({ filters, onChange, onQuery, onReset }) => {
   const { filterOptions } = useDashboard();
+  console.log("filters:", filters);
 
   return (
     <Paper variant='outlined' sx={{ p: 3 }}>
@@ -50,7 +51,7 @@ const FiltersPanel = ({ filters, onChange, onQuery, onReset }) => {
                 alignSelf: "center",
               },
             }}
-            value={filters.patientIdSearch}
+            value={filters?.patientIdSearch}
             onChange={(_, newValue) => onChange("patientIdSearch", newValue)}
             renderValue={(value, getItemProps) =>
               value.map((option, index) => {
@@ -74,7 +75,8 @@ const FiltersPanel = ({ filters, onChange, onQuery, onReset }) => {
                   input: {
                     ...params.InputProps,
                     startAdornment:
-                      filters.patientIdSearch.length === 0 ? (
+                      filters === undefined ||
+                      filters?.patientIdSearch.length === 0 ? (
                         <InputAdornment position='start'>
                           <PermIdentityIcon />
                         </InputAdornment>
@@ -103,7 +105,7 @@ const FiltersPanel = ({ filters, onChange, onQuery, onReset }) => {
                 alignSelf: "center",
               },
             }}
-            value={filters.patientNameSearch}
+            value={filters?.patientNameSearch}
             onChange={(_, newValue) => onChange("patientNameSearch", newValue)}
             renderValue={(value, getItemProps) =>
               value.map((option, index) => {
@@ -127,7 +129,8 @@ const FiltersPanel = ({ filters, onChange, onQuery, onReset }) => {
                   input: {
                     ...params.InputProps,
                     startAdornment:
-                      filters.patientNameSearch.length === 0 ? (
+                      filters === undefined ||
+                      filters?.patientNameSearch.length === 0 ? (
                         <InputAdornment position='start'>
                           <PersonIcon />
                         </InputAdornment>
@@ -157,7 +160,7 @@ const FiltersPanel = ({ filters, onChange, onQuery, onReset }) => {
                 alignSelf: "center",
               },
             }}
-            value={filters.instituteSearch}
+            value={filters?.instituteSearch}
             onChange={(_, newValue) => onChange("instituteSearch", newValue)}
             renderValue={(value, getItemProps) =>
               value.map((option, index) => {
@@ -181,7 +184,8 @@ const FiltersPanel = ({ filters, onChange, onQuery, onReset }) => {
                   input: {
                     ...params.InputProps,
                     startAdornment:
-                      filters.instituteSearch.length === 0 ? (
+                      filters === undefined ||
+                      filters?.instituteSearch.length === 0 ? (
                         <InputAdornment position='start'>
                           <LocationCityIcon />
                         </InputAdornment>
@@ -211,7 +215,7 @@ const FiltersPanel = ({ filters, onChange, onQuery, onReset }) => {
                 alignSelf: "center",
               },
             }}
-            value={filters.protocolNameSearch}
+            value={filters?.protocolNameSearch}
             onChange={(_, newValue) => onChange("protocolNameSearch", newValue)}
             renderValue={(value, getItemProps) =>
               value.map((option, index) => {
@@ -235,7 +239,8 @@ const FiltersPanel = ({ filters, onChange, onQuery, onReset }) => {
                   input: {
                     ...params.InputProps,
                     startAdornment:
-                      filters.protocolNameSearch.length === 0 ? (
+                      filters === undefined ||
+                      filters?.protocolNameSearch.length === 0 ? (
                         <InputAdornment position='start'>
                           <SvgIcon
                             component={ProtocolNameIcon}
@@ -268,7 +273,7 @@ const FiltersPanel = ({ filters, onChange, onQuery, onReset }) => {
                 alignSelf: "center",
               },
             }}
-            value={filters.scannerModelSearch}
+            value={filters?.scannerModelSearch}
             onChange={(_, newValue) => onChange("scannerModelSearch", newValue)}
             renderValue={(value, getItemProps) =>
               value.map((option, index) => {
@@ -291,7 +296,8 @@ const FiltersPanel = ({ filters, onChange, onQuery, onReset }) => {
                   input: {
                     ...params.InputProps,
                     startAdornment:
-                      filters.scannerModelSearch.length === 0 ? (
+                      filters === undefined ||
+                      filters?.scannerModelSearch.length === 0 ? (
                         <InputAdornment position='start'>
                           <SvgIcon
                             component={ScannerModelIcon}
@@ -324,7 +330,7 @@ const FiltersPanel = ({ filters, onChange, onQuery, onReset }) => {
                 alignSelf: "center",
               },
             }}
-            value={filters.scannerStationSearch}
+            value={filters?.scannerStationSearch}
             onChange={(_, newValue) =>
               onChange("scannerStationSearch", newValue)
             }
@@ -349,7 +355,8 @@ const FiltersPanel = ({ filters, onChange, onQuery, onReset }) => {
                   input: {
                     ...params.InputProps,
                     startAdornment:
-                      filters.scannerStationSearch.length === 0 ? (
+                      filters === undefined ||
+                      filters?.scannerStationSearch.length === 0 ? (
                         <InputAdornment position='start'>
                           <SvgIcon
                             component={ScannerStationIcon}
@@ -399,8 +406,8 @@ const FiltersPanel = ({ filters, onChange, onQuery, onReset }) => {
                 label='Study Date Start'
                 name='studyDateStart'
                 value={
-                  filters.studyDateStartSearch
-                    ? dayjs(filters.studyDateStartSearch)
+                  filters?.studyDateStartSearch
+                    ? dayjs(filters?.studyDateStartSearch)
                     : null
                 }
                 onChange={(newValue) =>
@@ -439,8 +446,8 @@ const FiltersPanel = ({ filters, onChange, onQuery, onReset }) => {
                 label='Study Date End'
                 name='studyDateEnd'
                 value={
-                  filters.studyDateEndSearch
-                    ? dayjs(filters.studyDateEndSearch)
+                  filters?.studyDateEndSearch
+                    ? dayjs(filters?.studyDateEndSearch)
                     : null
                 }
                 onChange={(newValue) =>
@@ -454,20 +461,20 @@ const FiltersPanel = ({ filters, onChange, onQuery, onReset }) => {
         <Grid item size={ITEM_GRID_SIZE}>
           <Stack direction='row' spacing={2} alignItems='center'>
             <TextField
-              value={filters.ageStartSearch}
+              value={filters?.ageStartSearch}
               label='Min Age'
               type='number'
               onChange={(e) => {
                 const value = Math.min(
                   Math.max(Number(e.target.value), MIN_AGE),
-                  filters.ageEndSearch,
+                  filters?.ageEndSearch,
                 );
                 onChange("ageStartSearch", value);
               }}
             />
             <Slider
               getAriaLabel={() => "Age range"}
-              value={[filters.ageStartSearch, filters.ageEndSearch]}
+              value={[filters?.ageStartSearch, filters?.ageEndSearch]}
               min={MIN_AGE}
               max={MAX_AGE}
               onChange={(event, newValue) => {
@@ -478,12 +485,12 @@ const FiltersPanel = ({ filters, onChange, onQuery, onReset }) => {
               getAriaValueText={(value) => `${value} years`}
             />
             <TextField
-              value={filters.ageEndSearch}
+              value={filters?.ageEndSearch}
               label='Max Age'
               type='number'
               onChange={(e) => {
                 const value = Math.min(
-                  Math.max(Number(e.target.value), filters.ageStartSearch),
+                  Math.max(Number(e.target.value), filters?.ageStartSearch),
                   MAX_AGE,
                 );
                 onChange("ageEndSearch", value);
@@ -507,7 +514,7 @@ const FiltersPanel = ({ filters, onChange, onQuery, onReset }) => {
                 alignSelf: "center",
               },
             }}
-            value={filters.pullScheduleSearch}
+            value={filters?.pullScheduleSearch}
             onChange={(event, newValue) =>
               onChange("pullScheduleSearch", newValue)
             }
@@ -533,7 +540,8 @@ const FiltersPanel = ({ filters, onChange, onQuery, onReset }) => {
                   input: {
                     ...params.InputProps,
                     startAdornment:
-                      filters.pullScheduleSearch.length === 0 ? (
+                      filters === undefined ||
+                      filters?.pullScheduleSearch.length === 0 ? (
                         <InputAdornment position='start'>
                           <LabelIcon />
                         </InputAdornment>
