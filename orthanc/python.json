@@ -1,0 +1,8 @@
+{
+  "Python": {
+    "Path": "/src/python/main.py", // Alias for the global "PythonScript" option
+    "Verbose": true, // Alias for the global "PythonVerbose" option
+    "DisplayMemoryUsage": false,
+    "AllowThreads": true
+  }
+}

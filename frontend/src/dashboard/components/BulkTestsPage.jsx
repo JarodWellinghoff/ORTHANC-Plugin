@@ -319,6 +319,16 @@ const BulkTestsPage = () => {
           : statusRaw || "none";
       const hasDicom =
         Boolean(seriesUuid) && availableSet.has(String(seriesUuid));
+      console.log(
+        "Row",
+        id,
+        "has DICOM:",
+        hasDicom,
+        "seriesUuid:",
+        seriesUuid,
+        "availableSet:",
+        availableSet,
+      );
 
       return {
         id,
@@ -561,6 +571,12 @@ const BulkTestsPage = () => {
   const columns = useMemo(() => {
     return [
       {
+        field: "patientId",
+        headerName: "Patient ID",
+        flex: 0.8,
+        minWidth: 120,
+      },
+      {
         field: "patientName",
         headerName: "Patient",
         flex: 1.1,
@@ -578,7 +594,6 @@ const BulkTestsPage = () => {
         flex: 1,
         minWidth: 160,
       },
-      // CHANGED: added Pull Schedule Name column
       {
         field: "pullScheduleName",
         headerName: "Pull Schedule",

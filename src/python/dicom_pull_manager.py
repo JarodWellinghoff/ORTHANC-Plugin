@@ -120,9 +120,9 @@ class DicomPullManager:
             "password": os.getenv("DICOM_PULL_DB_PASSWORD", "pgpassword"),
         }
         self.seconds_per_instance = float(
-            os.getenv("DICOM_PULL_SECONDS_PER_INSTANCE", "3.0")
+            os.getenv("DICOM_PULL_SECONDS_PER_INSTANCE", "0.0005")
         )
-        self.min_item_seconds = int(os.getenv("DICOM_PULL_MIN_ITEM_SECONDS", "20"))
+        self.min_item_seconds = int(os.getenv("DICOM_PULL_MIN_ITEM_SECONDS", "5"))
         self.batch_overhead_seconds = int(
             os.getenv("DICOM_PULL_BATCH_OVERHEAD_SECONDS", "30")
         )
@@ -401,6 +401,7 @@ class DicomPullManager:
             "Normalize": normalize,
         }
         body = json.dumps(payload).encode("utf-8")
+        print("Querying modality with payload:")
         print(json.dumps(payload, indent=2))
         try:
             response = orthanc.RestApiPost(f"/modalities/{modality}/query", body)
@@ -408,7 +409,6 @@ class DicomPullManager:
             raise RuntimeError(f"Query to modality {modality} failed: {exc}")
 
         query_result = json.loads(response.decode("utf-8"))
-        print(json.dumps(query_result, indent=2))
         query_id = query_result.get("ID") or query_result.get("Query")
         if not query_id:
             raise RuntimeError("Unexpected response from Orthanc query.")
@@ -416,8 +416,6 @@ class DicomPullManager:
         try:
             answers_blob = orthanc.RestApiGet(f"/queries/{query_id}/answers")
             answers_paths = json.loads(answers_blob.decode("utf-8"))
-            print(query_id)
-            print(answers_paths)
             results: List[Dict[str, Any]] = []
             for path in answers_paths:
                 index = path.rstrip("/").split("/")[-1]
@@ -425,6 +423,7 @@ class DicomPullManager:
                     f"/queries/{query_id}/answers/{index}/content?simplify"
                 )
                 detail = json.loads(detail_blob.decode("utf-8"))
+                print(f"Raw answer detail for index {index}:")
                 print(json.dumps(detail, indent=2))
                 normalized = self._normalize_query_answer(detail, level_upper)
                 if normalized:
@@ -865,13 +864,18 @@ class DicomPullManager:
                 "seriesInstanceUID": series_instance_uid,
                 "patientName": detail.get("PatientName"),
                 "patientId": detail.get("PatientID"),
-                "modality": detail.get("Modality"),
-                "bodyPart": detail.get("BodyPartExamined"),
+                "institutionName": detail.get("InstitutionName"),
+                "protocolName": detail.get("ProtocolName"),
+                "manufacturerModelName": detail.get("ManufacturerModelName"),
+                "stationName": detail.get("StationName"),
+                "modality": detail.get("Modality", "CT"),
                 "description": detail.get("SeriesDescription"),
                 "studyDate": detail.get("StudyDate"),
                 "seriesDate": detail.get("SeriesDate"),
                 "numberOfInstances": number_instances,
                 "estimatedSeconds": self._estimate_seconds(number_instances),
+                "bodyPart": detail.get("BodyPartExamined"),
+                "age": detail.get("PatientAge"),
                 "raw": detail,
             }
 
@@ -889,7 +893,7 @@ class DicomPullManager:
             }
         return None
 
-    def _estimate_seconds(self, number_of_instances: Optional[Any]) -> int:
+    def _estimate_seconds(self, number_of_instances: Optional[Any]) -> int | float:
         try:
             count = int(number_of_instances)
             if count <= 0:
