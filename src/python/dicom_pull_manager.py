@@ -120,7 +120,7 @@ class DicomPullManager:
             "password": os.getenv("DICOM_PULL_DB_PASSWORD", "pgpassword"),
         }
         self.seconds_per_instance = float(
-            os.getenv("DICOM_PULL_SECONDS_PER_INSTANCE", "0.0005")
+            os.getenv("DICOM_PULL_SECONDS_PER_INSTANCE", "0.4")
         )
         self.min_item_seconds = int(os.getenv("DICOM_PULL_MIN_ITEM_SECONDS", "5"))
         self.batch_overhead_seconds = int(

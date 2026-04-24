@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-run_test.py  -  Test runner for CHO_Calculation_Patient_Specific_skimage_Canny_edge_v22_copy.py
+run_test.py  -  Test runner for CHO_Calculation_Patient_Specific_skimage_Canny_edge_v26_copy.py
 =====================================================
 
 Usage
@@ -23,7 +23,7 @@ Outputs (written to --output_dir, default: ./test_output_<timestamp>/)
   summary.txt           - Human-readable key metrics
   *.png                 - All matplotlib figures
 """
-import CHO_Calculation_Patient_Specific_skimage_Canny_edge_v22_copy as pipeline
+import CHO_Calculation_Patient_Specific_skimage_Canny_edge_v26_copy as pipeline
 import argparse
 import json
 import os
@@ -33,6 +33,7 @@ import textwrap
 import traceback
 from datetime import datetime
 from pydicom import dcmread
+from pathlib import Path
 
 
 # ---------------------------------------------------------------------------
@@ -42,7 +43,7 @@ from pydicom import dcmread
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Test runner for CHO_Calculation_Patient_Specific_skimage_Canny_edge_v22_copy.py",
+        description="Test runner for CHO_Calculation_Patient_Specific_skimage_Canny_edge_v26_copy.py",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=textwrap.dedent(__doc__),
     )
@@ -520,7 +521,16 @@ if __name__ == "__main__":
     lesion_file = r"C:\Users\M297802\Desktop\ORTHANC Plugin\src\data\\Patient02-411-920_Lesion1.mat"
     mtf50_options = [None, 0.434]
     mtf10_options = [None, 0.730]
-    output_dir = r"D:\results"
+    script_dir = Path(__file__).resolve().parent
+    files = [f.name for f in script_dir.iterdir() if f.is_file()]
+    source_code_versions = [
+        int(f.split(".")[0].split("_v")[1])
+        for f in files
+        if f.startswith("CHO_Calculation_Patient_Specific_skimage_Canny_edge")
+        and "copy" not in f
+    ]
+    current_version = max(source_code_versions)
+    output_dir = r"D:\patient iq results" + f"\\v{current_version}"
     m = r"\\mfad\researchMN\EB036541\YU\PUBLIC\PatientCT_monitoring\DICOMs\**\IMAGES"
     dicom_dir_options = glob.glob(m, recursive=True)
     tests = []
@@ -529,7 +539,7 @@ if __name__ == "__main__":
         scanner = os.path.basename(os.path.dirname(os.path.dirname(dcm_dir)))
         dcm_files = os.listdir(dcm_dir)
         dcm_file = dcmread(os.path.join(dcm_dir, dcm_files[0]))
-        body_part = dcm_file.get("BodyPartExamined", "Unknown").upper()
+        body_part = dcm_file.get((0x0018, 0x0015), "Unknown").value.upper()
         base_output = os.path.join(output_dir, f"{scanner}-{name}-{body_part}")
         base_test = {
             "dicom_dir": dcm_dir,

@@ -428,8 +428,20 @@ const DicomPullsPage = () => {
   // Currently-checked rows in the DataGrid → items we'll actually schedule.
   const selectedItems = useMemo(() => {
     if (!selectionModel?.ids) return [];
-    const ids = Array.from(selectionModel.ids);
-    return results.filter((row) => ids.includes(row.id)).map((row) => row.raw);
+
+    if (selectionModel.type === "include") {
+      const ids = selectionModel.ids;
+      return results.filter((row) => ids.has(row.id)).map((row) => row.raw);
+    }
+
+    if (selectionModel.type === "exclude") {
+      const excluded = selectionModel.ids;
+      return results
+        .filter((row) => !excluded.has(row.id))
+        .map((row) => row.raw);
+    }
+
+    return [];
   }, [selectionModel, results]);
 
   const estimatedSeconds = useMemo(
