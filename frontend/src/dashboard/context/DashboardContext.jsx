@@ -253,6 +253,8 @@ export const DashboardProvider = ({ children }) => {
       if (p.studyDateEndSearch) params.exam_date_to = p.studyDateEndSearch;
       if (p.ageStartSearch) params.age_min = p.ageStartSearch;
       if (p.ageEndSearch) params.age_max = p.ageEndSearch;
+      if (p.sort_by) params.sort_by = p.sort_by;
+      if (p.sort_order) params.sort_order = p.sort_order;
       return params;
     },
     [filters],
@@ -380,9 +382,9 @@ export const DashboardProvider = ({ children }) => {
   );
 
   const changePageSize = useCallback(
-    (limit) => {
+    (limit, extras = {}) => {
       setPagination((prev) => ({ ...prev, page: 1, limit }));
-      loadSummary({ page: 1, limit });
+      loadSummary({ page: 1, limit, ...extras });
     },
     [loadSummary],
   );

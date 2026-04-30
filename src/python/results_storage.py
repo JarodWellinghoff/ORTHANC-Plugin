@@ -5,6 +5,8 @@ import psycopg2  # type: ignore
 import psycopg2.extras  # type: ignore
 import os
 from datetime import datetime
+
+from requests import get
 import orthanc
 import traceback
 from minio import Minio
@@ -12,6 +14,24 @@ from minio.error import S3Error
 from PIL import Image
 from psycopg2 import pool
 import io
+
+SORT_FIELD_MAP = {
+    "patientName": "p.name",
+    "patient_name": "p.name",
+    "institutionName": "st.institution_name",
+    "institution_name": "st.institution_name",
+    "protocolName": "s.protocol_name",
+    "protocol_name": "s.protocol_name",
+    "scannerModel": "sc.model_name",
+    "scanner_model": "sc.model_name",
+    "stationName": "sc.station_name",
+    "station_name": "sc.station_name",
+    "studyDate": "st.study_date",
+    "study_date": "st.study_date",
+    "latestAnalysis": "MAX(r.created_at)",
+    "latest_analysis_date": "MAX(r.created_at)",
+}
+DEFAULT_SORT = "MAX(r.created_at) DESC NULLS LAST"
 
 
 class CHOResultsStorage:
@@ -738,6 +758,8 @@ class CHOResultsStorage:
         exam_date_to = get.get("exam_date_to")
         patient_age_min = get.get("patient_age_min")
         patient_age_max = get.get("patient_age_max")
+        sort_by = get.get("sort_by")
+        sort_order = get.get("sort_order", "asc")
 
         if study_ids:
             conditions.append("st.study_instance_uid ILIKE ANY(%s)")
@@ -830,7 +852,13 @@ class CHOResultsStorage:
             {having_clause}
         """
         total_query = f"SELECT COUNT(*) FROM ({count_query}) as counted"
-
+        # Build ORDER BY safely from whitelist
+        sort_col = SORT_FIELD_MAP.get(sort_by) if sort_by else None
+        if sort_col:
+            direction = "ASC" if str(sort_order).lower() == "asc" else "DESC"
+            order_clause = f"{sort_col} {direction} NULLS LAST"
+        else:
+            order_clause = DEFAULT_SORT
         try:
             with self.postgres_connection.cursor() as cursor:
                 cursor.execute(total_query, params)
@@ -887,7 +915,7 @@ class CHOResultsStorage:
                             sc.manufacturer, sc.model_name, sc.station_name, s.protocol_name,
                             pull_info.display_name
                     {having_clause}
-                    ORDER BY MAX(r.created_at) DESC NULLS LAST 
+                    ORDER BY {order_clause} 
                     LIMIT %s OFFSET %s
                 """
                 # ─────────────────────────────────────────────────────────

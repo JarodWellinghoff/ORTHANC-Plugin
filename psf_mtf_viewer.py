@@ -47,9 +47,7 @@ def make_psf(p: dict, dx_mm: float, size: int) -> np.ndarray:
     mode = p["mode"]
     if mode == "gaussian":
         pi_, pj_ = max(1e-9, p["p_i"]), max(1e-9, p["p_j"])
-        psf = (
-            np.exp(-pi_ * (ii - cx) ** 2) * np.exp(-pj_ * (jj - cy) ** 2) / (pi_ * pj_)
-        )
+        psf = np.exp(-pi_ * y_mm**2) * np.exp(-pj_ * x_mm**2) / (pi_ * pj_)
 
     elif mode == "ring":
         R = np.sqrt(x_mm**2 + y_mm**2)
@@ -57,6 +55,17 @@ def make_psf(p: dict, dx_mm: float, size: int) -> np.ndarray:
         bump = np.exp(-0.5 * (R**2 / max(1e-30, p["core_sigma_mm"] ** 2)))
         cw = float(np.clip(p["core_weight"], 0.0, 1.0))
         psf = (1 - cw) * ring + cw * bump
+
+    elif mode == "genexp":
+        # Power-exponential / generalized-Gaussian MTF: exp(-(f/fc)^n).
+        # Build MTF on the freq grid (fftshift'd), then IFFT to get the PSF.
+        n_shape = max(0.05, float(p["n"]))
+        fc_cmm = max(1e-6, float(p["fc_lpcm"])) / 10.0  # lp/cm → cycles/mm
+        f1d = np.fft.fftshift(np.fft.fftfreq(size, d=dx_mm))
+        Fx, Fy = np.meshgrid(f1d, f1d)
+        Fr = np.hypot(Fx, Fy)
+        mtf2d_an = np.exp(-((Fr / fc_cmm) ** n_shape))
+        psf = np.real(np.fft.fftshift(np.fft.ifft2(np.fft.ifftshift(mtf2d_an))))
 
     else:  # "dog"  —  (1+alpha)*G(sigma0) - alpha*G(sigma1)
         alpha = max(0.0, p["alpha"])
@@ -339,6 +348,9 @@ PRESETS = {
         "sigma0_mm": 0.4,
         "sigma1_mm": 1.2,
     },
+    "GenExp (Gaussian)": {"mode": "genexp", "n": 2.00, "fc_lpcm": 3.0},
+    "GenExp (heavy tail)": {"mode": "genexp", "n": 1.40, "fc_lpcm": 4.0},
+    "GenExp (flat top)": {"mode": "genexp", "n": 3.00, "fc_lpcm": 3.0},
 }
 
 
@@ -346,7 +358,7 @@ PRESETS = {
 
 
 class PSFViewer:
-    MODES = ("gaussian", "ring", "dog")
+    MODES = ("gaussian", "ring", "dog", "genexp")
     _OPT_GRID = 129  # fast grid used during optimization (~8x speedup vs 513)
 
     def __init__(self, root: tk.Tk):
@@ -369,6 +381,9 @@ class PSFViewer:
             "beta": 1.0,
             "sigma0_mm": 0.6,
             "sigma1_mm": 1.2,
+            # genexp: MTF(f) = exp(-(f/fc)^n)
+            "n": 2.0,
+            "fc_lpcm": 3.0,
         }
         self._pending = False
         self._opt_running = False
@@ -481,6 +496,7 @@ class PSFViewer:
         self._build_gaussian_frame(parent)
         self._build_ring_frame(parent)
         self._build_dog_frame(parent)
+        self._build_genexp_frame(parent)
         self._show_mode(self.p["mode"])
 
     def _build_gaussian_frame(self, parent):
@@ -608,6 +624,39 @@ class PSFViewer:
         # Fit panel starts at row 4 (after the 4 sliders)
         self._dog_fit = FitPanel(lf, start_row=4, start_cb=self._start_optimize_dog)
 
+    def _build_genexp_frame(self, parent):
+        lf = ttk.LabelFrame(
+            parent, text=" Power-Exp MTF: exp(\u2212(f/fc)\u207f) ", padding=(6, 4)
+        )
+        lf.columnconfigure(1, weight=1)
+        self._mframes["genexp"] = lf
+
+        self._n_s = SliderRow(
+            lf,
+            0,
+            "n (shape):",
+            0.3,
+            5.0,
+            0.01,
+            self.p["n"],
+            lambda v: self._update({"n": v}),
+        )
+        self._fc_s = SliderRow(
+            lf,
+            1,
+            "fc (lp/cm):",
+            0.1,
+            30.0,
+            0.01,
+            self.p["fc_lpcm"],
+            lambda v: self._update({"fc_lpcm": v}),
+        )
+
+        # Fit panel starts at row 2 — uses closed-form solver, not differential_evolution
+        self._genexp_fit = FitPanel(
+            lf, start_row=2, start_cb=self._fit_genexp_closed_form
+        )
+
     def _show_mode(self, mode: str):
         for f in self._mframes.values():
             f.pack_forget()
@@ -638,6 +687,8 @@ class PSFViewer:
             "beta": getattr(self, "_be_s", None),
             "sigma0_mm": getattr(self, "_s0_s", None),
             "sigma1_mm": getattr(self, "_s1_s", None),
+            "n": getattr(self, "_n_s", None),
+            "fc_lpcm": getattr(self, "_fc_s", None),
         }
         for key, widget in _sync.items():
             if widget and key in overrides:
@@ -902,6 +953,54 @@ class PSFViewer:
             daemon=True,
         ).start()
 
+    # ── GenExp fit (closed form) ───────────────────────────────────────────────
+
+    def _fit_genexp_closed_form(self):
+        """
+        For MTF(f) = exp(-(f/fc)^n), the two-point fit is exact:
+            n  = ln(ln(10)/ln(2)) / ln(t10/t50)
+            fc = t50 / ln(2)^(1/n)
+        No optimization, no thread — runs instantly.
+        """
+        if self._opt_running:
+            return
+        vals = self._validate_fit_panel(self._genexp_fit)
+        if vals is None:
+            return
+        t50, t10, _w_unused = vals
+
+        try:
+            n_raw = float(np.log(np.log(10.0) / np.log(2.0)) / np.log(t10 / t50))
+            fc_raw = float(t50 / np.log(2.0) ** (1.0 / n_raw))
+        except Exception as e:
+            self._genexp_fit.set_result(f"Fit failed: {e}")
+            return
+
+        # Slider ranges: n ∈ [0.3, 5.0], fc ∈ [0.1, 30.0]
+        n_lo, n_hi = 0.3, 5.0
+        fc_lo, fc_hi = 0.1, 30.0
+        n = float(np.clip(n_raw, n_lo, n_hi))
+        fc = float(np.clip(fc_raw, fc_lo, fc_hi))
+        clamped = (n != n_raw) or (fc != fc_raw)
+
+        # Apply to model + UI
+        self.p.update({"mode": "genexp", "n": n, "fc_lpcm": fc})
+        self._mode_var.set("genexp")
+        self._show_mode("genexp")
+        self._n_s.set(n)
+        self._fc_s.set(fc)
+
+        msg = (
+            f"\u2713 Closed-form solution\n"
+            f"  n  = {n:.3f}\n"
+            f"  fc = {fc:.3f} lp/cm"
+        )
+        if clamped:
+            msg += f"\n  (raw: n={n_raw:.2f}, fc={fc_raw:.2f} \u2014 clamped to slider range)"
+        self._genexp_fit.set_result(msg)
+        self.status_var.set(f"GenExp fit \u2014 n={n:.3f}, fc={fc:.3f} lp/cm")
+        self.update_plots()
+
     # ── Rendering ──────────────────────────────────────────────────────────────
 
     def update_plots(self):
@@ -978,6 +1077,7 @@ class PSFViewer:
         fit_panel: FitPanel | None = {
             "gaussian": self._gauss_fit,
             "dog": self._dog_fit,
+            "genexp": self._genexp_fit,
         }.get(p["mode"])
         if fit_panel is not None:
             t50_v, t10_v = fit_panel.get_target_lines()

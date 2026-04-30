@@ -19,48 +19,55 @@ import gc
 import math
 import pandas as pd
 
+
 def get_mtf_from_excel(kernel_file: str, manufacturer: str, model: str, kernel: str):
     """
     Safest version to read MTF values from Recon_Kernels.xlsx
     """
     try:
         df = pd.read_excel(kernel_file, header=0)
-        
+
         # Convert ALL columns to string and clean them
         for col in df.columns:
             df[col] = df[col].astype(str).str.strip()
-        
+
         # Simple row-by-row matching (avoids the '&' operator bug)
         for idx, row in df.iterrows():
-            if (row['Manufacturer'].upper() == str(manufacturer).strip().upper() and
-                row['Model'].upper()        == str(model).strip().upper() and
-                row['Kernel'].upper()       == str(kernel).strip().upper()):
-                
-                mtf50 = float(row['MTF50'])
-                mtf10 = float(row['MTF10'])
-                
-                print(f"✓ Successfully loaded from Excel: {manufacturer} {model} {kernel} "
-                      f"→ MTF50 = {mtf50:.3f}, MTF10 = {mtf10:.3f}")
+            if (
+                row["Manufacturer"].upper() == str(manufacturer).strip().upper()
+                and row["Model"].upper() == str(model).strip().upper()
+                and row["Kernel"].upper() == str(kernel).strip().upper()
+            ):
+
+                mtf50 = float(row["MTF50"])
+                mtf10 = float(row["MTF10"])
+
+                print(
+                    f"✓ Successfully loaded from Excel: {manufacturer} {model} {kernel} "
+                    f"→ MTF50 = {mtf50:.3f}, MTF10 = {mtf10:.3f}"
+                )
                 return mtf50, mtf10
-        
+
         # If no match found
         raise ValueError(f"No matching row found for {manufacturer} {model} {kernel}")
-        
+
     except Exception as e:
         print(f"Error reading Recon_Kernels.xlsx: {e}")
         print("Falling back to default values (MTF50=0.434, MTF10=0.730)")
         return 0.434, 0.730
-    
+
+
 def normal_round(n):
     """Round a number to the nearest integer, with 0.5 rounding up."""
     if n - math.floor(n) < 0.5:
         return math.floor(n)
     return math.ceil(n)
 
-def poly2fit(x, y, z, n):   
+
+def poly2fit(x, y, z, n):
     """Fit a 2D polynomial of degree n to data z at coordinates (x, y)."""
     if x.shape != y.shape or x.shape != z.shape:
-        print('X, Y, and Z matrices must be the same size')
+        print("X, Y, and Z matrices must be the same size")
     x = x.T.flatten()
     y = y.T.flatten()
     z = z.T.flatten()
@@ -68,7 +75,7 @@ def poly2fit(x, y, z, n):
     k = 0
     A = np.zeros((x.shape[0], 6))
     i = n
-    while i >= 1:        
+    while i >= 1:
         for j in range(1, i + 1):
             temp1 = np.power(x, i - j)
             temp2 = np.power(y, j - 1)
@@ -78,21 +85,23 @@ def poly2fit(x, y, z, n):
     p = np.linalg.lstsq(A, z, rcond=None)[0]
     return p
 
-def subtractMean2D(im, method, psize):   
+
+def subtractMean2D(im, method, psize):
     """Subtract a mean or polynomial background from a 2D image."""
     if method:
         FOV = np.zeros(2)
         im_sizeX, im_sizeY = im.shape
         FOV[0] = psize[0] * im_sizeX
-        FOV[1] = psize[1] * im_sizeY 
+        FOV[1] = psize[1] * im_sizeY
         x = np.arange(0, im_sizeX) * psize[0] - FOV[0] / 2
         y = np.arange(0, im_sizeY) * psize[1] - FOV[1] / 2
         X, Y = np.meshgrid(x, y)
         P = poly2fit(X, Y, im, 1)
         im = im - (P[0] * X + P[1] * Y + P[2])
     else:
-        im = im - np.mean(im.flatten()) 
+        im = im - np.mean(im.flatten())
     return im
+
 
 def NPS_statistics(nps1d, unit):
     """Calculate statistics of 1D NPS: average frequency, peak frequency, slope, and 10% frequency."""
@@ -111,30 +120,32 @@ def NPS_statistics(nps1d, unit):
     k = np.polyfit(np.arange(npoint) * unit, nps1d[:npoint], 1)
     return fav, peakfrequency, k, min10percent_frequency
 
+
 def ROI_to_NPS_Sum(ROI_size, ROI_All, dx, dy):
     """Compute 1D NPS from ROI images with optional 2× oversampling.
-    
+
     - ROI_All shape: (ROI_size, ROI_size, num_rois)
     - Now performs 2× bilinear oversampling to double the frequency range.
     """
-    
+
     # ====================== 2× OVERSAMPLING ======================
     oversample_factor = 2
     dx_os = dx / oversample_factor
     dy_os = dy / oversample_factor
 
     # Upsample all ROIs: (H, W, N) → (2H, 2W, N)
-    ROI_All = ndimage.zoom(ROI_All, zoom=(oversample_factor, oversample_factor, 1),
-                           order=1, mode='reflect')
-    
+    ROI_All = ndimage.zoom(
+        ROI_All, zoom=(oversample_factor, oversample_factor, 1), order=1, mode="reflect"
+    )
+
     # Update ROI_size to the new (oversampled) size
-    ROI_size = ROI_All.shape[0]          # now even (e.g. 18, 22, etc.)
+    ROI_size = ROI_All.shape[0]  # now even (e.g. 18, 22, etc.)
     # ============================================================
 
     # Size of the FFT padded array (8 times larger than ROI)
     nnn = 8 * max(20, ROI_size)
     cc = int(np.rint(nnn / 2))
-    unit = 1 / (dx_os * nnn)                    # frequency step with oversampled pixel size
+    unit = 1 / (dx_os * nnn)  # frequency step with oversampled pixel size
 
     oo = np.linspace(0, 2 * np.pi, 360, endpoint=False)
     radii = np.arange(cc).reshape((cc, 1))
@@ -159,13 +170,13 @@ def ROI_to_NPS_Sum(ROI_size, ROI_All, dx, dy):
 
         # Zero-pad to nnn x nnn
         roipad = np.zeros((nnn, nnn), dtype=np.float32)
-        
-        # === FIXED CENTERING ===
-        half_roi = ROI_size // 2                     # integer division
-        start = nnn // 2 - half_roi
-        end   = start + ROI_size                    
 
-        roipad[start:end, start:end] = roi           # Safe for both even and odd sizes
+        # === FIXED CENTERING ===
+        half_roi = ROI_size // 2  # integer division
+        start = nnn // 2 - half_roi
+        end = start + ROI_size
+
+        roipad[start:end, start:end] = roi  # Safe for both even and odd sizes
 
         # 2D FFT
         roipad_fft = np.fft.fftshift(np.abs(np.fft.fft2(roipad)))
@@ -181,41 +192,70 @@ def ROI_to_NPS_Sum(ROI_size, ROI_All, dx, dy):
 
     return Spatial_freq, NPS_1D_sum, noise_level_sum, unit
 
+
 def Laguerre2D(order, a, b, cx, cy, X, Y):
     """Generate 2D Laguerre-Gauss channel filter."""
     val1 = np.zeros(X.size)
-    ga = 2 * np.pi * ((X - cx)**2 / (a**2) + (Y - cy)**2 / (b**2))
+    ga = 2 * np.pi * ((X - cx) ** 2 / (a**2) + (Y - cy) ** 2 / (b**2))
     for jp in range(order + 1):
-        val1 = val1 + (-1)**jp * np.prod(np.linspace(1, order, order)) / (np.prod(np.linspace(1, jp, jp)) * np.prod(np.linspace(1, order - jp, order - jp))) * (ga**jp) / np.prod(np.linspace(1, jp, jp))
+        val1 = val1 + (-1) ** jp * np.prod(np.linspace(1, order, order)) / (
+            np.prod(np.linspace(1, jp, jp))
+            * np.prod(np.linspace(1, order - jp, order - jp))
+        ) * (ga**jp) / np.prod(np.linspace(1, jp, jp))
     channel_filter = np.exp(-ga / 2) * val1
     return channel_filter
 
+
 def Gabor2D(fc, wd, theta, beta, cx, cy, X, Y):
     """Generate 2D Gabor channel filter."""
-    channel_filter = np.exp(-4 * np.log(2) * ((X - cx)**2 + (Y - cy)**2) / (wd**2)) * np.cos(2 * np.pi * fc * ((X - cx) * np.cos(theta) + (Y - cy) * np.sin(theta)) + beta)
+    channel_filter = np.exp(
+        -4 * np.log(2) * ((X - cx) ** 2 + (Y - cy) ** 2) / (wd**2)
+    ) * np.cos(
+        2 * np.pi * fc * ((X - cx) * np.cos(theta) + (Y - cy) * np.sin(theta)) + beta
+    )
     return channel_filter
 
-def channel_selection(Chnl, inputArg1, inputArg2, inputArg3='0'):
+
+def channel_selection(Chnl, inputArg1, inputArg2, inputArg3="0"):
     """Configure channel parameters for Laguerre-Gauss or Gabor filters."""
-    if Chnl.Chnl_Toggle == 'Laguerre-Gauss':
-        if isinstance(inputArg1, int): Chnl.LG_order = inputArg1
-        if isinstance(inputArg2, int): Chnl.LG_orien = inputArg2
-    if Chnl.Chnl_Toggle == 'Gabor':
+    if Chnl.Chnl_Toggle == "Laguerre-Gauss":
+        if isinstance(inputArg1, int):
+            Chnl.LG_order = inputArg1
+        if isinstance(inputArg2, int):
+            Chnl.LG_orien = inputArg2
+    if Chnl.Chnl_Toggle == "Gabor":
         if isinstance(inputArg1, str):
             if inputArg1 == "[[1/64,1/32], [1/32,1/16], [1/16,1/8], [1/8,1/4]]":
-                Chnl.Gabor_passband = np.transpose([[1/64, 1/32], [1/32, 1/16], [1/16, 1/8], [1/8, 1/4]])
+                Chnl.Gabor_passband = np.transpose(
+                    [
+                        [1 / 64, 1 / 32],
+                        [1 / 32, 1 / 16],
+                        [1 / 16, 1 / 8],
+                        [1 / 8, 1 / 4],
+                    ]
+                )
             if inputArg1 == "[[1/64,1/32], [1/32,1/16]]":
-                Chnl.Gabor_passband = np.transpose([[1/64, 1/32], [1/32, 1/16]])
+                Chnl.Gabor_passband = np.transpose([[1 / 64, 1 / 32], [1 / 32, 1 / 16]])
         if isinstance(inputArg2, str):
-            if inputArg2 == '[0, pi/3, 2*pi/3]': Chnl.Gabor_theta = [0, np.pi / 3, 2 * np.pi / 3]
-            if inputArg2 == '[0, pi/2]': Chnl.Gabor_theta = [0, np.pi / 2]
-            if inputArg2 == '0': Chnl.Gabor_theta = [0]
+            if inputArg2 == "[0, pi/3, 2*pi/3]":
+                Chnl.Gabor_theta = [0, np.pi / 3, 2 * np.pi / 3]
+            if inputArg2 == "[0, pi/2]":
+                Chnl.Gabor_theta = [0, np.pi / 2]
+            if inputArg2 == "0":
+                Chnl.Gabor_theta = [0]
         if isinstance(inputArg3, str):
-            if inputArg3 == '[0, pi/2]': Chnl.Gabor_beta = [0, np.pi / 2]
-            if inputArg3 == '0': Chnl.Gabor_beta = [0]
+            if inputArg3 == "[0, pi/2]":
+                Chnl.Gabor_beta = [0, np.pi / 2]
+            if inputArg3 == "0":
+                Chnl.Gabor_beta = [0]
         Chnl.Gabor_fc = np.mean(Chnl.Gabor_passband, axis=0)
-        Chnl.Gabor_wd = 4 * np.log(2) / (np.pi * (Chnl.Gabor_passband[1, :] - Chnl.Gabor_passband[0, :]))
+        Chnl.Gabor_wd = (
+            4
+            * np.log(2)
+            / (np.pi * (Chnl.Gabor_passband[1, :] - Chnl.Gabor_passband[0, :]))
+        )
     return Chnl
+
 
 def ChannelMatrix_Generation(Chnl, roiSize_xy):
     """Generate channel matrix for CHO analysis based on filter type."""
@@ -224,8 +264,10 @@ def ChannelMatrix_Generation(Chnl, roiSize_xy):
     X, Y = np.meshgrid(x, y)
     X = X.T.reshape(-1)
     Y = Y.T.reshape(-1)
-    if Chnl.Chnl_Toggle == 'Laguerre-Gauss':
-        LG_ORIEN, LG_ORDER = np.meshgrid(np.arange(Chnl.LG_orien) + 1, np.arange(Chnl.LG_order) + 1)
+    if Chnl.Chnl_Toggle == "Laguerre-Gauss":
+        LG_ORIEN, LG_ORDER = np.meshgrid(
+            np.arange(Chnl.LG_orien) + 1, np.arange(Chnl.LG_order) + 1
+        )
         LG_ORIEN = LG_ORIEN.T.reshape(-1)
         LG_ORDER = LG_ORDER.T.reshape(-1)
         A = 5 * np.ones(LG_ORDER.size)
@@ -234,11 +276,15 @@ def ChannelMatrix_Generation(Chnl, roiSize_xy):
         B[LG_ORIEN == 1] = 8
         A[LG_ORIEN == 2] = 14
         B[LG_ORIEN == 2] = 5
-        channelMatrix = np.zeros((roiSize_xy * roiSize_xy, Chnl.LG_order * Chnl.LG_orien))
+        channelMatrix = np.zeros(
+            (roiSize_xy * roiSize_xy, Chnl.LG_order * Chnl.LG_orien)
+        )
         for ii in range(LG_ORDER.size):
             channelMatrix[:, ii] = Laguerre2D(LG_ORDER[ii], A[ii], B[ii], 0, 0, X, Y)
-    elif Chnl.Chnl_Toggle == 'Gabor':
-        Gabor_THETA, Gabor_FC, Gabor_BETA = np.meshgrid(Chnl.Gabor_theta, Chnl.Gabor_fc, Chnl.Gabor_beta)
+    elif Chnl.Chnl_Toggle == "Gabor":
+        Gabor_THETA, Gabor_FC, Gabor_BETA = np.meshgrid(
+            Chnl.Gabor_theta, Chnl.Gabor_fc, Chnl.Gabor_beta
+        )
         Gabor_wd_matrix = np.zeros((Chnl.Gabor_wd.size, 1, 1))
         Gabor_wd_matrix[:, 0, 0] = Chnl.Gabor_wd
         Gabor_WD = np.tile(Gabor_wd_matrix, (1, Gabor_FC.shape[1], Gabor_FC.shape[2]))
@@ -248,20 +294,25 @@ def ChannelMatrix_Generation(Chnl, roiSize_xy):
         Gabor_BETA = Gabor_BETA.T.reshape(-1)
         channelMatrix = np.zeros((roiSize_xy * roiSize_xy, Gabor_FC.size))
         for ii in range(Gabor_FC.size):
-            channelMatrix[:, ii] = Gabor2D(Gabor_FC[ii], Gabor_WD[ii], Gabor_THETA[ii], Gabor_BETA[ii], 0, 0, X, Y)
+            channelMatrix[:, ii] = Gabor2D(
+                Gabor_FC[ii], Gabor_WD[ii], Gabor_THETA[ii], Gabor_BETA[ii], 0, 0, X, Y
+            )
     return channelMatrix
 
-def CHO_patient_with_resampling(sig_true, bkg_ordered, channelMatrix, internalNoise, Resampling_method):
+
+def CHO_patient_with_resampling(
+    sig_true, bkg_ordered, channelMatrix, internalNoise, Resampling_method
+):
     """Compute detectability (d') using Channelized Hotelling Observer with resampling."""
     N_total_bkg = bkg_ordered.shape[1]
-    if Resampling_method == 'Bootstrap':
+    if Resampling_method == "Bootstrap":
         rand_scanSelect_bkg = np.random.randint(N_total_bkg, size=N_total_bkg)
-    elif Resampling_method == 'Shuffle':
+    elif Resampling_method == "Shuffle":
         rand_scanSelect_bkg = np.random.permutation(N_total_bkg)
     sig = sig_true
     bkg = bkg_ordered[:, rand_scanSelect_bkg].astype(float)
     if sig.shape[0] != channelMatrix.shape[0] or bkg.shape[0] != channelMatrix.shape[0]:
-        print('Numbers of pixels do not match.')
+        print("Numbers of pixels do not match.")
     vN = channelMatrix.T @ bkg
     sbar = np.squeeze(sig)
     S = np.cov(vN.T, rowvar=False)
@@ -272,6 +323,7 @@ def CHO_patient_with_resampling(sig_true, bkg_ordered, channelMatrix, internalNo
     tN = tN0 + np.random.randn(tN0.size) * internalNoise * np.std(tN0)
     dp = np.sqrt((tsN_Mean**2) / np.var(tN))
     return dp
+
 
 def interpolate_grid(X0, Y0, L0, XX, YY, method):
     """Interpolate 2D data to a new grid using specified method."""
@@ -284,6 +336,7 @@ def interpolate_grid(X0, Y0, L0, XX, YY, method):
     values = L0.flatten()
     Lesion = griddata(grid_points, values, (XX, YY), method=method)
     return Lesion
+
 
 def max_consecutive_ones_2d(bool_array_2d):
     """Find maximum consecutive ones in any row of a 2D boolean array."""
@@ -300,6 +353,7 @@ def max_consecutive_ones_2d(bool_array_2d):
         max_count = max(max_count, count)
         max_consecutive = max(max_consecutive, max_count)
     return max_consecutive
+
 
 # --------------------------------------------------------------
 #  NEW: Damped-cosine PSF (replaces super-Gaussian)
@@ -333,14 +387,15 @@ def simulate_psf_damped_cosine(mtf50, mtf10=None, size=513, wire_fov_mm=50.0):
         F = np.sqrt(Fx**2 + Fy**2)
         f_rad = F[centre, centre:]
         mtf_rad = mtf2d[centre, centre:]
-        return interp1d(f_rad, mtf_rad, kind='linear',
-                        bounds_error=False, fill_value=0.0)
+        return interp1d(
+            f_rad, mtf_rad, kind="linear", bounds_error=False, fill_value=0.0
+        )
 
     # ----- Case 1: only mtf50 → Gaussian (k = 0) -----
     if mtf10 is None:
         # Analytic σ for a Gaussian that gives MTF(mtf50) = 0.5
         sigma = np.sqrt(-np.log(0.5) / (2 * np.pi**2 * mtf50**2))
-        psf = np.exp(-R**2 / (2 * sigma**2))
+        psf = np.exp(-(R**2) / (2 * sigma**2))
         psf /= psf.sum()
         return psf, dx
 
@@ -359,16 +414,18 @@ def simulate_psf_damped_cosine(mtf50, mtf10=None, size=513, wire_fov_mm=50.0):
         return err50 + err10
 
     # Reasonable starting point (Gaussian width + a mild oscillation)
-    tau0 = 1.0 / (np.pi * mtf50)          # ~Gaussian width
-    k0   = 0.6 * np.pi * mtf50            # small ringing
-    res = minimize(objective,
-                   [tau0, k0],
-                   bounds=[(tau0*0.3, tau0*3.0), (0.0, 2.0*np.pi*mtf50)],
-                   method='L-BFGS-B')
+    tau0 = 1.0 / (np.pi * mtf50)  # ~Gaussian width
+    k0 = 0.6 * np.pi * mtf50  # small ringing
+    res = minimize(
+        objective,
+        [tau0, k0],
+        bounds=[(tau0 * 0.3, tau0 * 3.0), (0.0, 2.0 * np.pi * mtf50)],
+        method="L-BFGS-B",
+    )
 
     tau_opt, k_opt = res.x
     psf = np.exp(-R / tau_opt) * np.cos(k_opt * R)
-    psf = np.maximum(psf, 0.0)            # keep non-negative
+    psf = np.maximum(psf, 0.0)  # keep non-negative
     psf /= psf.sum()
 
     # ----- verification (same style as the old function) -----
@@ -379,12 +436,13 @@ def simulate_psf_damped_cosine(mtf50, mtf10=None, size=513, wire_fov_mm=50.0):
 
     return psf, dx
 
+
 def compute_presampling_mtf(psf, unit_dx, maxfreq=100.0, normal_round=round):
     """
     Compute radial 1D MTF using fixed 2048-point FFT.
     """
     psf = np.asarray(psf, dtype=np.float64)
-    
+
     # 1. Normalize PSF so sum = 1
     psf_norm = psf / np.sum(psf)
 
@@ -397,32 +455,34 @@ def compute_presampling_mtf(psf, unit_dx, maxfreq=100.0, normal_round=round):
     pad_left = pad_total // 2
     pad_right = pad_total - pad_left
 
-    psf_padded = np.pad(psf_norm, 
-                        pad_width=((pad_left, pad_right), (pad_left, pad_right)),
-                        mode='constant', 
-                        constant_values=0.0)
+    psf_padded = np.pad(
+        psf_norm,
+        pad_width=((pad_left, pad_right), (pad_left, pad_right)),
+        mode="constant",
+        constant_values=0.0,
+    )
 
     # 4. Compute 2D FFT with proper centering (using np.fft)
     psf_shift = np.fft.ifftshift(psf_padded)
     FT = np.fft.fft2(psf_shift)
     mtf2d = np.abs(FT)
     mtf2d = np.fft.fftshift(mtf2d)
-    mtf2d /= mtf2d.max()                          # MTF(0) = 1.0
+    mtf2d /= mtf2d.max()  # MTF(0) = 1.0
 
     # 5. Frequency axis
-    df = 1.0 / (unit_dx * N_fft)                  # frequency step in cycles/mm
+    df = 1.0 / (unit_dx * N_fft)  # frequency step in cycles/mm
     freq_full = np.fft.fftshift(np.fft.fftfreq(N_fft, d=unit_dx))
-    freq_pos = freq_full[freq_full >= 0]          # only positive frequencies
+    freq_pos = freq_full[freq_full >= 0]  # only positive frequencies
 
     # 6. Radial averaging
     centre = N_fft // 2
     deg = 360
     oo = 2 * np.pi * np.linspace(0, deg - 1, deg) / deg
-    
+
     # Limit to maxfreq
     max_bin = int(maxfreq / df) + 1
     n_freq = min(max_bin, len(freq_pos))
-    
+
     mtf_polar = np.zeros((n_freq, deg))
     freq = freq_pos[:n_freq]
 
@@ -433,7 +493,7 @@ def compute_presampling_mtf(psf, unit_dx, maxfreq=100.0, normal_round=round):
             yy = r * np.sin(oo[jj])
             xi = normal_round(xx + centre)
             yi = normal_round(yy + centre)
-            
+
             if 0 <= xi < N_fft and 0 <= yi < N_fft:
                 mtf_polar[ii, jj] = mtf2d[yi, xi]
 
@@ -447,35 +507,38 @@ def compute_presampling_mtf(psf, unit_dx, maxfreq=100.0, normal_round=round):
 
     mtf_p50 = get_mtf_freq(0.51)
     mtf_p10 = get_mtf_freq(0.105)
-    mtf_p02 = get_mtf_freq(0.02)          # MTF at 2%
+    mtf_p02 = get_mtf_freq(0.02)  # MTF at 2%
 
     mtf_eval = np.array([mtf_p50, mtf_p10, mtf_p02])
 
     return freq, mtf, mtf_eval
 
-def prepare_Lesion_sig(lesion_file, 
-                       kernel_file,           # NEW: path to Recon_Kernels.xlsx
-                       manufacturer,          # NEW: e.g. "Siemens"
-                       model,                 # NEW: e.g. "EID Force"
-                       kernel,                # NEW: e.g. "Br44"
-                       lesion_con_target, 
-                       target_lesion_width,
-                       patient_FOV, 
-                       patient_matrix, 
-                       ROI_size, 
-                       wire_fov_mm=50, 
-                       wire_Matrix_size=512,
-                       mtf50=None, 
-                       mtf10=None):         
+
+def prepare_Lesion_sig(
+    lesion_file,
+    kernel_file,  # NEW: path to Recon_Kernels.xlsx
+    manufacturer,  # NEW: e.g. "Siemens"
+    model,  # NEW: e.g. "EID Force"
+    kernel,  # NEW: e.g. "Br44"
+    lesion_con_target,
+    target_lesion_width,
+    patient_FOV,
+    patient_matrix,
+    ROI_size,
+    wire_fov_mm=50,
+    wire_Matrix_size=512,
+    mtf50=None,
+    mtf10=None,
+):
     """
     Prepare lesion signal (scale → contrast → PSF convolution).
-    
+
     Now always simulates PSF using MTF50/MTF10 from Recon_Kernels.xlsx.
     """
     # --------------------------------------------------------------
     # 1. Load MTF50 and MTF10 from Excel (new logic)
     # --------------------------------------------------------------
-    #if mtf50 is None or mtf10 is None:
+    # if mtf50 is None or mtf10 is None:
     if mtf50 is None:
         mtf50, mtf10 = get_mtf_from_excel(kernel_file, manufacturer, model, kernel)
 
@@ -485,8 +548,8 @@ def prepare_Lesion_sig(lesion_file,
     # 2. Load / create lesion VOI
     # --------------------------------------------------------------
     patient_data = sio.loadmat(lesion_file)
-    lesion = patient_data['Patient']['Lesion'][0][0]['VOI'][0][0]
-    mask   = patient_data['Patient']['Lesion'][0][0]['LesionMask'][0][0]
+    lesion = patient_data["Patient"]["Lesion"][0][0]["VOI"][0][0]
+    mask = patient_data["Patient"]["Lesion"][0][0]["LesionMask"][0][0]
     loc = round(lesion.shape[-1] / 2)
     L0 = lesion[:, :, loc]
     M0 = mask[:, :, loc].astype(bool)
@@ -504,23 +567,22 @@ def prepare_Lesion_sig(lesion_file,
 
     s1, s2 = L0.shape
     os0 = np.floor(np.array(L0.shape) * scale).astype(int)
-    x0 = np.linspace(0, s2-1, s2)
-    y0 = np.linspace(0, s1-1, s1)
+    x0 = np.linspace(0, s2 - 1, s2)
+    y0 = np.linspace(0, s1 - 1, s1)
     X0, Y0 = np.meshgrid(x0, y0)
-    x_out = np.linspace(0, s2-1, os0[1])
-    y_out = np.linspace(0, s1-1, os0[0])
+    x_out = np.linspace(0, s2 - 1, os0[1])
+    y_out = np.linspace(0, s1 - 1, os0[0])
     XX, YY = np.meshgrid(x_out, y_out)
-    Lesion = interpolate_grid(X0, Y0, L0, XX, YY, 'linear')
+    Lesion = interpolate_grid(X0, Y0, L0, XX, YY, "linear")
 
     # --------------------------------------------------------------
     # 4. Simulate PSF using MTF50 and MTF10 (always used now)
     # --------------------------------------------------------------
-    pixel_spacing_patient = patient_FOV / patient_matrix   # mm/pixel
+    pixel_spacing_patient = patient_FOV / patient_matrix  # mm/pixel
 
-    PSF_sim, dx_psf = simulate_psf_damped_cosine(mtf50=mtf50,
-                                                 mtf10=mtf10,
-                                                 size=513,
-                                                 wire_fov_mm=50.0)
+    PSF_sim, dx_psf = simulate_psf_damped_cosine(
+        mtf50=mtf50, mtf10=mtf10, size=513, wire_fov_mm=50.0
+    )
 
     # Compute presampling MTF (for verification)
     freq, mtf, mtf_eval = compute_presampling_mtf(PSF_sim, dx_psf)
@@ -529,16 +591,16 @@ def prepare_Lesion_sig(lesion_file,
     scaling_factor = dx_psf / pixel_spacing_patient
     os0_psf = np.floor(np.array(PSF_sim.shape) * scaling_factor).astype(int)
 
-    x0_psf = np.linspace(0, PSF_sim.shape[1]-1, PSF_sim.shape[1])
-    y0_psf = np.linspace(0, PSF_sim.shape[0]-1, PSF_sim.shape[0])
+    x0_psf = np.linspace(0, PSF_sim.shape[1] - 1, PSF_sim.shape[1])
+    y0_psf = np.linspace(0, PSF_sim.shape[0] - 1, PSF_sim.shape[0])
     X0_psf, Y0_psf = np.meshgrid(x0_psf, y0_psf)
 
-    x_out_psf = np.linspace(0, PSF_sim.shape[1]-1, os0_psf[1])
-    y_out_psf = np.linspace(0, PSF_sim.shape[0]-1, os0_psf[0])
+    x_out_psf = np.linspace(0, PSF_sim.shape[1] - 1, os0_psf[1])
+    y_out_psf = np.linspace(0, PSF_sim.shape[0] - 1, os0_psf[0])
     XX_psf, YY_psf = np.meshgrid(x_out_psf, y_out_psf)
 
-    PSF_end = interpolate_grid(X0_psf, Y0_psf, PSF_sim, XX_psf, YY_psf, 'linear')
-    PSF_end /= PSF_end.sum()                # final normalization
+    PSF_end = interpolate_grid(X0_psf, Y0_psf, PSF_sim, XX_psf, YY_psf, "linear")
+    PSF_end /= PSF_end.sum()  # final normalization
 
     # --------------------------------------------------------------
     # 5. Convolution & crop to ROI
@@ -546,36 +608,50 @@ def prepare_Lesion_sig(lesion_file,
     Lesion_ext = np.zeros((80, 80))
     r0 = (Lesion_ext.shape[0] - Lesion.shape[0]) // 2
     c0 = (Lesion_ext.shape[1] - Lesion.shape[1]) // 2
-    Lesion_ext[r0:r0+Lesion.shape[0], c0:c0+Lesion.shape[1]] = Lesion
+    Lesion_ext[r0 : r0 + Lesion.shape[0], c0 : c0 + Lesion.shape[1]] = Lesion
 
-    Lesion_conv = convolve2d(Lesion_ext, PSF_end, mode='full')
+    Lesion_conv = convolve2d(Lesion_ext, PSF_end, mode="full")
 
     r0 = (Lesion_conv.shape[0] - ROI_size) // 2
     c0 = (Lesion_conv.shape[1] - ROI_size) // 2
-    Lesion_conv_end = Lesion_conv[r0:r0+ROI_size, c0:c0+ROI_size]
+    Lesion_conv_end = Lesion_conv[r0 : r0 + ROI_size, c0 : c0 + ROI_size]
 
     return Lesion_conv_end, freq, mtf
 
 
-def Integral_image(image, window_size=[3, 3], padding='constant'):
+def Integral_image(image, window_size=[3, 3], padding="constant"):
     """Compute integral image for fast mean calculations."""
     if len(image.shape) != 2:
         raise ValueError("The input image must be a two-dimensional array.")
     m, n = window_size
     pad_width = ((m // 2, m // 2), (n // 2, n // 2))
-    if padding == 'circular':
-        padded_image = np.pad(image, pad_width, mode='wrap')
-    elif padding == 'replicate':
-        padded_image = np.pad(image, pad_width, mode='edge')
-    elif padding == 'symmetric':
-        padded_image = np.pad(image, pad_width, mode='symmetric')
+    if padding == "circular":
+        padded_image = np.pad(image, pad_width, mode="wrap")
+    elif padding == "replicate":
+        padded_image = np.pad(image, pad_width, mode="edge")
+    elif padding == "symmetric":
+        padded_image = np.pad(image, pad_width, mode="symmetric")
     else:
-        padded_image = np.pad(image, pad_width, mode='constant', constant_values=0)
+        padded_image = np.pad(image, pad_width, mode="constant", constant_values=0)
     imageD = padded_image.astype(np.float64)
     t = np.cumsum(np.cumsum(imageD, axis=0), axis=1)
     return t
 
-def calculate_std_dev(Intel_images, Intel_images_Square, Intel_Edge, ROI_size, Padding_size, Im_Size, N1, N2, N_sub, Thr1, Thr2, corrected=False):    
+
+def calculate_std_dev(
+    Intel_images,
+    Intel_images_Square,
+    Intel_Edge,
+    ROI_size,
+    Padding_size,
+    Im_Size,
+    N1,
+    N2,
+    N_sub,
+    Thr1,
+    Thr2,
+    corrected=False,
+):
     """Calculate standard deviation map for ROI selection."""
     ROI_size2 = int(ROI_size) if ROI_size % 2 == 0 else int(ROI_size + 1)
     Half_Diff_Size = round((Padding_size - ROI_size2) / 2)
@@ -583,9 +659,21 @@ def calculate_std_dev(Intel_images, Intel_images_Square, Intel_Edge, ROI_size, P
     Intel_Im_Sizey = Intel_Edge.shape[1]
 
     # Crop to valid region
-    Intel_Edge = Intel_Edge[Half_Diff_Size:Intel_Im_Sizex - Half_Diff_Size, Half_Diff_Size:Intel_Im_Sizey - Half_Diff_Size, :]
-    Intel_images = Intel_images[Half_Diff_Size:Intel_Im_Sizex - Half_Diff_Size, Half_Diff_Size:Intel_Im_Sizey - Half_Diff_Size, :]
-    Intel_images_Square = Intel_images_Square[Half_Diff_Size:Intel_Im_Sizex - Half_Diff_Size, Half_Diff_Size:Intel_Im_Sizey - Half_Diff_Size, :]
+    Intel_Edge = Intel_Edge[
+        Half_Diff_Size : Intel_Im_Sizex - Half_Diff_Size,
+        Half_Diff_Size : Intel_Im_Sizey - Half_Diff_Size,
+        :,
+    ]
+    Intel_images = Intel_images[
+        Half_Diff_Size : Intel_Im_Sizex - Half_Diff_Size,
+        Half_Diff_Size : Intel_Im_Sizey - Half_Diff_Size,
+        :,
+    ]
+    Intel_images_Square = Intel_images_Square[
+        Half_Diff_Size : Intel_Im_Sizex - Half_Diff_Size,
+        Half_Diff_Size : Intel_Im_Sizey - Half_Diff_Size,
+        :,
+    ]
 
     m = ROI_size2
     n = ROI_size2
@@ -597,44 +685,44 @@ def calculate_std_dev(Intel_images, Intel_images_Square, Intel_Edge, ROI_size, P
         normalization_factor = 1
 
     STD_all = np.zeros([Im_Size[0], Im_Size[1], N2 + N_sub * 2 - N1], dtype=np.float32)
-    
+
     for kk in range(Intel_images.shape[-1]):
         t = Intel_images[:, :, kk]
-        mean_map = (t[m:, n:] + t[:-m, :-n] - t[m:, :-n] - t[:-m, n:])/(m * n)
+        mean_map = (t[m:, n:] + t[:-m, :-n] - t[m:, :-n] - t[:-m, n:]) / (m * n)
 
         t2 = Intel_images_Square[:, :, kk]
-        mean_square = (t2[m:, n:] + t2[:-m, :-n] - t2[m:, :-n] - t2[:-m, n:])/(m * n)
+        mean_square = (t2[m:, n:] + t2[:-m, :-n] - t2[m:, :-n] - t2[:-m, n:]) / (m * n)
 
         # Use Intel_Edge (which now contains dilated Canny edges)
         t3 = Intel_Edge[:, :, kk]
-        edge_impact = (t3[m:, n:] + t3[:-m, :-n] - t3[m:, :-n] - t3[:-m, n:])/(m * n)
+        edge_impact = (t3[m:, n:] + t3[:-m, :-n] - t3[m:, :-n] - t3[:-m, n:]) / (m * n)
 
         Mask_mean = (mean_map < Thr1) | (mean_map > Thr2)
 
-        # Adaptive edge exclusion based on distribution 
+        # Adaptive edge exclusion based on distribution
         valid_edge = edge_impact[~np.isnan(edge_impact)]
         if len(valid_edge) > 20:
-            edge_threshold = np.percentile(valid_edge, 92)   # top ~8%
+            edge_threshold = np.percentile(valid_edge, 92)  # top ~8%
         else:
             edge_threshold = 0.05
 
-        Mask_edge = (edge_impact >= edge_threshold).astype(np.float32)   
+        Mask_edge = (edge_impact >= edge_threshold).astype(np.float32)
 
         Mask = np.logical_or(Mask_mean, Mask_edge > 0)
         # ------------------------------------------------------------------
         # Compute local variance using the integral image method
         # ------------------------------------------------------------------
-        variance = mean_square - mean_map ** 2
+        variance = mean_square - mean_map**2
 
         # Why do we get many extremely low (or slightly negative) variance values?
         # ------------------------------------------------------------------
         # In CT images, there are large regions that are very uniform (e.g., liver,
-        # muscle, or background). When a small ROI (such as 9x9) falls entirely 
+        # muscle, or background). When a small ROI (such as 9x9) falls entirely
         # inside these flat areas, almost all pixel values are nearly identical.
         #
         # In such cases:
         #   - mean_square  ≈ (mean)^2
-        #   - variance     ≈ 0  (or even a tiny negative number due to 
+        #   - variance     ≈ 0  (or even a tiny negative number due to
         #                        floating-point rounding errors)
         #
         # These "ultra-low std" ROIs are not representative of real CT noise.
@@ -647,13 +735,13 @@ def calculate_std_dev(Intel_images, Intel_images_Square, Intel_Edge, ROI_size, P
         # Step 2: Reject unrealistically uniform regions (Key Fix)
         #         We treat ROIs with extremely low variance as "bad" data,
         #         similar to how we reject regions with edges or extreme HU values.
-        min_acceptable_std = 0.8                    # Recommended: 0.8 ~ 1.2 HU
-        min_acceptable_variance = min_acceptable_std ** 2        
+        min_acceptable_std = 0.8  # Recommended: 0.8 ~ 1.2 HU
+        min_acceptable_variance = min_acceptable_std**2
         variance[variance < min_acceptable_variance] = np.nan
 
         # Step 3: Convert variance to standard deviation map
         #         NaN values will remain NaN and be excluded later in extract_ROIs()
-        SD_Map = np.sqrt(variance * normalization_factor)        
+        SD_Map = np.sqrt(variance * normalization_factor)
         SD_Map[Mask] = np.nan
         SD_Map[0:Half_ROI_size, :] = np.nan
         SD_Map[-Half_ROI_size:, :] = np.nan
@@ -662,6 +750,7 @@ def calculate_std_dev(Intel_images, Intel_images_Square, Intel_Edge, ROI_size, P
 
         STD_all[:, :, kk] = SD_Map
     return STD_all
+
 
 def extract_ROIs(STD_map_all, Thre_SD, Half_ROI_size, Images_Section, Im_Size):
     """Extract ROIs with low standard deviation for NPS and CHO analysis."""
@@ -693,51 +782,59 @@ def extract_ROIs(STD_map_all, Thre_SD, Half_ROI_size, Images_Section, Im_Size):
             c_start = max(c - Half_ROI_size, 0)
             c_end = min(c + Half_ROI_size + 1, selection_mask.shape[1])
             selection_mask[r_start:r_end, c_start:c_end] = True
-        for (row, col) in selected_centers:
-            if (row - Half_ROI_size < 0 or 
-                row + Half_ROI_size + 1 > Im_Size[0] or 
-                col - Half_ROI_size < 0 or 
-                col + Half_ROI_size + 1 > Im_Size[1]):
+        for row, col in selected_centers:
+            if (
+                row - Half_ROI_size < 0
+                or row + Half_ROI_size + 1 > Im_Size[0]
+                or col - Half_ROI_size < 0
+                or col + Half_ROI_size + 1 > Im_Size[1]
+            ):
                 continue
-            roi = im10[row - Half_ROI_size: row + Half_ROI_size + 1,
-                       col - Half_ROI_size: col + Half_ROI_size + 1]
+            roi = im10[
+                row - Half_ROI_size : row + Half_ROI_size + 1,
+                col - Half_ROI_size : col + Half_ROI_size + 1,
+            ]
             ROIs.append(roi)
-            
+
     ROIs_array = np.array(ROIs)
     Total_NPS_No = 0
 
     if ROIs_array.size > 0:
         ROIs_array = np.transpose(ROIs_array, (1, 2, 0))
-        Total_NPS_No = ROIs_array.shape[-1]     
+        Total_NPS_No = ROIs_array.shape[-1]
 
     # ====================== FINAL SAFETY FILTER  ======================
     if Total_NPS_No > 0:
         # Compute actual std for each extracted ROI
         actual_std = np.array([np.std(roi) for roi in ROIs])
-        
+
         # Keep only ROIs where actual std <= Thre_SD
         good_mask = actual_std <= Thre_SD
-        
+
         ROIs_array = ROIs_array[:, :, good_mask]
         Total_NPS_No = ROIs_array.shape[-1]
-        
+
         # Quality report
         rejected = len(actual_std) - Total_NPS_No
         if rejected > 0:
-            print(f"extract_ROIs: {rejected} ROIs rejected (std > {Thre_SD:.3f} HU). "
-                  f"Final selected: {Total_NPS_No} ROIs")
-            
+            print(
+                f"extract_ROIs: {rejected} ROIs rejected (std > {Thre_SD:.3f} HU). "
+                f"Final selected: {Total_NPS_No} ROIs"
+            )
+
     return ROIs_array, Total_NPS_No
+
 
 # Demo Main Program
 import time
+
 start = time.time()
 
 # Load DICOM files from directory
-Map_dir = r'\\mfad.mfroot.org\rchapp\eb028591\CT_CIC_Group_Server\Staff_Folders\Zhou_Zhongxing\Zhou_ZX'
-dir1 = Map_dir +'\\For_Jarod\\L067_FD_1_0_B30F_0001\\'
+Map_dir = r"\\mfad.mfroot.org\rchapp\eb028591\CT_CIC_Group_Server\Staff_Folders\Zhou_Zhongxing\Zhou_ZX"
+dir1 = Map_dir + "\\For_Jarod\\L067_FD_1_0_B30F_0001\\"
 
-#dir1 = r"\\mfad\researchMN\EB036541\YU\PUBLIC\PatientCT_monitoring\DICOMs\5W\ROLAND, THOMAS\IMAGES"
+# dir1 = r"\\mfad\researchMN\EB036541\YU\PUBLIC\PatientCT_monitoring\DICOMs\5W\ROLAND, THOMAS\IMAGES"
 scan_listing = sorted(os.listdir(dir1))
 n_images = len(scan_listing)
 filepaths = [os.path.join(dir1, scan) for scan in scan_listing]
@@ -755,29 +852,41 @@ rFOV = dcm_info.ReconstructionDiameter / 10
 dx = rFOV / Im_Size[0]
 dy = rFOV / Im_Size[1]
 patient_FOV = dcm_info.ReconstructionDiameter  # FOV in mm from DICOM metadata
-patient_matrix = dcm_info.Rows  # Matrix size from DICOM metadata (assumes square matrix)
+patient_matrix = (
+    dcm_info.Rows
+)  # Matrix size from DICOM metadata (assumes square matrix)
 
 # Prepare lesion signals for multiple contrast and size conditions
-lesion_file = Map_dir + '\\For_Jarod\\Liver_lesion_sample\\Patient02-411-920_Lesion1.mat'
-mtf50 = None # 0.434  # From users/Spatial frequency (cycles/mm) where MTF=0.5; replace with CT-specific value
-mtf10 = None # 0.730  # From users/Spatial frequency (cycles/mm) where MTF=0.1; replace or set to None for Gaussian
+lesion_file = (
+    Map_dir + "\\For_Jarod\\Liver_lesion_sample\\Patient02-411-920_Lesion1.mat"
+)
+mtf50 = None  # 0.434  # From users/Spatial frequency (cycles/mm) where MTF=0.5; replace with CT-specific value
+mtf10 = None  # 0.730  # From users/Spatial frequency (cycles/mm) where MTF=0.1; replace or set to None for Gaussian
 Lesion_Contrasts = [-30, -30, -10, -30, -50]  # HU contrast levels
 Lesion_Size = [3, 9, 6, 6, 6]  # Lesion diameters in mm
 ROI_sizes_mm = [14, 19, 17, 17, 17]  # ROI sizes in mm for each condition
 pixel_size = patient_FOV / patient_matrix  # Pixel size in mm (~0.6640625)
 wire_fov_mm = 50
 wire_Matrix_size = 512
+
+
 def round_to_nearest_odd(x):
     """Round to nearest odd integer for ROI sizes."""
     rounded = np.round(x).astype(int)
-    return np.where(rounded % 2 == 0, np.where(rounded > x, rounded - 1, rounded + 1), rounded)
-ROI_sizes = round_to_nearest_odd(np.array(ROI_sizes_mm) / pixel_size)  # Convert mm to pixels
+    return np.where(
+        rounded % 2 == 0, np.where(rounded > x, rounded - 1, rounded + 1), rounded
+    )
+
+
+ROI_sizes = round_to_nearest_odd(
+    np.array(ROI_sizes_mm) / pixel_size
+)  # Convert mm to pixels
 
 # Define reconstruction kernel information
 manufacturer = "Siemens"
 model = "EID Force"
 kernel = "Br44"
-kernel_file = Map_dir + '\\For_Jarod\Recon_Kernels.xlsx'     # ← Update this path
+kernel_file = Map_dir + "\\For_Jarod\Recon_Kernels.xlsx"  # ← Update this path
 
 Lesion_sigs = []
 for i in range(len(Lesion_Contrasts)):
@@ -795,9 +904,9 @@ for i in range(len(Lesion_Contrasts)):
         target_lesion_width=target_lesion_width,
         patient_FOV=patient_FOV,
         patient_matrix=patient_matrix,
-        ROI_size=ROI_size
+        ROI_size=ROI_size,
     )
-    
+
     Lesion_sigs.append(Lesion_sig)
 
 # Calculate CTDIvol and water-equivalent diameter (Dw)
@@ -815,7 +924,7 @@ for i in range(n_images):
     labeled_image, num_labels = measure.label(Mask22, return_num=True)
     if num_labels > 0:
         largest_region = np.argmax(np.bincount(labeled_image.flat)[1:]) + 1
-        binaryImage = (labeled_image == largest_region)
+        binaryImage = labeled_image == largest_region
     else:
         binaryImage = np.zeros_like(Mask22, dtype=bool)
     pixel_No = np.sum(binaryImage)
@@ -839,13 +948,15 @@ body_part = dcm_info.get((0x0018, 0x0015), None)
 if body_part is not None:
     body_part_str = str(body_part.value).strip().upper()
     print(f"Body Part Examined from DICOM: {body_part_str}")
-    
+
     if "ABDOMEN" in body_part_str or "PELVI" in body_part_str:
         # Abdomen / Pelvis / Torso (non-head)
         para_a = 3.704369
         para_b = 0.03671937
         print("Using abdomen parameters for SSDE calculation.")
-    elif "HEAD" in body_part_str or "BRAIN" in body_part_str or "SKULL" in body_part_str:
+    elif (
+        "HEAD" in body_part_str or "BRAIN" in body_part_str or "SKULL" in body_part_str
+    ):
         # Head / Brain / Skull
         para_a = 1.874799
         para_b = 0.03871313
@@ -859,7 +970,9 @@ else:
     # Fallback if tag is missing
     para_a = 3.704369
     para_b = 0.03671937
-    print("Body Part Examined tag (0018,0015) not found. Defaulting to abdomen parameters.")
+    print(
+        "Body Part Examined tag (0018,0015) not found. Defaulting to abdomen parameters."
+    )
 
 # Now compute SSDE using the selected parameters
 f = para_a * np.exp(-para_b * Mean_Dw)
@@ -871,27 +984,31 @@ DLP_SSDE = Scan_len * SSDE
 MTF_10p = 7.30  # Replace with actual MTF 10% value
 
 val = 0.6 / dx
-ROI_size_N = int(2 * np.round((val - 1) / 2) + 1) #round_to_nearest_odd
+ROI_size_N = int(2 * np.round((val - 1) / 2) + 1)  # round_to_nearest_odd
 
 Half_ROI_size_N = round(np.floor(ROI_size_N / 2))
 Thr1 = 0
 Thr2 = 150
 numResample = 500
 internalNoise = 2.25
-Resampling_method = 'Bootstrap'
+Resampling_method = "Bootstrap"
+
 
 # Configure Gabor channels for CHO
-class Chnl: Chnl_Toggle = 'Gabor'
-Chnl_Toggle = 'Gabor'
+class Chnl:
+    Chnl_Toggle = "Gabor"
+
+
+Chnl_Toggle = "Gabor"
 Chnl.Chnl_Toggle = Chnl_Toggle
-if Chnl.Chnl_Toggle == 'Gabor':
-    #Gabor_passband = '[[1/64,1/32], [1/32,1/16]]'
-    #Gabor_theta = '[0, pi/2]'
-    Gabor_passband = '[[1/64,1/32], [1/32,1/16], [1/16,1/8], [1/8,1/4]]'
-    Gabor_theta = '[0, pi/3, 2*pi/3]' 
-    Gabor_beta = '0'
+if Chnl.Chnl_Toggle == "Gabor":
+    # Gabor_passband = '[[1/64,1/32], [1/32,1/16]]'
+    # Gabor_theta = '[0, pi/2]'
+    Gabor_passband = "[[1/64,1/32], [1/32,1/16], [1/16,1/8], [1/8,1/4]]"
+    Gabor_theta = "[0, pi/3, 2*pi/3]"
+    Gabor_beta = "0"
     Chnl = channel_selection(Chnl, Gabor_passband, Gabor_theta, Gabor_beta)
-elif Chnl.Chnl_Toggle == 'Laguerre-Gauss':
+elif Chnl.Chnl_Toggle == "Laguerre-Gauss":
     LG_order = 6
     LG_orien = 3
     Chnl = channel_selection(Chnl, LG_order, LG_orien)
@@ -914,14 +1031,24 @@ Padding_size = 2 * round(1.2 / dx)
 Padding_size = int(Padding_size) if Padding_size % 2 == 0 else int(Padding_size + 1)
 
 
-
 for mm in range(1, n_images // N_sub - 1):
     N1 = (mm - 1) * N_sub
     N2 = mm * N_sub
-    Intel_images = np.zeros([Im_Size[0] + Padding_size, Im_Size[1] + Padding_size, N2 + N_sub * 2 - N1], dtype=np.float32)
-    Intel_images_Square = np.zeros([Im_Size[0] + Padding_size, Im_Size[1] + Padding_size, N2 + N_sub * 2 - N1], dtype=np.float32)
-    Intel_Edge = np.zeros([Im_Size[0] + Padding_size, Im_Size[1] + Padding_size, N2 + N_sub * 2 - N1], dtype=np.float32)
-    Images_Section = np.zeros([Im_Size[0], Im_Size[1], N2 + N_sub * 2 - N1], dtype=np.float32)
+    Intel_images = np.zeros(
+        [Im_Size[0] + Padding_size, Im_Size[1] + Padding_size, N2 + N_sub * 2 - N1],
+        dtype=np.float32,
+    )
+    Intel_images_Square = np.zeros(
+        [Im_Size[0] + Padding_size, Im_Size[1] + Padding_size, N2 + N_sub * 2 - N1],
+        dtype=np.float32,
+    )
+    Intel_Edge = np.zeros(
+        [Im_Size[0] + Padding_size, Im_Size[1] + Padding_size, N2 + N_sub * 2 - N1],
+        dtype=np.float32,
+    )
+    Images_Section = np.zeros(
+        [Im_Size[0], Im_Size[1], N2 + N_sub * 2 - N1], dtype=np.float32
+    )
     for nn in range(N1, N2 + N_sub * 2):
         dcm_info = dcmread(filepaths[nn])
         im1 = dcm_info.pixel_array
@@ -929,18 +1056,41 @@ for mm in range(1, n_images // N_sub - 1):
 
         canny_edges = feature.canny(im10, sigma=5)
         # To exclude exact Canny edge pixels, but also pixels near the edges
-        physical_buffer_mm = 1.5                    # Desired buffer zone around edges (mm). Tune if needed: 1.5~2.5
-        kernel_size = max(3, int(np.round(physical_buffer_mm / (dx * 10))))  #gives the kernel size in pixels for the desired physical buffer in mm.
-        kernel_size = kernel_size if kernel_size % 2 == 1 else kernel_size + 1        
+        physical_buffer_mm = (
+            1.5  # Desired buffer zone around edges (mm). Tune if needed: 1.5~2.5
+        )
+        kernel_size = max(
+            3, int(np.round(physical_buffer_mm / (dx * 10)))
+        )  # gives the kernel size in pixels for the desired physical buffer in mm.
+        kernel_size = kernel_size if kernel_size % 2 == 1 else kernel_size + 1
 
         structure = np.ones((kernel_size, kernel_size), dtype=bool)
-        dilated_edges = binary_dilation(canny_edges, structure=structure)        
+        dilated_edges = binary_dilation(canny_edges, structure=structure)
 
         Images_Section[:, :, nn - N1] = im10
-        Intel_Edge[:, :, nn - N1] = Integral_image(dilated_edges, [Padding_size, Padding_size], 'replicate')
-        Intel_images[:, :, nn - N1] = Integral_image(im10, [Padding_size, Padding_size], 'replicate')
-        Intel_images_Square[:, :, nn - N1] = Integral_image(im10**2, [Padding_size, Padding_size], 'replicate')
-    STD_all = calculate_std_dev(Intel_images, Intel_images_Square, Intel_Edge, ROI_size_N, Padding_size, Im_Size, N1, N2, N_sub, Thr1, Thr2, corrected=False)
+        Intel_Edge[:, :, nn - N1] = Integral_image(
+            dilated_edges, [Padding_size, Padding_size], "replicate"
+        )
+        Intel_images[:, :, nn - N1] = Integral_image(
+            im10, [Padding_size, Padding_size], "replicate"
+        )
+        Intel_images_Square[:, :, nn - N1] = Integral_image(
+            im10**2, [Padding_size, Padding_size], "replicate"
+        )
+    STD_all = calculate_std_dev(
+        Intel_images,
+        Intel_images_Square,
+        Intel_Edge,
+        ROI_size_N,
+        Padding_size,
+        Im_Size,
+        N1,
+        N2,
+        N_sub,
+        Thr1,
+        Thr2,
+        corrected=False,
+    )
     max_value = np.nanmax(STD_all)
     h_Values, edges = np.histogram(STD_all.flatten(), bins=np.arange(0, max_value, 0.2))
     whichbin_SD = np.argmax(h_Values)
@@ -948,10 +1098,14 @@ for mm in range(1, n_images // N_sub - 1):
     Noise_level_local[mm - 1] = bin_edge
     if NPS_Cal and (mm == (num_groups // 2 + 1)):
         print(f"Calculating NPS from the middle period (group {mm})")
-        ROI_All_NPS, Total_NPS_No = extract_ROIs(STD_all, bin_edge, Half_ROI_size_N, Images_Section, Im_Size)
+        ROI_All_NPS, Total_NPS_No = extract_ROIs(
+            STD_all, bin_edge, Half_ROI_size_N, Images_Section, Im_Size
+        )
         # Use up to 200 ROIs (or all available if fewer)
         num_nps_rois = min(200, Total_NPS_No)
-        Spatial_freq, NPS_1D_sum, noise_level_sum, unit = ROI_to_NPS_Sum(ROI_size_N, ROI_All_NPS[:, :, 0:num_nps_rois], dx, dy)    
+        Spatial_freq, NPS_1D_sum, noise_level_sum, unit = ROI_to_NPS_Sum(
+            ROI_size_N, ROI_All_NPS[:, :, 0:num_nps_rois], dx, dy
+        )
         Total_NPS_Num = num_nps_rois
         NPS_Cal = False
     del STD_all
@@ -979,8 +1133,23 @@ for mm in range(1, n_images // N_sub - 1):
         if ii in [3, 4]:
             print("use same ROI_All")
         else:
-            STD_map_all = calculate_std_dev(Intel_images, Intel_images_Square, Intel_Edge, ROI_size, Padding_size, Im_Size, N1, N2, N_sub, Thr1, Thr2, corrected=False)
-            ROI_All, Total_NPS_No = extract_ROIs(STD_map_all, Thre_SD, Half_ROI_size, Images_Section, Im_Size)
+            STD_map_all = calculate_std_dev(
+                Intel_images,
+                Intel_images_Square,
+                Intel_Edge,
+                ROI_size,
+                Padding_size,
+                Im_Size,
+                N1,
+                N2,
+                N_sub,
+                Thr1,
+                Thr2,
+                corrected=False,
+            )
+            ROI_All, Total_NPS_No = extract_ROIs(
+                STD_map_all, Thre_SD, Half_ROI_size, Images_Section, Im_Size
+            )
         Noise_ROI = ROI_All[:, :, 0:Total_NPS_No]
         depth = Noise_ROI.shape[2]
         for i in range(depth):
@@ -989,9 +1158,13 @@ for mm in range(1, n_images // N_sub - 1):
         N_total = Noise_ROI.shape[2]
         sample_idx = np.random.permutation(N_total)
         channelMatrix = ChannelMatrix_Generation(Chnl, ROI_size)
-        bkg_ordered = np.reshape(Noise_ROI[:, :, sample_idx], (ROI_size**2, len(sample_idx)))
+        bkg_ordered = np.reshape(
+            Noise_ROI[:, :, sample_idx], (ROI_size**2, len(sample_idx))
+        )
         sig_true = np.reshape(lesion_sig, (ROI_size**2, 1))
-        dp = CHO_patient_with_resampling(sig_true, bkg_ordered, channelMatrix, internalNoise, Resampling_method)
+        dp = CHO_patient_with_resampling(
+            sig_true, bkg_ordered, channelMatrix, internalNoise, Resampling_method
+        )
         all_dps.append(dp)
     All_dps[mm - 1, :] = all_dps
     del Intel_images, Intel_images_Square, Intel_Edge, Images_Section
@@ -1020,7 +1193,7 @@ plt.show()
 
 # Compute and print statistics
 fav, peakfrequency, k, min10percent_frequency = NPS_statistics(NPS_1D, unit)
-print(f'peakfrequency          = {peakfrequency:.3f} cycles/cm')
-print(f'averagefrequency       = {fav:.3f} cycles/cm')
-print(f'min10percent_frequency = {min10percent_frequency:.3f} cycles/cm')
-print(f'average noise level    = {Ave_noise_level:.3f} HU')
+print(f"peakfrequency          = {peakfrequency:.3f} cycles/cm")
+print(f"averagefrequency       = {fav:.3f} cycles/cm")
+print(f"min10percent_frequency = {min10percent_frequency:.3f} cycles/cm")
+print(f"average noise level    = {Ave_noise_level:.3f} HU")

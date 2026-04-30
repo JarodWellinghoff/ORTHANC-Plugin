@@ -3,6 +3,7 @@
 
 import json
 
+
 import numpy as np
 from numpy import random
 from numpy.linalg import inv
@@ -10,12 +11,14 @@ import os
 from pydicom import dcmread
 import matplotlib.pyplot as plt
 from scipy import ndimage
+from scipy.stats import linregress
 from skimage import feature, measure
 import math
 import pandas as pd
 import scipy.io as sio
 from scipy.signal import convolve2d
-from scipy.optimize import minimize
+from skimage.transform import resize
+from scipy.optimize import minimize, differential_evolution, curve_fit
 from scipy.interpolate import (
     interp1d,
     make_interp_spline,
@@ -24,6 +27,125 @@ from scipy.interpolate import (
 from scipy.ndimage import binary_dilation
 import gc
 import pathlib
+from matplotlib.widgets import Slider
+from sklearn.metrics import mean_absolute_percentage_error
+from dataclasses import dataclass
+from typing import Optional
+
+
+@dataclass
+class SmoothnessResult:
+    high_freq_ratio: float  # fraction of power above cutoff
+    spectral_centroid: float  # normalised power-weighted mean frequency
+    sobolev_norm_H1: float  # H^1 semi-norm (unnormalised)
+    spectral_slope: float  # power-law decay exponent s (higher = smoother)
+    smoothness_score: float  # composite score in [0, 1]
+
+    def __str__(self) -> str:
+        return (
+            f"Smoothness report\n"
+            f"  High-freq ratio    : {self.high_freq_ratio:.4f}   (low is smooth)\n"
+            f"  Spectral centroid  : {self.spectral_centroid:.4f}   (low is smooth)\n"
+            f"  Sobolev H1 norm    : {self.sobolev_norm_H1:.4e}  (low is smooth)\n"
+            f"  Spectral slope     : {self.spectral_slope:.4f}   (high is smooth)\n"
+            f"  Smoothness score   : {self.smoothness_score:.4f}   [0=rough, 1=smooth]"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Core function
+# ---------------------------------------------------------------------------
+
+
+def measure_smoothness(
+    signal: np.ndarray,
+    cutoff_fraction: float = 0.2,
+    window: bool = True,
+    fit_range: Optional[tuple[float, float]] = (0.02, 0.45),
+) -> SmoothnessResult:
+    """
+    Measure the smoothness of a 1D signal.
+
+    Parameters
+    ----------
+    signal : array_like
+        1D input array (real-valued).
+    cutoff_fraction : float
+        Normalised frequency threshold for the high-freq ratio (0-0.5).
+        Default 0.2 means the top 60 % of the spectrum is "high frequency".
+    window : bool
+        Apply a Hann window before computing the DFT to reduce spectral
+        leakage.  Recommended for non-periodic signals.
+    fit_range : tuple(float, float) or None
+        Normalised frequency range (0-0.5) over which to fit the spectral
+        slope.  Set to None to use the full one-sided spectrum (excluding DC).
+
+    Returns
+    -------
+    SmoothnessResult
+    """
+    signal = np.asarray(signal, dtype=float)
+    if signal.ndim != 1:
+        raise ValueError("signal must be 1-D")
+
+    N = len(signal)
+
+    # --- optional windowing ---
+    s = signal - signal.mean()  # remove DC before windowing
+    if window:
+        s = s * np.hanning(N)
+
+    # --- DFT (one-sided) ---
+    X = np.fft.rfft(s)
+    power = np.abs(X) ** 2  # power spectrum
+    freqs = np.fft.rfftfreq(N)  # normalised frequencies [0, 0.5]
+    K = len(freqs)
+
+    total_power = power.sum()
+    if total_power == 0:
+        raise ValueError("Signal has zero power (constant array).")
+
+    # --- 1. High-frequency energy ratio ---
+    high_mask = freqs > cutoff_fraction
+    high_freq_ratio = power[high_mask].sum() / total_power
+
+    # --- 2. Spectral centroid (normalised) ---
+    spectral_centroid = float(np.dot(freqs, power) / total_power) / 0.5  # norm to [0,1]
+
+    # --- 3. Sobolev H1 semi-norm ---
+    k_indices = np.arange(K)
+    sobolev_H1 = float(np.dot(k_indices**2, power))
+
+    # --- 4. Spectral slope via log-log linear regression ---
+    # Exclude DC (index 0) and optionally restrict to fit_range
+    if fit_range is not None:
+        mask = (freqs > fit_range[0]) & (freqs <= fit_range[1])
+    else:
+        mask = freqs > 0
+
+    if mask.sum() < 5:
+        spectral_slope = float("nan")
+    else:
+        log_k = np.log10(freqs[mask])
+        log_amp = np.log10(np.abs(X[mask]) + 1e-12)
+        slope, _, _, _, _ = linregress(log_k, log_amp)
+        spectral_slope = float(-slope)  # positive s means decay |X|~k^{-s}
+
+    # --- 5. Composite smoothness score ---
+    # Map spectral slope to [0,1]: slope=0 -> 0, slope>=4 -> ~1
+    # Sigmoid-like clamping avoids score being dominated by outliers.
+    if np.isfinite(spectral_slope):
+        smoothness_score = float(np.clip(spectral_slope / 4.0, 0.0, 1.0))
+    else:
+        smoothness_score = float("nan")
+
+    return SmoothnessResult(
+        high_freq_ratio=float(high_freq_ratio),
+        spectral_centroid=float(spectral_centroid),
+        sobolev_norm_H1=sobolev_H1,
+        spectral_slope=spectral_slope,
+        smoothness_score=smoothness_score,
+    )
 
 
 def get_mtf_from_excel(kernel_file: str, manufacturer: str, model: str, kernel: str):
@@ -366,82 +488,40 @@ def max_consecutive_ones_2d(bool_array_2d):
 # --------------------------------------------------------------
 #  NEW: Damped-cosine PSF (replaces super-Gaussian)
 # --------------------------------------------------------------
-def simulate_psf_damped_cosine(mtf50, mtf10=None, size=513, wire_fov_mm=50.0):
+def simulate_psf_damped_cosine(mtf50, mtf10=np.nan, size=513, wire_fov_mm=50.0):
     """
     Damped-cosine PSF:   exp(-r/τ) * cos(k·r)
     • mtf10 is None → pure Gaussian (k=0) with analytic τ from mtf50
     • mtf10 given   → optimise τ and k to hit MTF(mtf50)=0.5 and MTF(mtf10)=0.1
     """
-    if size % 2 == 0:
-        size += 1
-    half = size // 2
-    dx = wire_fov_mm / size
-    x = np.linspace(-half, half, size) * dx
-    y = np.linspace(-half, half, size) * dx
-    X, Y = np.meshgrid(x, y)
-    R = np.sqrt(X**2 + Y**2)
-
-    # ----- radial MTF from a 2-D PSF (same helper used by the old code) -----
-    def compute_mtf_from_psf(psf):
-        psf = psf / psf.sum()
-        FT = np.fft.fft2(np.fft.ifftshift(psf))
-        mtf2d = np.fft.fftshift(np.abs(FT))
-        mtf2d /= np.max(mtf2d)
-        N = psf.shape[0]
-        centre = N // 2
-        fx = np.fft.fftshift(np.fft.fftfreq(N, d=dx))
-        fy = np.fft.fftshift(np.fft.fftfreq(N, d=dx))
-        Fx, Fy = np.meshgrid(fx, fy)
-        F = np.sqrt(Fx**2 + Fy**2)
-        f_rad = F[centre, centre:]
-        mtf_rad = mtf2d[centre, centre:]
-        return interp1d(
-            f_rad, mtf_rad, kind="linear", bounds_error=False, fill_value=0.0
-        )
-
-    # ----- Case 1: only mtf50 → Gaussian (k = 0) -----
-    if mtf10 is None:
-        # Analytic σ for a Gaussian that gives MTF(mtf50) = 0.5
-        sigma = np.sqrt(-np.log(0.5) / (2 * np.pi**2 * mtf50**2))
-        psf = np.exp(-(R**2) / (2 * sigma**2))
-        psf /= psf.sum()
-        return psf, dx
-
-    # ----- Case 2: optimise τ and k for both targets -----
-    def objective(params):
-        tau, k = params
-        if tau <= 0 or k < 0:
-            return 1e12
-        # Build PSF (clip negatives – the papers keep them, but for low-contrast
-        # lesion work a non-negative PSF is usually preferred)
-        psf_trial = np.exp(-R / tau) * np.cos(k * R)
-        psf_trial = np.maximum(psf_trial, 0.0)
-        mtf_func = compute_mtf_from_psf(psf_trial)
-        err50 = (mtf_func(mtf50) - 0.5) ** 2
-        err10 = (mtf_func(mtf10) - 0.1) ** 2
-        return err50 + err10
-
-    # Reasonable starting point (Gaussian width + a mild oscillation)
-    tau0 = 1.0 / (np.pi * mtf50)  # ~Gaussian width
-    k0 = 0.6 * np.pi * mtf50  # small ringing
-    res = minimize(
-        objective,
-        [tau0, k0],
-        bounds=[(tau0 * 0.3, tau0 * 3.0), (0.0, 2.0 * np.pi * mtf50)],
-        method="L-BFGS-B",
+    working_size = max(
+        int(2 ** np.ceil(np.log2(wire_fov_mm * np.nanmax([mtf50, mtf10]) * 2)) + 1),
+        size,
     )
+    dx = wire_fov_mm / working_size
+    if np.isnan(mtf10):
+        sigma = np.sqrt(np.log(2) / (2 * np.pi**2)) / mtf50  # physical units
 
-    tau_opt, k_opt = res.x
-    psf = np.exp(-R / tau_opt) * np.cos(k_opt * R)
-    psf = np.maximum(psf, 0.0)  # keep non-negative
+        # PSF (image domain)
+        c = np.arange(working_size) - working_size // 2
+        xx, yy = np.meshgrid(c * dx, c * dx)
+        psf = np.exp(-(xx**2 + yy**2) / (2 * sigma**2))
+    else:
+        n = np.log(np.log(10) / np.log(2)) / np.log(mtf10 / mtf50)
+        fc = mtf50 / np.log(2) ** (1.0 / n)
+
+        # Centered 2D radial frequency grid
+        f = np.fft.fftshift(np.fft.fftfreq(working_size, d=dx))
+        fx, fy = np.meshgrid(f, f)
+        fr = np.hypot(fx, fy)
+
+        mtf2d = np.exp(-((fr / fc) ** n))
+
+        # MTF is real, even, non-negative -> PSF is real, even, non-negative*
+        # *non-negativity not guaranteed for arbitrary MTF shapes; check at runtime
+        psf = np.real(np.fft.fftshift(np.fft.ifft2(np.fft.ifftshift(mtf2d))))
+
     psf /= psf.sum()
-
-    # ----- verification (same style as the old function) -----
-    mtf_func = compute_mtf_from_psf(psf)
-    print(f"Damped-cosine PSF: τ = {tau_opt:.4f} mm, k = {k_opt:.4f} rad/mm")
-    print(f"  MTF({mtf50:.3f}) = {mtf_func(mtf50):.4f} (target 0.5)")
-    print(f"  MTF({mtf10:.3f}) = {mtf_func(mtf10):.4f} (target 0.1)")
-
     return psf, dx
 
 
@@ -533,10 +613,12 @@ def prepare_Lesion_sig(
     patient_FOV,
     patient_matrix,
     ROI_size,
+    PSF_sim,
+    dx_psf,
     wire_fov_mm=50,
     wire_Matrix_size=512,
     mtf50=None,
-    mtf10=None,
+    mtf10=np.nan,
 ):
     """
     Prepare lesion signal (scale → contrast → PSF convolution).
@@ -547,10 +629,10 @@ def prepare_Lesion_sig(
     # 1. Load MTF50 and MTF10 from Excel (new logic)
     # --------------------------------------------------------------
     # if mtf50 is None or mtf10 is None:
-    if mtf50 is None:
-        mtf50, mtf10 = get_mtf_from_excel(kernel_file, manufacturer, model, kernel)
+    # if mtf50 is None:
+    #     mtf50, mtf10 = get_mtf_from_excel(kernel_file, manufacturer, model, kernel)
 
-    print(f"Using MTF50 = {mtf50:.3f}, MTF10 = {mtf10:.3f} for PSF simulation")
+    # print(f"Using MTF50 = {mtf50:.3f}, MTF10 = {mtf10:.3f} for PSF simulation")
 
     # --------------------------------------------------------------
     # 2. Load / create lesion VOI
@@ -587,12 +669,12 @@ def prepare_Lesion_sig(
     # 4. Simulate PSF using MTF50 and MTF10 (always used now)
     # --------------------------------------------------------------
     pixel_spacing_patient = patient_FOV / patient_matrix  # mm/pixel
-    psf_size = wire_Matrix_size + (
-        wire_Matrix_size % 2 == 0
-    )  # ensure odd size for centering
-    PSF_sim, dx_psf = simulate_psf_damped_cosine(
-        mtf50=mtf50, mtf10=mtf10, size=psf_size, wire_fov_mm=wire_fov_mm
-    )
+    # psf_size = wire_Matrix_size + (
+    #     wire_Matrix_size % 2 == 0
+    # )  # ensure odd size for centering
+    # PSF_sim, dx_psf = simulate_psf_damped_cosine(
+    #     mtf50=mtf50, mtf10=mtf10, size=psf_size, wire_fov_mm=wire_fov_mm
+    # )
 
     # Compute presampling MTF (for verification)
     freq, mtf, mtf_eval = compute_presampling_mtf(PSF_sim, dx_psf)
@@ -981,6 +1063,7 @@ def plot_detectability_with_image(
 def plot_noise_with_image(
     dps_location, Noise_level_local, coronal_image, slice_location
 ):
+    print("")
     fig, ax = plt.subplots(num="Noise Level", figsize=(10, 6))
     # try:
     #     xs, cs_values = spline_interpolate(dps_location, Noise_level_local)
@@ -988,7 +1071,12 @@ def plot_noise_with_image(
     # except ValueError as e:
     #     pass
     ax.plot(
-        dps_location, Noise_level_local, "g--", linewidth=2, label="Noise", marker="o"
+        dps_location,
+        Noise_level_local,
+        "g--",
+        linewidth=2,
+        label="Noise",
+        marker="o",
     )
 
     y_min, y_max = ax.get_ylim()
@@ -1012,6 +1100,7 @@ def plot_noise_with_image(
     ax.tick_params(axis="y", labelcolor="g")
 
     fig.tight_layout()
+    # plt.show()
 
 
 def plot_NPS(Spatial_freq, NPS_1D):
@@ -1022,6 +1111,7 @@ def plot_NPS(Spatial_freq, NPS_1D):
     ax.set_ylabel("NPS", fontsize=16)
     ax.grid(True)
     fig.tight_layout()
+    # plt.show()
 
 
 # ---------------------------------------------------------------------------
@@ -1116,8 +1206,17 @@ def main(
     model = "EID Force"
     kernel = "Br44"
     kernel_file = r".\src\data\Recon_Kernels.xlsx"  # ← Update this path
+    psf_size = wire_Matrix_size + (wire_Matrix_size % 2 == 0)
+    if mtf50 is None:
+        mtf50, mtf10 = get_mtf_from_excel(kernel_file, manufacturer, model, kernel)
+
+    PSF_sim, dx_psf = simulate_psf_damped_cosine(
+        mtf50=mtf50, mtf10=mtf10, size=psf_size, wire_fov_mm=wire_fov_mm
+    )
 
     Lesion_sigs = []
+    print(f"Using MTF50 = {mtf50:.3f}, MTF10 = {mtf10:.3f} for PSF simulation")
+
     for i in range(len(Lesion_Contrasts)):
         lesion_con_target = Lesion_Contrasts[i]
         target_lesion_width = Lesion_Size[i]
@@ -1136,6 +1235,8 @@ def main(
             ROI_size=ROI_size,
             mtf50=mtf50,
             mtf10=mtf10,
+            PSF_sim=PSF_sim,
+            dx_psf=dx_psf,
         )
 
         Lesion_sigs.append(Lesion_sig)

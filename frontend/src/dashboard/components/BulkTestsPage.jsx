@@ -170,7 +170,10 @@ const BulkTestsPage = () => {
   const { enqueueSnackbar } = useSnackbar();
   const [filterModel, setFilterModel] = useState({ items: [] });
   const { summary, calculationStates, actions } = useDashboard();
-
+  const [sortModel, setSortModel] = useState([
+    { field: "patientName", sort: "asc" },
+  ]);
+  const sortRef = useRef(sortModel);
   const handleQuery = () => actions.loadSummary(filters);
   const { filters, updateFilter, resetFilters } = useFilters();
   //   console.log(actions.loadSummary(filters));
@@ -200,7 +203,20 @@ const BulkTestsPage = () => {
   }, [calculationStates]);
 
   const shouldWarnOnLeave = runningBulk || activeRunCount > 0;
-
+  const handleSortModelChange = useCallback(
+    (model) => {
+      setSortModel(model);
+      sortRef.current = model;
+      const sort = model[0];
+      actions.loadSummary({
+        ...filters,
+        page: 1,
+        sort_by: sort?.field,
+        sort_order: sort?.sort ?? "asc",
+      });
+    },
+    [actions, filters],
+  );
   useEffect(() => {
     if (!shouldWarnOnLeave) {
       return undefined;
@@ -844,11 +860,16 @@ const BulkTestsPage = () => {
 
   const handlePaginationModelChange = useCallback(
     (model) => {
+      const sort = sortRef.current[0];
+      const sortExtras = sort
+        ? { sort_by: sort.field, sort_order: sort.sort ?? "asc" }
+        : {};
+
       if (model.page !== paginationModel.page) {
-        actions.changePage(model.page + 1);
+        actions.changePage(model.page + 1, sortExtras);
       }
       if (model.pageSize !== paginationModel.pageSize) {
-        actions.changePageSize(model.pageSize);
+        actions.changePageSize(model.pageSize, sortExtras);
       }
     },
     [actions, paginationModel.page, paginationModel.pageSize],
@@ -874,6 +895,9 @@ const BulkTestsPage = () => {
         onFilterModelChange={setFilterModel}
         paginationModel={paginationModel}
         onPaginationModelChange={handlePaginationModelChange}
+        sortingMode='server'
+        sortModel={sortModel}
+        onSortModelChange={handleSortModelChange}
         checkboxSelection
         disableRowSelectionOnClick
         loading={loading}
@@ -882,9 +906,6 @@ const BulkTestsPage = () => {
         showToolbar
         initialState={{
           pagination: { paginationModel: paginationModel },
-          sorting: {
-            sortModel: [{ field: "patientName", sort: "asc" }],
-          },
           columns: {
             columnVisibilityModel: {
               latestAnalysis: false,
