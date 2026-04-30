@@ -586,7 +586,14 @@ class CHOResultsStorage:
             print(traceback.format_exc())
             if self.postgres_connection:
                 self.postgres_connection.rollback()
-
+        # Save coronal view PNG to MinIO after DB commit succeeded.
+        # save_coronal_image handles its own exceptions and returns None on failure,
+        # so a MinIO outage won't mask a successful DB write.
+        if success:
+            coronal_view_data = results.get("coronal_view")
+            series_instance_uid = series.get("series_instance_uid")
+            if coronal_view_data is not None and series_instance_uid:
+                self.save_coronal_image(series_instance_uid, coronal_view_data)
         return success
 
     def save_dicom_headers_only(self, patient, study, scanner, series, ct):

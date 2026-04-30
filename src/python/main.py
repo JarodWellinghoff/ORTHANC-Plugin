@@ -948,40 +948,26 @@ def ServeMinIOImage(output: orthanc.RestOutput, url: str, **request) -> None:
     path_tail = groups[0]
     parts = path_tail.split("/", 1)
     series_instance_uid = parts[0]
-    object_suffix = parts[1] if len(parts) > 1 else None
-    object_name = object_suffix or f"{series_instance_uid}_coronal_view.png"
 
-    response = None
+    image_data = None
     try:
-        try:
-            response = cho_storage.minio_client.get_object(
-                bucket_name=cho_storage.bucket_name, object_name=object_name
-            )
-            image_data = response.read()
-        except Exception as e:
-            print(f"Error retrieving image from MinIO: {str(e)}")
-            error = {"error": "Image not found."}
-            send_json(output, error, status=404)
-            return
-        finally:
-            if response is not None:
-                try:
-                    response.close()  # type: ignore[attr-defined]
-                except Exception:
-                    pass
-                try:
-                    response.release_conn()  # type: ignore[attr-defined]
-                except Exception:
-                    pass
-
-        output.SetHttpHeader(
-            "Cache-Control", "public, max-age=3600"
-        )  # Cache for 1 hour
-        output.AnswerBuffer(image_data, "image/png")
+        image_data = cho_storage.get_coronal_image(series_instance_uid)
     except Exception as e:
-        print(f"Error accessing MinIO: {str(e)}")
-        error = {"error": "Failed to retrieve image from MinIO."}
-        send_json(output, error, status=500)
+        print(f"Error retrieving image from MinIO: {str(e)}")
+        error = {"error": "Image not found."}
+        send_json(output, error, status=404)
+        return
+
+    if not image_data:
+        # Either MinIO client wasn't initialized, the object doesn't exist,
+        # or get_coronal_image swallowed an S3Error. All map to 404 from the
+        # client's perspective — checkImageExists() in dashboard.js will
+        # then resolve(false) and the UI hides the coronal overlay.
+        output.SendHttpStatusCode(404)
+        return
+    # Cache for 1 hour
+    output.SetHttpHeader("Cache-Control", "public, max-age=3600")
+    output.AnswerBuffer(image_data, "image/png")
 
 
 def GetImageMetadata(output: orthanc.RestOutput, url: str, **request) -> None:
