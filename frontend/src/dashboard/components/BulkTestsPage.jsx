@@ -785,7 +785,7 @@ const BulkTestsPage = () => {
                   </span>
                 </Tooltip>
               ) : (
-                <Tooltip title='Run analysis with current settings'>
+                <Tooltip title='Run test in background'>
                   <span>
                     <IconButton
                       size='small'
