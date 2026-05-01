@@ -59,7 +59,10 @@ const ChoAnalysisRoute = () => {
     const matchesSeriesId =
       (choModal.seriesId && String(choModal.seriesId) === normalizedId) ||
       (choModal.seriesUuid && String(choModal.seriesUuid) === normalizedId);
-    if (matchesSeriesId) {
+    const hasProperUuid =
+      choModal.seriesUuid && choModal.seriesUuid !== normalizedId;
+
+    if (matchesSeriesId && hasProperUuid) {
       return;
     }
 
@@ -94,5 +97,3 @@ const ChoAnalysisRoute = () => {
 };
 
 export default ChoAnalysisRoute;
-
-

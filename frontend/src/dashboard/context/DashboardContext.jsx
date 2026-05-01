@@ -701,10 +701,23 @@ export const DashboardProvider = ({ children }) => {
 
     try {
       const data = await fetchJson(`/cho-results/${seriesId}`);
-      setChoModal((prev) => ({
-        ...prev,
-        storedResults: { loading: false, data, error: null },
-      }));
+      setChoModal((prev) => {
+        const next = {
+          ...prev,
+          storedResults: { loading: false, data, error: null },
+        };
+        // If seriesUuid is missing OR equals seriesId (the URL-fallback case on
+        // refresh, where it's actually a SeriesInstanceUID, not the Orthanc UUID),
+        // correct it from the API response.
+        const responseUuid = data?.series_uuid;
+        if (
+          responseUuid &&
+          (!prev.seriesUuid || prev.seriesUuid === prev.seriesId)
+        ) {
+          next.seriesUuid = responseUuid;
+        }
+        return next;
+      });
     } catch (error) {
       setChoModal((prev) => ({
         ...prev,
