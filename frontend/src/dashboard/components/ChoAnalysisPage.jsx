@@ -339,13 +339,50 @@ const ChoAnalysisPage = () => {
   const isStoredLoading = Boolean(storedResults?.loading);
   const storedError = storedResults?.error;
   console.log("availableSeries:", availableSeries);
-  const isAvailableSeries = availableSeries.includes(seriesUuid);
+  const [isAvailableSeries, setIsAvailableSeries] = React.useState(false);
+  const [availabilityChecked, setAvailabilityChecked] = React.useState(false);
   const [currentDICOMIndex, setCurrentDICOMIndex] = React.useState(0);
   const [seriesInstances, setSeriesInstances] = React.useState([]);
   const [dicomTags, setDicomTags] = React.useState([]);
   const currentStageIndex = stageOrder.indexOf(
     progress?.stage ?? "initialization",
   );
+  React.useEffect(() => {
+    if (!seriesUuid) {
+      setIsAvailableSeries(false);
+      setAvailabilityChecked(false);
+      return;
+    }
+
+    // Fast path: if the dashboard happens to have already loaded the list, trust it
+    if (availableSeries.includes(seriesUuid)) {
+      setIsAvailableSeries(true);
+      setAvailabilityChecked(true);
+      return;
+    }
+
+    // Otherwise ask Orthanc directly for this specific series
+    let cancelled = false;
+    setAvailabilityChecked(false);
+    fetch(`${API_BASE_URL}/series/${encodeURIComponent(seriesUuid)}`, {
+      credentials: "include",
+    })
+      .then((res) => {
+        if (cancelled) return;
+        setIsAvailableSeries(res.ok);
+        setAvailabilityChecked(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setIsAvailableSeries(false);
+        setAvailabilityChecked(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [seriesUuid, availableSeries]);
+
   React.useEffect(() => {
     fetch("/mtfc_data.csv")
       .then((response) => {

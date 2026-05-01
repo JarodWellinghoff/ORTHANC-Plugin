@@ -69,7 +69,7 @@ const ChoAnalysisRoute = () => {
     const matchingSeries = extractMatchingSeries(summary.items, normalizedId);
     const fallbackSeries = {
       series_id: normalizedId,
-      series_uuid: normalizedId,
+      //   series_uuid: normalizedId,
       series_instance_uid: normalizedId,
     };
 

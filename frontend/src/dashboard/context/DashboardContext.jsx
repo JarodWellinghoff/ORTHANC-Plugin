@@ -706,13 +706,7 @@ export const DashboardProvider = ({ children }) => {
 
   const openChoModal = useCallback((series) => {
     if (!series) return;
-    const uuid =
-      series.series_uuid ??
-      series.seriesUuid ??
-      series.uuid ??
-      series.series_id ??
-      series.series_instance_uid ??
-      null;
+    const uuid = series.series_uuid ?? series.seriesUuid ?? series.uuid ?? null;
     const id =
       series.series_id ?? series.series_instance_uid ?? series.seriesId ?? null;
 
