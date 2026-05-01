@@ -1035,7 +1035,14 @@ def plot_detectability_with_image(
     #     ax1.plot(xs, cs_values, "b-", linewidth=2, label="DPS (Interpolated)")
     # except ValueError as e:
     #     pass
-    ax1.plot(dps_location, Mean_loc_dps, "g--", linewidth=2, label="DPS", marker="o")
+    ax1.plot(
+        dps_location,
+        Mean_loc_dps,
+        "r--",
+        linewidth=2,
+        label="Detectability Index",
+        marker="o",
+    )
 
     y_min, y_max = ax1.get_ylim()
 
@@ -1075,7 +1082,7 @@ def plot_noise_with_image(
         Noise_level_local,
         "g--",
         linewidth=2,
-        label="Noise",
+        label="Noise Level (HU)",
         marker="o",
     )
 
@@ -1096,8 +1103,7 @@ def plot_noise_with_image(
     )
 
     ax.set_xlabel("Z Location (mm)")
-    ax.set_ylabel("Noise Level (HU)", color="g")
-    ax.tick_params(axis="y", labelcolor="g")
+    ax.set_ylabel("Noise Level (HU)")
 
     fig.tight_layout()
     # plt.show()

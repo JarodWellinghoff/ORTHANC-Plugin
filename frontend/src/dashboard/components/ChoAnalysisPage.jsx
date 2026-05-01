@@ -336,8 +336,9 @@ const ChoAnalysisPage = () => {
   const hasComparison = Boolean(results && storedResults?.data);
   const baselineResults = hasComparison ? storedResults.data : null;
   const comparisonCurrent = hasComparison ? results : null;
-  const isStoredLoading = Boolean(storedResults?.loading && !results);
+  const isStoredLoading = Boolean(storedResults?.loading);
   const storedError = storedResults?.error;
+  console.log("availableSeries:", availableSeries);
   const isAvailableSeries = availableSeries.includes(seriesUuid);
   const [currentDICOMIndex, setCurrentDICOMIndex] = React.useState(0);
   const [seriesInstances, setSeriesInstances] = React.useState([]);
@@ -588,7 +589,7 @@ const ChoAnalysisPage = () => {
   const [dialogDismissedDuringRun, setDialogDismissedDuringRun] =
     React.useState(false);
   const [showButtonProgress, setShowButtonProgress] = React.useState(false);
-  const isAnalysisRunning = stage === "progress";
+  const isAnalysisRunning = stage === "running";
   const rawProgressValue =
     typeof progress?.value === "number" ? progress.value : 0;
   const buttonProgressValue = isAnalysisRunning
@@ -603,7 +604,11 @@ const ChoAnalysisPage = () => {
     ? normalizedProgressMessage || progressStageLabel || "Processing..."
     : "Start CHO analysis";
   const startButtonDisabled =
-    (!seriesId && !isAnalysisRunning) || !isAvailableSeries;
+    !seriesId || isAnalysisRunning || !isAvailableSeries;
+  console.log("!seriesId", !seriesId);
+  console.log("isAnalysisRunning", isAnalysisRunning);
+  console.log("isAvailableSeries", isAvailableSeries);
+  console.log("startButtonDisabled", startButtonDisabled);
 
   const metadataSections = React.useMemo(() => {
     if (!displayedResults) return [];
@@ -1238,7 +1243,7 @@ const ChoAnalysisPage = () => {
                   variant='contained'
                   startIcon={<PlayArrowIcon />}
                   onClick={handleStartAnalysis}
-                  disabled={isAnalysisRunning || startButtonDisabled}
+                  disabled={startButtonDisabled}
                   sx={{
                     position: "relative",
                     overflow: "hidden",

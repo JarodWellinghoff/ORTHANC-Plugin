@@ -609,7 +609,7 @@ export const DashboardProvider = ({ children }) => {
         });
       });
 
-      source.addEventListener("progress", (event) => {
+      source.addEventListener("cho-calculation", (event) => {
         if (!mountedRef.current) return;
         let entry;
         try {
@@ -621,10 +621,63 @@ export const DashboardProvider = ({ children }) => {
           entry.series_id ?? entry.series_uuid ?? entry.seriesId ?? null;
         if (!rawId) return;
         const id = String(rawId);
+        const eventType = entry.eventType ?? "progress";
+
+        // Bulk page state — keep as before
         setCalculationStates((prev) => ({
           ...prev,
-          [id]: { ...(prev[id] ?? {}), ...entry, _event: "progress" },
+          [id]: { ...(prev[id] ?? {}), ...entry, _event: eventType },
         }));
+
+        // Mirror into choModal when this event is for the currently open analysis
+        setChoModal((prev) => {
+          if (!prev.open) return prev;
+          const matchesOpen =
+            id === String(prev.seriesUuid ?? "") ||
+            id === String(prev.seriesId ?? "");
+          if (!matchesOpen) return prev;
+
+          if (eventType === "completed") {
+            return {
+              ...prev,
+              stage: "results",
+              results: entry.results ?? prev.results,
+              progress: {
+                value: 100,
+                message: entry.message ?? "Calculation completed",
+                stage: entry.current_stage ?? "completed",
+              },
+              pollError: null,
+            };
+          }
+          if (eventType === "failed") {
+            return {
+              ...prev,
+              stage: "config",
+              pollError: entry.error ?? entry.message ?? "Calculation failed",
+              progress: {
+                value: prev.progress?.value ?? 0,
+                message: entry.message ?? "Calculation failed",
+                stage: entry.current_stage ?? "error",
+              },
+            };
+          }
+          // start | progress
+          return {
+            ...prev,
+            stage: "running",
+            progress: {
+              value:
+                typeof entry.progress === "number"
+                  ? entry.progress
+                  : (prev.progress?.value ?? 0),
+              message:
+                entry.message ?? prev.progress?.message ?? "Processing...",
+              stage:
+                entry.current_stage ?? prev.progress?.stage ?? "initialization",
+            },
+          };
+        });
       });
 
       source.onerror = () => {
