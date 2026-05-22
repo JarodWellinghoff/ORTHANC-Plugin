@@ -25,12 +25,14 @@ const statusColorMap = {
   full: "success",
   partial: "warning",
   error: "error",
+  untested: "default",
 };
 
 const statusLabelMap = {
-  full: "Full",
+  full: "Tested",
   partial: "Global Noise",
   error: "Error",
+  untested: "Untested",
 };
 
 const formatDateTime = (value) => {

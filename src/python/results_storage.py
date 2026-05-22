@@ -79,12 +79,10 @@ class CHOResultsStorage:
         try:
             with self.postgres_connection.cursor() as cursor:
                 # Check for required schemas
-                cursor.execute(
-                    """
+                cursor.execute("""
                     SELECT schema_name FROM information_schema.schemata 
                     WHERE schema_name IN ('dicom', 'analysis')
-                """
-                )
+                """)
                 schemas = [row[0] for row in cursor.fetchall()]
 
                 # Check for key tables
@@ -709,8 +707,7 @@ class CHOResultsStorage:
 
         try:
             with self.postgres_connection.cursor() as cursor:
-                cursor.execute(
-                    """
+                cursor.execute("""
                     WITH counts AS (
                         SELECT
                         COUNT(*) AS total_results_count,
@@ -732,8 +729,7 @@ class CHOResultsStorage:
                         total_results_count
                             - (global_noise_count + detectability_count) AS error_count
                     FROM counts;
-                """
-                )
+                """)
                 return cursor.fetchone()
         except Exception as e:
             self.postgres_connection.rollback()
@@ -848,7 +844,7 @@ class CHOResultsStorage:
         if conditions:
             where_clause = " WHERE " + " AND ".join(conditions)
 
-        having_clause = " HAVING COUNT(r.id) > 0"
+        having_clause = ""
 
         # Count total results for pagination
         count_query = f"""
@@ -892,6 +888,17 @@ class CHOResultsStorage:
                         pull_info.display_name AS pull_schedule_name,
 
                         CASE
+                        -- No analysis row at all for this series → never tested.
+                        -- Distinct from 'error', which means a row exists but produced no usable metrics.
+                        WHEN COUNT(r.id) FILTER (
+                                WHERE 
+                                (ctdivol, ctdivol_avg, dlp, dlp_ssde, dw, dw_avg, "location", ssde) IS NULL
+                            AND (average_frequency, average_index_of_detectability, average_noise_level,
+                                    cho_detectability, location_sparse, noise_level, nps, peak_frequency,
+                                    percent_10_frequency, spatial_frequency, spatial_resolution) IS NULL
+                            ) > 0
+                            THEN 'untested'
+
                         WHEN COUNT(r.id) FILTER (
                                 WHERE 
                                 (ctdivol, ctdivol_avg, dlp, dlp_ssde, dw, dw_avg, "location", ssde) IS NOT NULL
@@ -993,59 +1000,49 @@ class CHOResultsStorage:
                 filter_options = {}
 
                 # Institutes
-                cursor.execute(
-                    """
+                cursor.execute("""
                     SELECT DISTINCT st.institution_name 
                     FROM dicom.study st 
                     WHERE st.institution_name IS NOT NULL 
                     ORDER BY st.institution_name
-                """
-                )
+                """)
                 filter_options["institutes"] = [row[0] for row in cursor.fetchall()]
 
                 # Scanner names (station names)
-                cursor.execute(
-                    """
+                cursor.execute("""
                     SELECT DISTINCT sc.station_name 
                     FROM dicom.scanner sc 
                     WHERE sc.station_name IS NOT NULL 
                     ORDER BY sc.station_name
-                """
-                )
+                """)
                 filter_options["scanner_stations"] = [
                     row[0] for row in cursor.fetchall()
                 ]
 
                 # Protocol names
-                cursor.execute(
-                    """
+                cursor.execute("""
                     SELECT DISTINCT s.protocol_name 
                     FROM dicom.series s 
                     WHERE s.protocol_name IS NOT NULL 
                     ORDER BY s.protocol_name
-                """
-                )
+                """)
                 filter_options["protocol_names"] = [row[0] for row in cursor.fetchall()]
 
                 # Scanner models
-                cursor.execute(
-                    """
+                cursor.execute("""
                     SELECT DISTINCT sc.model_name 
                     FROM dicom.scanner sc 
                     WHERE sc.model_name IS NOT NULL 
                     ORDER BY sc.model_name
-                """
-                )
+                """)
                 filter_options["scanner_models"] = [row[0] for row in cursor.fetchall()]
 
                 # Date range (min and max study dates)
-                cursor.execute(
-                    """
+                cursor.execute("""
                     SELECT MIN(st.study_date), MAX(st.study_date)
                     FROM dicom.study st 
                     WHERE st.study_date IS NOT NULL
-                """
-                )
+                """)
                 date_range = cursor.fetchone()
                 if date_range and date_range[0] and date_range[1]:
                     filter_options["date_range"] = {
@@ -1062,14 +1059,12 @@ class CHOResultsStorage:
                     }
 
                 # ── CHANGED: pull schedule names ──────────────────────────
-                cursor.execute(
-                    """
+                cursor.execute("""
                     SELECT DISTINCT dpb.display_name
                     FROM workflow.dicom_pull_batches dpb
                     WHERE dpb.display_name IS NOT NULL
                     ORDER BY dpb.display_name
-                """
-                )
+                """)
                 filter_options["pull_schedule_names"] = [
                     row[0] for row in cursor.fetchall()
                 ]
@@ -1088,8 +1083,7 @@ class CHOResultsStorage:
 
         try:
             with self.postgres_connection.cursor() as cursor:
-                cursor.execute(
-                    """
+                cursor.execute("""
                     SELECT
                         s.series_instance_uid,
                         p.patient_id,
@@ -1113,8 +1107,7 @@ class CHOResultsStorage:
                     JOIN dicom.patient p ON st.patient_id_fk = p.id
                     JOIN dicom.scanner sc ON s.scanner_id_fk = sc.id
                     ORDER BY r.created_at DESC
-                """
-                )
+                """)
                 rows = cursor.fetchall()
                 if cursor.description is None:
                     return ""

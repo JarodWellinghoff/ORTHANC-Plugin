@@ -102,13 +102,15 @@ const statusColorMap = {
   full: "success",
   partial: "warning",
   error: "error",
+  untested: "default",
   none: "default",
   pending: "default",
 };
 
 const statusLabelMap = {
-  full: "Full",
+  full: "Tested",
   partial: "Global Noise",
+  untested: "Untested",
   error: "Error",
   none: "Unknown",
   pending: "Pending",
@@ -330,7 +332,10 @@ const BulkTestsPage = () => {
         null;
       const statusRaw = (item.test_status ?? "").toLowerCase();
       const status =
-        statusRaw === "full" || statusRaw === "partial" || statusRaw === "error"
+        statusRaw === "full" ||
+        statusRaw === "partial" ||
+        statusRaw === "error" ||
+        statusRaw === "untested"
           ? statusRaw
           : statusRaw || "none";
       const hasDicom =
