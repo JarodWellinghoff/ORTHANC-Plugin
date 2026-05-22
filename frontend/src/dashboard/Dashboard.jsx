@@ -13,6 +13,7 @@ import DashboardContent from "./components/DashboardContent";
 import ChoAnalysisRoute from "./components/ChoAnalysisRoute";
 import ModalsHost from "./components/ModalsHost";
 import AppTheme from "../shared-theme/AppTheme.jsx";
+import HomePage from "./components/HomePage.jsx";
 import BulkTestsPage from "./components/BulkTestsPage.jsx";
 import DicomPullsPage from "./components/DicomPullsPage.jsx";
 import DicomViewerPage from "./components/DicomViewerPage.jsx";
@@ -66,10 +67,8 @@ export default function Dashboard(props) {
                   width: "100%",
                 }}>
                 <Routes>
-                  <Route
-                    path='/'
-                    element={<Navigate to='/main-dashboard' replace />}
-                  />
+                  <Route path='/' element={<Navigate to='/home' replace />} />
+                  <Route path='/home' element={<HomePage />} />
                   <Route
                     path='/results/:seriesId'
                     element={<ChoAnalysisRoute />}
@@ -81,10 +80,7 @@ export default function Dashboard(props) {
                     path='/dicom-viewer/:seriesId'
                     element={<DicomViewerRoute />}
                   />
-                  <Route
-                    path='*'
-                    element={<Navigate to='/main-dashboard' replace />}
-                  />
+                  <Route path='*' element={<Navigate to='/home' replace />} />
                 </Routes>
               </Container>
               <ModalsHost />

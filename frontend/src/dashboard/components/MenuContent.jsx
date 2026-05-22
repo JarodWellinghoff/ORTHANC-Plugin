@@ -7,6 +7,7 @@ import ListItem from "@mui/material/ListItem";
 import ListItemButton from "@mui/material/ListItemButton";
 import ListItemIcon from "@mui/material/ListItemIcon";
 import ListItemText from "@mui/material/ListItemText";
+import HomeRoundedIcon from "@mui/icons-material/HomeRounded";
 import ContentPasteSearchIcon from "@mui/icons-material/ContentPasteSearch";
 import CloudDownloadRoundedIcon from "@mui/icons-material/CloudDownloadRounded";
 import ScienceRoundedIcon from "@mui/icons-material/ScienceRounded";
@@ -15,19 +16,18 @@ import Tooltip from "@mui/material/Tooltip";
 
 const mainNavItems = [
   {
+    text: "Home",
+    icon: HomeRoundedIcon,
+    to: "/home",
+    isActive: (pathname) => pathname === "/" || pathname.startsWith("/home"),
+  },
+  {
     text: "Bulk Tests",
     icon: ScienceRoundedIcon,
     to: "/main-dashboard",
     isActive: (pathname) =>
       pathname.startsWith("/main-dashboard") || pathname.startsWith("/results"),
   },
-  //   {
-  //     text: "Results",
-  //     icon: ContentPasteSearchIcon,
-  //     to: "/results",
-  //     isActive: (pathname) =>
-  //       pathname === "/results" || pathname.startsWith("/results"),
-  //   },
   {
     text: "DICOM Pulls",
     icon: CloudDownloadRoundedIcon,
