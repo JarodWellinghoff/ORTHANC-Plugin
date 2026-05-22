@@ -1040,7 +1040,6 @@ def plot_detectability_with_image(
         Mean_loc_dps,
         "r--",
         linewidth=2,
-        label="Detectability Index",
         marker="o",
     )
 
@@ -1061,8 +1060,7 @@ def plot_detectability_with_image(
     )
 
     ax1.set_xlabel("Z Location (mm)")
-    ax1.set_ylabel("DPS", color="g")
-    ax1.tick_params(axis="y", labelcolor="g")
+    ax1.set_ylabel("Detectability Index")
 
     fig.tight_layout()
 

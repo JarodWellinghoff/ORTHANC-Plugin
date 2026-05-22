@@ -44,7 +44,7 @@ const chartContainerSx = {
   borderColor: "divider",
   position: "relative",
   p: 1,
-  height: 359,
+  height: 400,
   //   flex: 1,
 };
 

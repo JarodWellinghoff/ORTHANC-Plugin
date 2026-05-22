@@ -182,3 +182,4 @@ ssl
 src/data/
 docker/
 run_test.py
+**/figures/*
