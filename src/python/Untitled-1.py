@@ -4,9 +4,9 @@ Universal MTF template fitter.
 Goal
 ----
 Produce ONE (v_bps, bumps) pair so that, for *any* anchor tuple
-    (mtf100, sf100, mtf050, mtf010, mtf002),
+    (f_peak, eta_peak, f_50, f_10, f_2),
 calling
-    simulate_mtf(fr, mtf100, sf100, mtf050, mtf010, mtf002, V_BPS, BUMPS)
+    simulate_mtf(fr, f_peak, eta_peak, f_50, f_10, f_2, V_BPS, BUMPS)
 yields a sensible smooth MTF curve --- no per-curve refitting needed.
 
 How the universality works
@@ -22,15 +22,15 @@ all parameter tuples.
 z100 redesign
 -------------
 The previous z100 was
-    z100 = (1 - sf100) * cos(pi*f/mtf100) / 2
-which gives (1-sf100)/2 at f=0 and (sf100-1)/2 at f=mtf100 -- neither
-matches the anchor values 1.0 and sf100. The previous per-curve fit
+    z100 = (1 - eta_peak) * cos(pi*f/f_peak) / 2
+which gives (1-eta_peak)/2 at f=0 and (eta_peak-1)/2 at f=f_peak -- neither
+matches the anchor values 1.0 and eta_peak. The previous per-curve fit
 worked because the alphas absorbed that mismatch, but a universal
 template cannot rely on per-curve absorption. The new z100 is a clean
 cosine rise that exactly hits both anchors:
     z100(0)       = mtf_dc  (= 1 by default)
-    z100(mtf100)  = sf100
-    z100(f > mtf100) = sf100  (plateau)
+    z100(f_peak)  = eta_peak
+    z100(f > f_peak) = eta_peak  (plateau)
 With this, alpha100 = 1 in region 0 produces the correct rising shape
 exactly, leaving the optimizer free to focus on subtler details elsewhere.
 
@@ -63,54 +63,56 @@ DEFAULT_PERCENTILES = (0.5, 0.1, 0.02)
 # ============================================================
 # Model components (curve-specific; redesigned z100)
 # ============================================================
-def compute_z_components(fr, mtf100, sf100, mtf050, mtf010, mtf002, mtf_dc=1.0):
+def compute_z_components(fr, f_peak, eta_peak, f_50, f_10, f_2, mtf_dc=1.0):
     """Five MTF shape components.
 
-    z100 (REDESIGNED): cosine rise from mtf_dc at f=0 to sf100 at f=mtf100,
-                       then plateau at sf100. Matches anchors exactly.
-    z050: constant sf100 (plateau component, useful as a blending neutral).
-    z010: power-Gaussian through (mtf050, sf050) and (mtf010, sf010).
-    z002: power-Gaussian through (mtf050, sf050) and (mtf002, sf002).
+    z100 (REDESIGNED): cosine rise from mtf_dc at f=0 to eta_peak at f=f_peak,
+                       then plateau at eta_peak. Matches anchors exactly.
+    z050: constant eta_peak (plateau component, useful as a blending neutral).
+    z010: power-Gaussian through (f_50, eta_50) and (f_10, eta_10).
+    z002: power-Gaussian through (f_50, eta_50) and (f_2, eta_2).
     z000: zero (tail component for decay toward 0).
     """
-    sf050 = 0.5 * sf100
-    sf010 = 0.1 * sf100
-    sf002 = 0.02 * sf100
+    eta_50 = 0.5
+    eta_10 = 0.1
+    eta_2 = 0.02
 
-    L050 = np.log(sf100 / sf050)
-    L010 = np.log(sf100 / sf010)
-    L002 = np.log(sf100 / sf002)
+    l_50 = np.log(eta_peak / eta_50)
+    l_10 = np.log(eta_peak / eta_10)
+    l_2 = np.log(eta_peak / eta_2)
 
-    d050 = max(mtf050 - mtf100, EPS_DEGENERATE)
-    d010 = max(mtf010 - mtf100, EPS_DEGENERATE)
-    d002 = max(mtf002 - mtf100, EPS_DEGENERATE)
+    d_50 = max(f_50 - f_peak, EPS_DEGENERATE)
+    d_10 = max(f_10 - f_peak, EPS_DEGENERATE)
+    d_2 = max(f_2 - f_peak, EPS_DEGENERATE)
 
-    n010 = np.log(L010 / L050) / np.log(d010 / d050)
-    n002 = np.log(L002 / L050) / np.log(d002 / d050)
-    c010 = d050 / (L050 ** (1.0 / n010))
-    c002 = d050 / (L050 ** (1.0 / n002))
+    n_10 = np.log(l_10 / l_50) / np.log(d_10 / d_50)
+    n_2 = np.log(l_2 / l_50) / np.log(d_2 / d_50)
+    c_10 = d_50 / (l_50 ** (1.0 / n_10))
+    c_2 = d_50 / (l_50 ** (1.0 / n_2))
 
     fr = np.asarray(fr, dtype=float)
 
     # --- z100: cosine rise + plateau ---
-    if mtf100 > EPS_DEGENERATE:
-        t = np.clip(fr / mtf100, 0.0, 1.0)
-        rise = mtf_dc + (sf100 - mtf_dc) * (1.0 - np.cos(np.pi * t)) / 2.0
-        z100 = np.where(fr <= mtf100, rise, sf100)
+    if f_peak > EPS_DEGENERATE:
+        t = np.clip(fr / f_peak, 0.0, 1.0)
+        rise = mtf_dc + (eta_peak - mtf_dc) * (1.0 - np.cos(np.pi * t)) / 2.0
+        z_0 = np.where(fr <= f_peak, rise, eta_peak)
     else:
-        z100 = np.full_like(fr, sf100)
+        z_0 = np.full_like(fr, eta_peak)
 
-    z050 = np.full_like(fr, sf100)
+    z_1 = np.full_like(fr, eta_peak)
 
-    z010 = sf100 * np.exp(-(np.maximum((fr - mtf100) / c010, 0.0) ** n010))
-    z010 = np.where(fr < mtf100, sf100, z010)
+    z_2 = eta_peak * np.exp(-(np.maximum((fr - f_peak) / c_10, 0.0) ** n_10))
+    z_2 = np.where(fr < f_peak, eta_peak, z_2)
 
-    z002 = sf100 * np.exp(-(np.maximum((fr - mtf100) / c002, 0.0) ** n002))
-    z002 = np.where(fr < mtf100, sf100, z002)
+    z_3 = eta_peak * np.exp(-(np.maximum((fr - f_peak) / c_2, 0.0) ** n_2))
+    z_3 = np.where(fr < f_peak, eta_peak, z_3)
 
-    z000 = np.zeros_like(fr)
+    z_4 = np.zeros_like(fr)
 
-    return np.stack([z100, z050, z010, z002, z000])
+    z = np.stack([z_0, z_1, z_2, z_3, z_4])
+
+    return z
 
 
 def cosine_ramp_bump(f, r_l, r_h, v_L, v_R, b):
@@ -143,7 +145,7 @@ def alpha_component(fr, v_bps_row, bumps_row, r_l_arr, r_h_arr):
 # The simulator -- the function you'll actually call after fitting
 # ============================================================
 def simulate_mtf(
-    fr, mtf100, sf100, mtf050, mtf010, mtf002, v_bps, bumps, mtf_dc=1.0, f_max=None
+    fr, f_peak, eta_peak, f_50, f_10, f_2, v_bps, bumps, mtf_dc=1.0, f_max=None
 ):
     """Simulate an MTF curve given anchor parameters + universal template.
 
@@ -151,27 +153,27 @@ def simulate_mtf(
     ----------
     fr : array_like
         Frequencies at which to evaluate.
-    mtf100, sf100, mtf050, mtf010, mtf002 : float
-        Anchor parameters. sf100 is the peak MTF value;
-        mtf100 is the frequency at which the peak occurs (0 for non-rising MTFs).
+    f_peak, eta_peak, f_50, f_10, f_2 : float
+        Anchor parameters. eta_peak is the peak MTF value;
+        f_peak is the frequency at which the peak occurs (0 for non-rising MTFs).
     v_bps : array (N_COMPONENTS, N_BPS)
     bumps : array (N_COMPONENTS, N_REGIONS)
     mtf_dc : float, optional
         MTF value at f=0. Defaults to 1.0 (standard normalization).
     f_max : float, optional
         Frequency at which the model's tail region ends. Defaults to
-        max(fr.max(), 1.5*mtf002).
+        max(fr.max(), 1.5*f_2).
     """
     fr = np.atleast_1d(np.asarray(fr, dtype=float))
     if f_max is None:
-        f_max = max(float(fr.max()), mtf002 * 1.5)
+        f_max = max(float(fr.max()), f_2 * 1.5)
 
-    bps = np.array([0.0, mtf100, mtf050, mtf010, mtf002, f_max], dtype=float)
+    bps = np.array([0.0, f_peak, f_50, f_10, f_2, f_max], dtype=float)
     for i in range(1, len(bps)):
         if bps[i] <= bps[i - 1]:
             bps[i] = bps[i - 1] + EPS_DEGENERATE
 
-    z = compute_z_components(fr, mtf100, sf100, mtf050, mtf010, mtf002, mtf_dc)
+    z = compute_z_components(fr, f_peak, eta_peak, f_50, f_10, f_2, mtf_dc)
 
     r_l, r_h = bps[:-1], bps[1:]
     alphas = np.stack(
@@ -188,69 +190,55 @@ def simulate_mtf(
 class MeasuredCurve:
     """A measured MTF curve plus its automatically detected anchors.
 
-    Construct from (fr, mtf) arrays; anchors are detected on init.
+    Construct from (fr, eta) arrays; anchors are detected on init.
     Override `anchors` after construction if you want to set them manually.
     """
 
-    fr: np.ndarray
-    mtf: np.ndarray
+    f: np.ndarray
+    eta: np.ndarray
     label: str = ""
     mtf_dc: float = 1.0
     anchors: dict = field(default_factory=dict)
 
     def __post_init__(self):
-        self.fr = np.asarray(self.fr, dtype=float)
-        self.mtf = np.asarray(self.mtf, dtype=float)
+        self.f = np.asarray(self.f, dtype=float)
+        self.eta = np.asarray(self.eta, dtype=float)
         if not self.anchors:
             self.anchors = self._detect_anchors()
 
     def _detect_anchors(self):
-        f, m = self.fr, self.mtf
-        peak_idx = int(np.argmax(m))
-        sf100 = float(m[peak_idx])
-        mtf100 = float(f[peak_idx])
+        f, eta = self.f, self.eta
+        t = np.linspace(0, 1, len(f))
 
-        decay_f = f[peak_idx:]
-        decay_m = m[peak_idx:]
+        t_new = np.linspace(0, 1, 100001)
+        f_new = np.interp(t_new, t, f)
+        eta_new = np.interp(t_new, t, eta)
 
-        crossings = []
-        for pct in DEFAULT_PERCENTILES:
-            target = pct * sf100
-            below = decay_m <= target
-            if not below.any():
-                # Log-linear extrapolation past data range
-                tail_n = min(5, len(decay_m))
-                tail_m = np.maximum(decay_m[-tail_n:], 1e-12)
-                slope, intercept = np.polyfit(decay_f[-tail_n:], np.log(tail_m), 1)
-                if slope < -1e-6 and target > 0:
-                    f_target = (np.log(target) - intercept) / slope
-                    f_target = float(
-                        np.clip(
-                            f_target,
-                            decay_f[-1] + EPS_DEGENERATE,
-                            decay_f[-1] + 3 * (decay_f[-1] - decay_f[0] + 1e-9),
-                        )
-                    )
-                    crossings.append(f_target)
-                else:
-                    crossings.append(float(decay_f[-1] + EPS_DEGENERATE))
-                continue
-            j = int(np.argmax(below))
-            if j == 0:
-                crossings.append(float(decay_f[0]))
-            else:
-                y0, y1 = decay_m[j - 1], decay_m[j]
-                x0, x1 = decay_f[j - 1], decay_f[j]
-                if y0 == y1:
-                    crossings.append(float(x0))
-                else:
-                    crossings.append(float(x0 + (target - y0) / (y1 - y0) * (x1 - x0)))
+        eta_50 = 0.5
+        eta_10 = 0.1
+        eta_2 = 0.02
+
+        idx_peak = eta_new.argmax()
+        idx_50 = np.abs(eta_new - eta_50).argmin()
+        idx_10 = np.abs(eta_new - eta_10).argmin()
+        idx_2 = np.abs(eta_new - eta_2).argmin()
+
+        f_peak = f_new[idx_peak]
+        f_50 = f_new[idx_50]
+        f_10 = f_new[idx_10]
+        f_2 = f_new[idx_2]
+
+        if f_peak == 0:
+            eta_peak = 1
+        else:
+            eta_peak = max(eta_new)
+
         return {
-            "mtf100": mtf100,
-            "sf100": sf100,
-            "mtf050": crossings[0],
-            "mtf010": crossings[1],
-            "mtf002": crossings[2],
+            "f_peak": f_peak,
+            "eta_peak": eta_peak,
+            "f_50": f_50,
+            "f_10": f_10,
+            "f_2": f_2,
         }
 
 
@@ -260,14 +248,14 @@ class MeasuredCurve:
 # Initial template: each component dominates exactly where its z_k passes
 # through the anchor values, with smooth handoffs in between.
 #
-# Breakpoint index ->  0     mtf100 mtf050 mtf010 mtf002 f_max
+# Breakpoint index ->  0     f_peak f_50 f_10 f_2 f_max
 V_BPS_INIT = np.array(
     [
-        [1.0, 1.0, 0.0, 0.0, 0.0, 0.0],  # alpha100: dominates [0, mtf100]
+        [1.0, 1.0, 0.0, 0.0, 0.0, 0.0],  # alpha100: dominates [0, f_peak]
         [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],  # alpha050: passive
-        [0.0, 0.0, 1.0, 1.0, 0.0, 0.0],  # alpha010: dominates [mtf100, mtf010]
-        [0.0, 0.0, 0.0, 0.0, 1.0, 0.0],  # alpha002: dominates [mtf010, mtf002]
-        [0.0, 0.0, 0.0, 0.0, 0.0, 1.0],  # alpha000: dominates [mtf002, end]
+        [0.0, 0.0, 1.0, 1.0, 0.0, 0.0],  # alpha010: dominates [f_peak, f_10]
+        [0.0, 0.0, 0.0, 0.0, 1.0, 0.0],  # alpha002: dominates [f_10, f_2]
+        [0.0, 0.0, 0.0, 0.0, 0.0, 1.0],  # alpha000: dominates [f_2, end]
     ]
 )
 
@@ -323,9 +311,9 @@ def fit_universal_template(
     cases = []
     for c in curves:
         a = c.anchors
-        params = (a["mtf100"], a["sf100"], a["mtf050"], a["mtf010"], a["mtf002"])
-        w = 1.0 / len(c.fr) if normalize_per_curve else 1.0
-        cases.append((params, c.fr, c.mtf, c.mtf_dc, w))
+        params = (a["f_peak"], a["eta_peak"], a["f_50"], a["f_10"], a["f_2"])
+        w = 1.0 / len(c.f) if normalize_per_curve else 1.0
+        cases.append((params, c.f, c.eta, c.mtf_dc, w))
 
     n_l = N_COMPONENTS * N_BPS
     n_b = N_COMPONENTS * N_REGIONS
@@ -369,13 +357,13 @@ def fit_universal_template(
 # ============================================================
 def curve_stats(curve: MeasuredCurve, v_bps, bumps):
     pred = simulate_mtf(
-        curve.fr,
-        *(curve.anchors[k] for k in ("mtf100", "sf100", "mtf050", "mtf010", "mtf002")),
+        curve.f,
+        *(curve.anchors[k] for k in ("f_peak", "eta_peak", "f_50", "f_10", "f_2")),
         v_bps=v_bps,
         bumps=bumps,
         mtf_dc=curve.mtf_dc,
     )
-    err = pred - curve.mtf
+    err = pred - curve.eta
     return {
         "rmse": float(np.sqrt(np.mean(err**2))),
         "max_abs": float(np.max(np.abs(err))),
@@ -383,277 +371,27 @@ def curve_stats(curve: MeasuredCurve, v_bps, bumps):
     }
 
 
-# ============================================================
-# === PLACEHOLDER CORPUS ===
-# Replace this whole section with your real measured curves:
-#
-#   curves = [
-#       MeasuredCurve(fr=fr_array_1, mtf=mtf_array_1, label="Br40 routine"),
-#       MeasuredCurve(fr=fr_array_2, mtf=mtf_array_2, label="Br44 high-res"),
-#       ...
-#   ]
-#
-# The framework auto-detects (mtf100, sf100, mtf050, mtf010, mtf002) per curve.
-# You can override by passing anchors=dict(...) to MeasuredCurve.
-# ============================================================
-ORIGINAL_X = (
-    np.array(
-        [
-            0,
-            0.214225941,
-            0.428451883,
-            0.642677824,
-            0.856903766,
-            1.071129707,
-            1.285355649,
-            1.49958159,
-            1.713807531,
-            1.928033473,
-            2.142259414,
-            2.356485356,
-            2.570711297,
-            2.784937238,
-            2.99916318,
-            3.213389121,
-            3.427615063,
-            3.641841004,
-            3.856066946,
-            4.070292887,
-            4.284518828,
-            4.49874477,
-            4.712970711,
-            4.927196653,
-            5.141422594,
-            5.355648536,
-            5.569874477,
-            5.784100418,
-            5.99832636,
-            6.212552301,
-            6.426778243,
-            6.641004184,
-            6.855230126,
-            7.069456067,
-            7.283682008,
-            7.49790795,
-            7.712133891,
-            7.926359833,
-            8.140585774,
-            8.354811715,
-            8.569037657,
-            8.783263598,
-            8.99748954,
-            9.211715481,
-            9.425941423,
-            9.640167364,
-            9.854393305,
-            10.06861925,
-            10.28284519,
-            10.49707113,
-            10.71129707,
-            10.92552301,
-            11.13974895,
-            11.3539749,
-            11.56820084,
-            11.78242678,
-            11.99665272,
-            12.21087866,
-            12.4251046,
-            12.63933054,
-            12.85355649,
-            13.06778243,
-            13.28200837,
-            13.49623431,
-            13.71046025,
-            13.92468619,
-            14.13891213,
-            14.35313808,
-            14.56736402,
-            14.78158996,
-            14.9958159,
-            15.21004184,
-            15.42426778,
-            15.63849372,
-            15.85271967,
-            16.06694561,
-            16.28117155,
-            16.49539749,
-            16.70962343,
-            16.92384937,
-            17.13807531,
-            17.35230126,
-            17.5665272,
-            17.78075314,
-            17.99497908,
-            18.20920502,
-            18.42343096,
-            18.6376569,
-            18.85188285,
-            19.06610879,
-            19.28033473,
-            19.49456067,
-            19.70878661,
-            19.92301255,
-            20.13723849,
-            20.35146444,
-            20.56569038,
-            20.77991632,
-            20.99414226,
-            21.2083682,
-            21.42259414,
-            21.63682008,
-            21.85104603,
-            22.06527197,
-            22.27949791,
-            22.49372385,
-            22.70794979,
-            22.92217573,
-            23.13640167,
-            23.35062762,
-            23.56485356,
-            23.7790795,
-        ]
-    )
-    / 10.0
-)
-ORIGINAL_Y = np.array(
-    [
-        1.003595888,
-        1.00575259,
-        1.010885573,
-        1.01904904,
-        1.030193138,
-        1.044277676,
-        1.061237749,
-        1.080110038,
-        1.10141589,
-        1.124424547,
-        1.148782427,
-        1.174240251,
-        1.199491317,
-        1.226088663,
-        1.252272209,
-        1.277539716,
-        1.303242317,
-        1.326448752,
-        1.348935129,
-        1.36847065,
-        1.386435409,
-        1.402331154,
-        1.415514182,
-        1.425216462,
-        1.432318904,
-        1.436166616,
-        1.436780988,
-        1.434111966,
-        1.42844795,
-        1.418631042,
-        1.405856661,
-        1.389491074,
-        1.369885043,
-        1.348304151,
-        1.322101111,
-        1.295021123,
-        1.263651061,
-        1.229773645,
-        1.194712313,
-        1.157491459,
-        1.11608372,
-        1.07766997,
-        1.035091709,
-        0.992611221,
-        0.945836773,
-        0.903390897,
-        0.856302026,
-        0.809837148,
-        0.762950615,
-        0.718742622,
-        0.674511456,
-        0.628945415,
-        0.585478379,
-        0.544992339,
-        0.500316701,
-        0.457992155,
-        0.420120382,
-        0.380156758,
-        0.343024717,
-        0.310785915,
-        0.276878562,
-        0.243549628,
-        0.214741701,
-        0.185345753,
-        0.16008791,
-        0.137733964,
-        0.1147742,
-        0.095311378,
-        0.077282246,
-        0.061971318,
-        0.048788149,
-        0.036326938,
-        0.027267812,
-        0.01936426,
-        0.014901,
-        0.012204498,
-        0.011159317,
-        0.011176014,
-        0.01151025,
-        0.011722516,
-        0.011554747,
-        0.011064431,
-        0.010262285,
-        0.00930856,
-        0.008461522,
-        0.007525365,
-        0.006894803,
-        0.00661363,
-        0.006553003,
-        0.006683568,
-        0.006874844,
-        0.00702946,
-        0.007108444,
-        0.007105263,
-        0.006959542,
-        0.006673534,
-        0.006270182,
-        0.005839408,
-        0.005375063,
-        0.004955238,
-        0.004630795,
-        0.004471274,
-        0.004393916,
-        0.004393456,
-        0.004452945,
-        0.004527151,
-        0.00459226,
-        0.004614334,
-        0.004588333,
-        0.004521455,
-        0.004378992,
-        0.004188483,
-    ]
-)
-
-
 def _placeholder_synthetic(anchors, n_f=120, mtf_dc=1.0):
     """Generate a plausible synthetic CT MTF via PCHIP through anchors.
 
     Used only as a stand-in until real measured curves are provided.
     """
-    f_max = anchors["mtf002"] * 1.4
+    f_max = anchors["f_2"] * 1.4
     fr = np.linspace(0.0, f_max, n_f)
     anchor_f = [
         0.0,
-        anchors["mtf100"],
-        anchors["mtf050"],
-        anchors["mtf010"],
-        anchors["mtf002"],
+        anchors["f_peak"],
+        anchors["f_50"],
+        anchors["f_10"],
+        anchors["f_2"],
         f_max,
     ]
     anchor_y = [
         mtf_dc,
-        anchors["sf100"],
-        0.5 * anchors["sf100"],
-        0.1 * anchors["sf100"],
-        0.02 * anchors["sf100"],
+        anchors["eta_peak"],
+        0.5,
+        0.1,
+        0.02,
         0.0,
     ]
     for i in range(1, len(anchor_f)):
@@ -663,11 +401,7 @@ def _placeholder_synthetic(anchors, n_f=120, mtf_dc=1.0):
     return fr, mtf
 
 
-def _placeholder_corpus():
-    """A 6-curve placeholder spanning realistic CT MTF shapes.
-
-    REPLACE THIS with your actual measured curves.
-    """
+def _corpus():
     mtf_dir = r"C:\Users\M297802\Desktop\MTF Curves"
     csv_files = [f for f in os.listdir(mtf_dir) if f.endswith(".csv")]
     real_data = []
@@ -678,43 +412,19 @@ def _placeholder_corpus():
             make = lines[1][0]
             model = lines[1][1]
             kernel = lines[1][7]
-            spatial_freq = np.array(
+            f = np.array(
                 [
                     float(lines[i][3]) / 10
                     for i in range(5, len(lines))
                     if lines[i][3] != ""
                 ]
             )
-            mtf = np.array(
+            eta = np.array(
                 [float(lines[i][4]) for i in range(5, len(lines)) if lines[i][4] != ""]
             )
             real_data.append(
-                MeasuredCurve(
-                    spatial_freq, mtf, label="{} {} {}".format(make, model, kernel)
-                )
+                MeasuredCurve(f, eta, label="{} {} {}".format(make, model, kernel))
             )
-
-    # synthetic_anchor_sets = [
-    #     dict(
-    #         mtf100=0.0, sf100=1.0, mtf050=0.55, mtf010=0.95, mtf002=1.15
-    #     ),  # sharp standard
-    #     dict(
-    #         mtf100=0.0, sf100=1.0, mtf050=0.80, mtf010=1.35, mtf002=1.60
-    #     ),  # softer standard
-    #     dict(
-    #         mtf100=0.1, sf100=1.05, mtf050=0.70, mtf010=1.20, mtf002=1.45
-    #     ),  # mild rise
-    #     dict(
-    #         mtf100=0.4, sf100=1.30, mtf050=1.00, mtf010=1.40, mtf002=1.60
-    #     ),  # strong rise
-    #     dict(
-    #         mtf100=0.0, sf100=1.0, mtf050=0.45, mtf010=0.70, mtf002=0.85
-    #     ),  # very sharp
-    # ]
-    # syns = []
-    # for i, a in enumerate(synthetic_anchor_sets):
-    #     fr, mtf = _placeholder_synthetic(a)
-    #     syns.append(MeasuredCurve(fr=fr, mtf=mtf, label=f"Synth #{i + 1}", anchors=a))
     return real_data
 
 
@@ -722,14 +432,14 @@ def _placeholder_corpus():
 # Demo
 # ============================================================
 if __name__ == "__main__":
-    print("Building corpus (REPLACE _placeholder_corpus with real curves)...")
-    curves = _placeholder_corpus()
+    print("Building corpus...")
+    curves = _corpus()
     for c in curves:
         a = c.anchors
         print(
-            f"  {c.label:35s}  mtf100={a['mtf100']:.3f} sf100={a['sf100']:.3f}  "
-            f"mtf050={a['mtf050']:.3f} mtf010={a['mtf010']:.3f} "
-            f"mtf002={a['mtf002']:.3f}  n_pts={len(c.fr)}"
+            f"  {c.label:35s}  f_peak={a['f_peak']:.3f} eta_peak={a['eta_peak']:.3f}  "
+            f"f_50={a['f_50']:.3f} f_10={a['f_10']:.3f} "
+            f"f_2={a['f_2']:.3f}  n_pts={len(c.f)}"
         )
 
     print(f"\nFitting universal template across {len(curves)} curves...")
@@ -743,7 +453,7 @@ if __name__ == "__main__":
     print("\n=== Universal template ===")
     print(
         "V_BPS (rows: alpha100, alpha050, alpha010, alpha002, alpha000;\n"
-        "       cols: f=0, mtf100, mtf050, mtf010, mtf002, f_max):"
+        "       cols: f=0, f_peak, f_50, f_10, f_2, f_max):"
     )
     with np.printoptions(precision=4, suppress=True):
         print(V_BPS)
@@ -752,7 +462,7 @@ if __name__ == "__main__":
         print(BUMPS)
 
     print(
-        "V_BPS (rows: f=0, mtf100, mtf050, mtf010, mtf002, f_max;\n"
+        "V_BPS (rows: f=0, f_peak, f_50, f_10, f_2, f_max;\n"
         "       cols: alpha100, alpha050, alpha010, alpha002, alpha000):"
     )
     with np.printoptions(precision=4, suppress=True):
@@ -779,36 +489,36 @@ if __name__ == "__main__":
         s = curve_stats(c, V_BPS, BUMPS)
 
         # Dense prediction across the curve
-        fr_dense = np.linspace(c.fr[0], c.fr[-1], 1500)
+        fr_dense = np.linspace(c.f[0], c.f[-1], 1500)
         pred_dense = simulate_mtf(
             fr_dense,
-            c.anchors["mtf100"],
-            c.anchors["sf100"],
-            c.anchors["mtf050"],
-            c.anchors["mtf010"],
-            c.anchors["mtf002"],
+            c.anchors["f_peak"],
+            c.anchors["eta_peak"],
+            c.anchors["f_50"],
+            c.anchors["f_10"],
+            c.anchors["f_2"],
             V_BPS,
             BUMPS,
             mtf_dc=c.mtf_dc,
         )
         anchor_f = [
             0,
-            c.anchors["mtf100"],
-            c.anchors["mtf050"],
-            c.anchors["mtf010"],
-            c.anchors["mtf002"],
+            c.anchors["f_peak"],
+            c.anchors["f_50"],
+            c.anchors["f_10"],
+            c.anchors["f_2"],
         ]
         anchor_y = [
             c.mtf_dc,
-            c.anchors["sf100"],
-            0.5 * c.anchors["sf100"],
-            0.1 * c.anchors["sf100"],
-            0.02 * c.anchors["sf100"],
+            c.anchors["eta_peak"],
+            0.5,
+            0.1,
+            0.02,
         ]
 
         # ax = axes[row, 0] if n > 1 else axes[0]
         ax = axes[0]
-        ax.plot(c.fr, c.mtf, "k.", markersize=3, label="measured")
+        ax.plot(c.f, c.eta, "k.", markersize=3, label="measured")
         ax.plot(fr_dense, pred_dense, "b-", linewidth=1.5, label="universal template")
         ax.plot(anchor_f, anchor_y, "ro", markersize=6, label="anchors")
         for af in anchor_f[1:]:
@@ -823,11 +533,11 @@ if __name__ == "__main__":
         bps_curve = np.array(
             [
                 0.0,
-                c.anchors["mtf100"],
-                c.anchors["mtf050"],
-                c.anchors["mtf010"],
-                c.anchors["mtf002"],
-                max(c.fr[-1], c.anchors["mtf002"] * 1.5),
+                c.anchors["f_peak"],
+                c.anchors["f_50"],
+                c.anchors["f_10"],
+                c.anchors["f_2"],
+                max(c.f[-1], c.anchors["f_2"] * 1.5),
             ]
         )
         for i in range(1, len(bps_curve)):
@@ -859,6 +569,8 @@ if __name__ == "__main__":
         ax.grid(True, alpha=0.3)
         plt.tight_layout()
         plt.savefig(f"figures/{c.label} fit.png", dpi=110)
+        plt.close(fig)
+        print(f"Saved training plot for {c.label} to figures/{c.label} fit.png")
 
     # plt.tight_layout()
     # plt.savefig("universal_template_fit.png", dpi=110)
@@ -867,9 +579,9 @@ if __name__ == "__main__":
     # --- Held-out generalization test: anchors NOT in training corpus ---
     print("\nGeneralization test (anchors NOT in training):")
     holdout_anchor_sets = [
-        dict(mtf100=0.0, sf100=1.0, mtf050=0.65, mtf010=1.10, mtf002=1.35),
-        dict(mtf100=0.2, sf100=1.15, mtf050=0.85, mtf010=1.30, mtf002=1.55),
-        dict(mtf100=0.0, sf100=1.0, mtf050=0.35, mtf010=0.55, mtf002=0.68),
+        dict(f_peak=0.0, eta_peak=1.0, f_50=0.65, f_10=1.10, f_2=1.35),
+        dict(f_peak=0.2, eta_peak=1.15, f_50=0.85, f_10=1.30, f_2=1.55),
+        dict(f_peak=0.0, eta_peak=1.0, f_50=0.35, f_10=0.55, f_2=0.68),
     ]
     fig, axes = plt.subplots(1, 3, figsize=(15, 4))
     print(f"  {'Anchor set':<70s} {'RMSE vs PCHIP-truth':>20s}")
@@ -877,31 +589,31 @@ if __name__ == "__main__":
         fr, truth = _placeholder_synthetic(a)
         pred = simulate_mtf(
             fr,
-            a["mtf100"],
-            a["sf100"],
-            a["mtf050"],
-            a["mtf010"],
-            a["mtf002"],
+            a["f_peak"],
+            a["eta_peak"],
+            a["f_50"],
+            a["f_10"],
+            a["f_2"],
             V_BPS,
             BUMPS,
         )
         rmse = float(np.sqrt(np.mean((pred - truth) ** 2)))
         desc = (
-            f"mtf100={a['mtf100']:.2f} sf100={a['sf100']:.2f} "
-            f"050/010/002={a['mtf050']:.2f}/{a['mtf010']:.2f}/{a['mtf002']:.2f}"
+            f"f_peak={a['f_peak']:.2f} eta_peak={a['eta_peak']:.2f} "
+            f"050/010/002={a['f_50']:.2f}/{a['f_10']:.2f}/{a['f_2']:.2f}"
         )
         print(f"  {desc:<70s} {rmse:>20.3e}")
 
         ax = axes[i]
         ax.plot(fr, truth, "k--", label="PCHIP ground truth", linewidth=1.5)
         ax.plot(fr, pred, "b-", label="universal template", linewidth=1.5)
-        anchor_f = [0, a["mtf100"], a["mtf050"], a["mtf010"], a["mtf002"]]
+        anchor_f = [0, a["f_peak"], a["f_50"], a["f_10"], a["f_2"]]
         anchor_y = [
             1.0,
-            a["sf100"],
-            0.5 * a["sf100"],
-            0.1 * a["sf100"],
-            0.02 * a["sf100"],
+            a["eta_peak"],
+            0.5,
+            0.1,
+            0.02,
         ]
         ax.plot(anchor_f, anchor_y, "ro", markersize=6, label="anchors")
         ax.set_title(f"Holdout #{i + 1}  RMSE={rmse:.2e}")

@@ -61,3 +61,46 @@ CREATE INDEX results_series_fk_idx ON analysis.results USING btree (series_id_fk
 -- analysis.results foreign keys
 
 ALTER TABLE analysis.results ADD CONSTRAINT results_series_id_fk_fkey FOREIGN KEY (series_id_fk) REFERENCES dicom.series(id) ON DELETE CASCADE;
+
+
+-- analysis.mtf definition
+-- Stores MTF curve parameters per results row and lesion set.
+-- Note: the original schema had a typo on mtf_lesion_set_id_fk_fkey,
+-- pointing results_id_fk at lesion.set — corrected here to lesion_set_id_fk.
+
+-- DROP TABLE analysis.mtf;
+
+CREATE TABLE analysis.mtf (
+    id              bigserial NOT NULL,
+    results_id_fk   int8      NOT NULL,
+    lesion_set_id_fk int8     NOT NULL,
+    f_peak          float4    NOT NULL DEFAULT 0,
+    eta_peak        float4    NOT NULL DEFAULT 1,
+    f_50            float4    NOT NULL,
+    f_10            float4    NULL,
+    f_2             float4    NULL,
+    created_at      timestamptz DEFAULT now() NOT NULL,
+    CONSTRAINT mtf_pkey PRIMARY KEY (id),
+    CONSTRAINT mtf_results_id_fk_unique    UNIQUE (results_id_fk),
+    CONSTRAINT mtf_lesion_set_id_fk_unique UNIQUE (lesion_set_id_fk),
+    CONSTRAINT mtf_f_peak_check   CHECK (f_peak   >= 0),
+    CONSTRAINT mtf_eta_peak_check CHECK (eta_peak  > 0),
+    CONSTRAINT mtf_f_50_check     CHECK (f_50      > 0)
+);
+
+CREATE INDEX idx_analysis_mtf_created_at   ON analysis.mtf USING btree (created_at);
+CREATE INDEX idx_analysis_mtf_results_fk   ON analysis.mtf USING btree (results_id_fk);
+CREATE INDEX idx_analysis_mtf_lesion_set_fk ON analysis.mtf USING btree (lesion_set_id_fk);
+
+
+-- analysis.mtf foreign keys
+
+ALTER TABLE analysis.mtf
+    ADD CONSTRAINT mtf_results_id_fk_fkey
+    FOREIGN KEY (results_id_fk) REFERENCES analysis.results(id) ON DELETE CASCADE;
+
+-- FK to lesion.set is declared here for co-location with other analysis FKs.
+-- Array-element integrity for lesion.set.lesion_ids is enforced via triggers in triggers.sql.
+ALTER TABLE analysis.mtf
+    ADD CONSTRAINT mtf_lesion_set_id_fk_fkey
+    FOREIGN KEY (lesion_set_id_fk) REFERENCES lesion.set(id) ON DELETE CASCADE;

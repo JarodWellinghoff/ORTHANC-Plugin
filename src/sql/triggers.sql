@@ -1,3 +1,64 @@
+-- =============================================================================
+-- LESION referential integrity triggers
+-- PostgreSQL does not support FK constraints on array elements, so we enforce
+-- lesion.set.lesion_ids → lesion.lesion.id integrity via two triggers:
+--   1. validate_lesion_ids        : prevent inserting/updating a set with invalid ids
+--   2. protect_referenced_lesions : prevent deleting a lesion still used by a set
+-- =============================================================================
+
+-- 1. Guard inserts/updates on lesion.set
+CREATE OR REPLACE FUNCTION lesion.validate_lesion_ids()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM unnest(NEW.lesion_ids) AS lid
+        WHERE NOT EXISTS (
+            SELECT 1 FROM lesion.lesion WHERE id = lid
+        )
+    ) THEN
+        RAISE EXCEPTION
+            'lesion.set.lesion_ids contains one or more invalid lesion ids';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_validate_lesion_ids ON lesion.set;
+CREATE CONSTRAINT TRIGGER trg_validate_lesion_ids
+    AFTER INSERT OR UPDATE ON lesion.set
+    DEFERRABLE INITIALLY IMMEDIATE
+    FOR EACH ROW EXECUTE FUNCTION lesion.validate_lesion_ids();
+
+
+-- 2. Guard deletes on lesion.lesion
+CREATE OR REPLACE FUNCTION lesion.protect_referenced_lesions()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM lesion.set
+        WHERE OLD.id = ANY(lesion_ids)
+    ) THEN
+        RAISE EXCEPTION
+            'Cannot delete lesion id=% — it is still referenced by one or more lesion sets',
+            OLD.id;
+    END IF;
+    RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_protect_referenced_lesions ON lesion.lesion;
+CREATE CONSTRAINT TRIGGER trg_protect_referenced_lesions
+    AFTER DELETE ON lesion.lesion
+    DEFERRABLE INITIALLY IMMEDIATE
+    FOR EACH ROW EXECUTE FUNCTION lesion.protect_referenced_lesions();
+
+
+-- =============================================================================
+-- DICOM orphan cleanup triggers
+-- =============================================================================
+
 -- Trigger function to clean up orphaned series when results are deleted
 CREATE OR REPLACE FUNCTION cleanup_orphaned_series()
 RETURNS TRIGGER AS $$

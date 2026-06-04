@@ -269,6 +269,7 @@ export const DashboardProvider = ({ children }) => {
           scanner_stations: data.scanner_stations ?? [],
           protocol_names: data.protocol_names ?? [],
           scanner_models: data.scanner_models ?? [],
+          pull_schedules: data.pull_schedule_names ?? [],
           date_range: data.date_range ?? null,
           age_range: data.age_range ?? null,
         });

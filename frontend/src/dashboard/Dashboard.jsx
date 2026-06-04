@@ -15,6 +15,7 @@ import ModalsHost from "./components/ModalsHost";
 import AppTheme from "../shared-theme/AppTheme.jsx";
 import HomePage from "./components/HomePage.jsx";
 import BulkTestsPage from "./components/BulkTestsPage.jsx";
+import ResultsPage from "./components/ResultsPage.jsx";
 import DicomPullsPage from "./components/DicomPullsPage.jsx";
 import DicomViewerPage from "./components/DicomViewerPage.jsx";
 import DicomViewerRoute from "./components/DicomViewerRoute.jsx";
@@ -69,11 +70,15 @@ export default function Dashboard(props) {
                 <Routes>
                   <Route path='/' element={<Navigate to='/home' replace />} />
                   <Route path='/home' element={<HomePage />} />
+                  {/* Listing page for browsing analyzed series — viewing only. */}
+                  <Route path='/results' element={<ResultsPage />} />
+                  {/* Detail page for a single series' analysis output. */}
                   <Route
                     path='/results/:seriesId'
                     element={<ChoAnalysisRoute />}
                   />
                   <Route path='/dicom-pulls' element={<DicomPullsPage />} />
+                  {/* Bulk Tests is now the testing-focused page. */}
                   <Route path='/main-dashboard' element={<BulkTestsPage />} />
                   <Route path='/dicom-viewer' element={<DicomViewerPage />} />
                   <Route
