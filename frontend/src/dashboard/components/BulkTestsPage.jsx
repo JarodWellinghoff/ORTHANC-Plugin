@@ -8,6 +8,10 @@ import Menu from "@mui/material/Menu";
 import Stack from "@mui/material/Stack";
 import Divider from "@mui/material/Divider";
 import Tooltip from "@mui/material/Tooltip";
+import Typography from "@mui/material/Typography";
+import FormControl from "@mui/material/FormControl";
+import InputLabel from "@mui/material/InputLabel";
+import Select from "@mui/material/Select";
 import PlayArrowRoundedIcon from "@mui/icons-material/PlayArrowRounded";
 import CloudDownloadRoundedIcon from "@mui/icons-material/CloudDownloadRounded";
 import CloudDoneRoundedIcon from "@mui/icons-material/CloudDoneRounded";
@@ -99,9 +103,10 @@ const GridToolbar = () => {
 //
 // Testing-focused counterpart to ResultsPage. Owns everything related to
 // kicking off CHO analyses: modality selection for DICOM recovery, test type,
-// per-row Pull DICOM and Run buttons, the calculationStates wiring that
-// surfaces in-progress chips in the Status column, and the beforeunload guard
-// that warns when navigating away while tests are still running.
+// per-row Pull DICOM and Run buttons, the "Run Selected" bulk action that
+// processes the selection one series at a time, the calculationStates wiring
+// that surfaces live progress chips in the Status column, and the beforeunload
+// guard that warns when navigating away while tests are still running.
 //
 // The "View Results" action used to live in this page's actions column; that
 // has moved to ResultsPage so the two pages have a clean responsibility split.
@@ -132,6 +137,8 @@ const BulkTestsPage = () => {
   const [runningBulk, setRunningBulk] = useState(false);
   const [recoveringMap, setRecoveringMap] = useState({});
   const [activeRunCount, setActiveRunCount] = useState(0);
+  // Drives the "Running X of Y" counter on the bulk action bar.
+  const [bulkRun, setBulkRun] = useState({ total: 0, done: 0 });
 
   const calculationStatesRef = useRef(calculationStates);
   useEffect(() => {
@@ -257,6 +264,10 @@ const BulkTestsPage = () => {
     }));
   }, []);
 
+  // Poll the SSE-backed calculationStates slice for this series until it lands
+  // on a terminal status. We resolve from calculationStatesRef (not the closed-
+  // over value) so the loop always sees the latest event without re-creating
+  // the callback on every state change.
   const waitForSeriesCompletion = useCallback(async (row, options = {}) => {
     const seriesKey = resolveSeriesKey(row);
     if (!seriesKey) {
@@ -300,6 +311,9 @@ const BulkTestsPage = () => {
       if (!row.hasDicom) {
         throw new Error("DICOM series is not currently available.");
       }
+      // Keyed by the Orthanc UUID — the backend progress tracker broadcasts
+      // cho-calculation events under this same id, which is what the status
+      // chip resolves against via resolveSeriesKey (seriesUuid first).
       const payload = {
         series_uuid: row.seriesUuid,
         testType,
@@ -348,16 +362,19 @@ const BulkTestsPage = () => {
     ],
   );
 
-  const handleRunBulk = useCallback(async () => {
+  // Resolve the current selection (handling both the "include" and "exclude"
+  // selection-model shapes) down to an ordered queue of rows on this page.
+  const resolveSelectedQueue = useCallback(() => {
     const type = selectionModel.type;
     const rowsById = new Map(normalizedResults.map((row) => [row.id, row]));
     let selectedIds = null;
+
     if (type === "include") {
       if (selectionModel.ids.size === 0) {
         enqueueSnackbar("Select at least one row to start bulk testing.", {
           variant: "warning",
         });
-        return;
+        return [];
       }
       selectedIds = selectionModel.ids.intersection
         ? selectionModel.ids.intersection(rowsById)
@@ -367,14 +384,14 @@ const BulkTestsPage = () => {
           "Selected rows are no longer available in the current data set.",
           { variant: "error" },
         );
-        return;
+        return [];
       }
     } else if (type === "exclude") {
       if (selectionModel.ids.size === rowsById.size) {
         enqueueSnackbar("Select at least one row to start bulk testing.", {
           variant: "warning",
         });
-        return;
+        return [];
       }
       selectedIds = new Set(rowsById.keys()).difference
         ? new Set(rowsById.keys()).difference(selectionModel.ids)
@@ -389,22 +406,67 @@ const BulkTestsPage = () => {
         if (rowsById.has(value)) queue.push(rowsById.get(value));
       }
     }
+    return queue;
+  }, [enqueueSnackbar, normalizedResults, selectionModel]);
+
+  const handleRunBulk = useCallback(async () => {
+    if (runningBulk) return;
+
+    const queue = resolveSelectedQueue();
     if (queue.length === 0) {
-      enqueueSnackbar("No valid selections remain to process.", {
-        variant: "error",
-      });
       return;
     }
 
+    // Surface anything that can't actually run so the user isn't left wondering
+    // why a selected row never starts.
+    const runnable = queue.filter((row) => row.hasDicom && row.seriesUuid);
+    const skipped = queue.length - runnable.length;
+    if (runnable.length === 0) {
+      enqueueSnackbar(
+        "None of the selected series have DICOM available to test. Pull DICOM first.",
+        { variant: "error" },
+      );
+      return;
+    }
+    if (skipped > 0) {
+      enqueueSnackbar(
+        `${skipped} selected series ${
+          skipped === 1 ? "has" : "have"
+        } no DICOM available and will be skipped.`,
+        { variant: "warning" },
+      );
+    }
+
+    // Mark the whole queue as queued up front so the Status column tells the
+    // user exactly what's pending. handleRunSingle flips each to "running" when
+    // its turn comes; the SSE-backed chip then takes over with live progress.
+    setBulkProgress((prev) => {
+      const next = { ...prev };
+      for (const row of runnable) {
+        next[row.id] = { status: "queued", message: "Waiting to run" };
+      }
+      return next;
+    });
+
+    setBulkRun({ total: runnable.length, done: 0 });
     setRunningBulk(true);
     try {
-      for (const row of queue) {
+      for (const row of runnable) {
+        // One at a time: await each analysis to its terminal status before
+        // kicking off the next so we never overload the calculation backend.
         await handleRunSingle(row);
+        setBulkRun((prev) => ({ ...prev, done: prev.done + 1 }));
       }
+      enqueueSnackbar(
+        `Finished running ${runnable.length} test${
+          runnable.length === 1 ? "" : "s"
+        }.`,
+        { variant: "success" },
+      );
     } finally {
       setRunningBulk(false);
     }
-  }, [enqueueSnackbar, handleRunSingle, normalizedResults, selectionModel]);
+  }, [enqueueSnackbar, handleRunSingle, resolveSelectedQueue, runningBulk]);
 
   const handleRecoverDicom = useCallback(
     async (row) => {
@@ -438,6 +500,11 @@ const BulkTestsPage = () => {
           message: "Recovery requested",
         });
         await loadAvailableSeries();
+        if (row.seriesInstanceUid) {
+          setAvailableSeries((prev) => [
+            ...new Set([...prev, row.seriesInstanceUid]),
+          ]);
+        }
       } catch (err) {
         updateBulkProgress(row.id, {
           status: "error",
@@ -454,6 +521,16 @@ const BulkTestsPage = () => {
       loadAvailableSeries,
     ],
   );
+
+  // Count of currently selected rows on this page, for the action bar button.
+  const selectedCount = useMemo(() => {
+    const ids = selectionModel?.ids;
+    if (!ids) return 0;
+    if (selectionModel.type === "exclude") {
+      return Math.max(0, normalizedResults.length - ids.size);
+    }
+    return ids.size;
+  }, [selectionModel, normalizedResults.length]);
 
   // ── Grid config ───────────────────────────────────────────────────────────
 
@@ -493,7 +570,7 @@ const BulkTestsPage = () => {
       {
         field: "testStatus",
         headerName: "Status",
-        width: 140,
+        width: 150,
         renderCell: (params) => {
           const value = params.row.testStatus ?? "none";
           const chipColor = statusColorMap[value] ?? "default";
@@ -508,36 +585,58 @@ const BulkTestsPage = () => {
             : null;
           const localProgress = bulkProgress[params.row.id];
 
+          // 1) Live SSE state takes priority — this is the real-time signal.
           if (calculationState) {
             const status =
               calculationState.status ?? calculationState.eventType;
+            const isDone = status === "completed";
+            const isError = status === "failed" || status === "error";
+            const pct =
+              typeof calculationState.progress === "number"
+                ? Math.round(calculationState.progress)
+                : null;
+            const stage =
+              calculationState.current_stage ?? calculationState.stage;
             const message =
               calculationState.message ??
               calculationState.error ??
-              (status === "completed" ? "Completed" : status);
+              (isDone ? "Completed" : (stage ?? status));
+            const runningLabel =
+              pct !== null && pct > 0 && pct < 100
+                ? `Running ${pct}%`
+                : "Running";
             return (
               <Tooltip title={message ?? ""}>
                 <Chip
                   size='small'
-                  color={
-                    status === "completed"
-                      ? "success"
-                      : status === "failed" || status === "error"
-                        ? "error"
-                        : "info"
-                  }
-                  label={
-                    status === "completed"
-                      ? "Done"
-                      : status === "failed" || status === "error"
-                        ? "Failed"
-                        : "Running"
-                  }
+                  color={isDone ? "success" : isError ? "error" : "info"}
+                  label={isDone ? "Done" : isError ? "Failed" : runningLabel}
                 />
               </Tooltip>
             );
           }
 
+          // 2) Local run state — covers the brief window before the first SSE
+          //    event arrives, the queued-but-not-started rows, and recovery.
+          if (localProgress?.status === "running") {
+            return (
+              <Tooltip title={localProgress.message ?? "Running"}>
+                <Chip size='small' color='info' label='Running' />
+              </Tooltip>
+            );
+          }
+          if (localProgress?.status === "queued") {
+            return (
+              <Tooltip title='Waiting in the run queue'>
+                <Chip
+                  size='small'
+                  color='default'
+                  variant='outlined'
+                  label='Queued'
+                />
+              </Tooltip>
+            );
+          }
           if (localProgress?.status === "done") {
             return (
               <Tooltip title='Completed'>
@@ -547,6 +646,13 @@ const BulkTestsPage = () => {
                   icon={<CloudDoneRoundedIcon fontSize='small' />}
                   label='Finished'
                 />
+              </Tooltip>
+            );
+          }
+          if (localProgress?.status === "error") {
+            return (
+              <Tooltip title={localProgress.message ?? "Failed"}>
+                <Chip size='small' color='error' label='Failed' />
               </Tooltip>
             );
           }
@@ -562,6 +668,8 @@ const BulkTestsPage = () => {
               </Tooltip>
             );
           }
+
+          // 3) Fall back to the stored result status from the summary row.
           return (
             <Chip
               size='small'
@@ -679,10 +787,6 @@ const BulkTestsPage = () => {
     [actions, paginationModel.page, paginationModel.pageSize],
   );
 
-  // `handleRunBulk`, `modalities`, and `loadingModalities` are kept in scope for
-  // a future bulk-action toolbar (the page used to surface them inline); they
-  // remain unread by the current render, matching the file's pre-split state.
-
   return (
     <Stack spacing={3}>
       <FiltersPanel
@@ -691,6 +795,67 @@ const BulkTestsPage = () => {
         onQuery={handleQuery}
         onReset={resetFilters}
       />
+
+      {/* Bulk action bar: run the current selection one series at a time, plus
+          the recovery-server picker that gates the per-row Pull DICOM action. */}
+      <Stack
+        direction='row'
+        spacing={1.5}
+        alignItems='center'
+        justifyContent='space-between'
+        flexWrap='wrap'
+        useFlexGap>
+        <Stack direction='row' spacing={1.5} alignItems='center'>
+          <Tooltip
+            title={
+              selectedCount === 0
+                ? "Select one or more series to run"
+                : "Run the selected tests one at a time"
+            }>
+            <span>
+              <Button
+                variant='contained'
+                startIcon={
+                  runningBulk ? (
+                    <CircularProgress size={16} color='inherit' />
+                  ) : (
+                    <PlayArrowRoundedIcon />
+                  )
+                }
+                disabled={runningBulk || selectedCount === 0}
+                onClick={handleRunBulk}>
+                {runningBulk
+                  ? "Running…"
+                  : `Run Selected${selectedCount ? ` (${selectedCount})` : ""}`}
+              </Button>
+            </span>
+          </Tooltip>
+          {runningBulk && bulkRun.total > 0 ? (
+            <Typography variant='body2' color='text.secondary'>
+              Running {Math.min(bulkRun.done + 1, bulkRun.total)} of{" "}
+              {bulkRun.total}
+            </Typography>
+          ) : null}
+        </Stack>
+
+        <FormControl
+          size='small'
+          sx={{ minWidth: 220 }}
+          disabled={loadingModalities || modalities.length === 0}>
+          <InputLabel id='recovery-modality-label'>Recovery server</InputLabel>
+          <Select
+            labelId='recovery-modality-label'
+            label='Recovery server'
+            value={selectedModality}
+            onChange={(event) => setSelectedModality(event.target.value)}>
+            {modalities.map((modality) => (
+              <MenuItem key={modality.id} value={modality.id}>
+                {modality.name ?? modality.id}
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+      </Stack>
 
       <DataGrid
         rows={loading ? [] : (normalizedResults ?? [])}

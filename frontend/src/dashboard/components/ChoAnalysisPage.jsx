@@ -770,7 +770,7 @@ const ChoAnalysisPage = () => {
 
   const handleBackToDashboard = React.useCallback(() => {
     actions.closeChoModal();
-    navigate("/main-dashboard");
+    navigate("/results");
   }, [actions, navigate]);
 
   const activeDetailsTab = detailsTabs.find(
@@ -1260,13 +1260,13 @@ const ChoAnalysisPage = () => {
               onClick={handleBackToDashboard}>
               Back to Dashboard
             </Button>
-            <Button
+            {/* <Button
               variant='outlined'
               startIcon={<RestartAltIcon />}
               onClick={actions.reloadStoredChoResults}
               disabled={!displayedResults || storedResults?.loading}>
               Reload Stored
-            </Button>
+            </Button> */}
             <Button
               variant='outlined'
               startIcon={<FileDownloadIcon />}
@@ -1274,7 +1274,7 @@ const ChoAnalysisPage = () => {
               disabled={!displayedResults}>
               Export XLS
             </Button>
-            <Tooltip title={analysisTooltip}>
+            {/* <Tooltip title={analysisTooltip}>
               <span style={{ display: "inline-flex" }}>
                 <Button
                   variant='contained'
@@ -1311,16 +1311,16 @@ const ChoAnalysisPage = () => {
                   </Box>
                 </Button>
               </span>
-            </Tooltip>
-            <Box sx={{ position: "relative", display: "inline-flex" }}></Box>
-            <Button
+            </Tooltip> */}
+            {/* <Box sx={{ position: "relative", display: "inline-flex" }}></Box> */}
+            {/* <Button
               variant='outlined'
               color='error'
               startIcon={<DeleteForeverIcon />}
               onClick={actions.discardChoResults}
               disabled={!results || stage !== "results"}>
               Discard Results
-            </Button>
+            </Button> */}
           </Stack>
         </Stack>
       </Box>
