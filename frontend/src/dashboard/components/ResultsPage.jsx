@@ -22,164 +22,13 @@ import {
 } from "@mui/x-data-grid";
 import FiltersPanel from "./FiltersPanel";
 import { useFilters } from "../../hooks/useFilters";
-// import {
-//   fetchJson,
-//   formatDateTime,
-//   normalizeChoRow,
-//   statusColorMap,
-//   statusLabelMap,
-// } from "../utils/choResultsShared";
-
-// Temporary local stand-ins until ../utils/choResultsShared exists.
-// Delete this block and restore the shared import once the real helpers land.
-const DUMMY_CHO_RESULTS = [
-  {
-    id: "dummy-series-1",
-    patient_id: "P-0001",
-    patient_name: "Demo Patient One",
-    institution_name: "Demo Hospital",
-    protocol_name: "Adult Abdomen Pelvis",
-    pull_schedule_name: "Nightly Pull",
-    test_status: "complete",
-    latest_analysis_date: "2026-05-22T14:15:00Z",
-    series_instance_uid: "1.2.840.113619.2.55.3.604688433.1",
-    series_uuid: "dummy-series-1",
-  },
-  {
-    id: "dummy-series-2",
-    patient_id: "P-0002",
-    patient_name: "Demo Patient Two",
-    institution_name: "Imaging QA Lab",
-    protocol_name: "Chest Low Dose",
-    pull_schedule_name: "Manual Import",
-    test_status: "pending",
-    latest_analysis_date: null,
-    series_instance_uid: "1.2.840.113619.2.55.3.604688433.2",
-    series_uuid: "dummy-series-2",
-  },
-  {
-    id: "dummy-series-3",
-    patient_id: "P-0003",
-    patient_name: "Demo Patient Three",
-    institution_name: "Demo Hospital",
-    protocol_name: "Head Without Contrast",
-    pull_schedule_name: "ED Pull",
-    test_status: "failed",
-    latest_analysis_date: "2026-05-21T19:45:00Z",
-    series_instance_uid: "1.2.840.113619.2.55.3.604688433.3",
-    series_uuid: "dummy-series-3",
-  },
-];
-
-const statusColorMap = {
-  none: "default",
-  pending: "warning",
-  running: "info",
-  complete: "success",
-  completed: "success",
-  success: "success",
-  failed: "error",
-  error: "error",
-};
-
-const statusLabelMap = {
-  none: "No Results",
-  pending: "Pending",
-  running: "Running",
-  complete: "Complete",
-  completed: "Complete",
-  success: "Complete",
-  failed: "Failed",
-  error: "Failed",
-};
-
-const getFirstValue = (...values) =>
-  values.find((value) => value !== undefined && value !== null && value !== "");
-
-const formatDateTime = (value) => {
-  if (!value) return "—";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "—";
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(date);
-};
-
-const normalizeChoRow = (item, index, availableSet = new Set()) => {
-  const seriesInstanceUid = getFirstValue(
-    item.seriesInstanceUid,
-    item.series_instance_uid,
-    item.seriesUuid,
-    item.series_uuid,
-  );
-  const seriesUuid = getFirstValue(item.seriesUuid, item.series_uuid);
-  const id = getFirstValue(
-    item.id,
-    item.seriesId,
-    item.series_id,
-    seriesUuid,
-    seriesInstanceUid,
-    `dummy-row-${index}`,
-  );
-
-  return {
-    ...item,
-    id,
-    patientId: getFirstValue(item.patientId, item.patient_id, "—"),
-    patientName: getFirstValue(
-      item.patientName,
-      item.patient_name,
-      "Demo Patient",
-    ),
-    institutionName: getFirstValue(
-      item.institutionName,
-      item.institution_name,
-      "Demo Institution",
-    ),
-    protocolName: getFirstValue(
-      item.protocolName,
-      item.protocol_name,
-      "Demo Protocol",
-    ),
-    pullScheduleName: getFirstValue(
-      item.pullScheduleName,
-      item.pull_schedule_name,
-      "—",
-    ),
-    testStatus: getFirstValue(
-      item.testStatus,
-      item.test_status,
-      item.status,
-      "none",
-    ),
-    latestAnalysis: getFirstValue(
-      item.latestAnalysis,
-      item.latest_analysis,
-      item.latest_analysis_date,
-      item.updated_at,
-    ),
-    seriesInstanceUid,
-    seriesUuid,
-    dicomAvailable:
-      Boolean(
-        seriesInstanceUid && availableSet.has(String(seriesInstanceUid)),
-      ) || Boolean(seriesUuid && availableSet.has(String(seriesUuid))),
-  };
-};
-
-const fetchJson = async (url) => {
-  // Dummy response for the availability check used by this page.
-  if (String(url).endsWith("/series/")) {
-    return DUMMY_CHO_RESULTS.map((row) => row.series_instance_uid);
-  }
-
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}`);
-  }
-  return response.json();
-};
+import {
+  fetchJson,
+  formatDateTime,
+  normalizeChoRow,
+  statusColorMap,
+  statusLabelMap,
+} from "../utils/choResultsShared";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GridToolbar — same shape as the one on BulkTestsPage. Kept locally so each
@@ -253,17 +102,9 @@ const GridToolbar = () => {
 const ResultsPage = () => {
   const navigate = useNavigate();
   const { enqueueSnackbar } = useSnackbar();
-  const { summary = {}, actions = {} } = useDashboard() ?? {};
+  const { summary, actions } = useDashboard();
   const { filters, updateFilter, resetFilters } = useFilters();
-  const sourceItems =
-    Array.isArray(summary.items) && summary.items.length
-      ? summary.items
-      : DUMMY_CHO_RESULTS;
-  const pagination = summary.pagination ?? {
-    page: 1,
-    limit: 25,
-    total: sourceItems.length,
-  };
+  const { items, pagination } = summary;
 
   const [filterModel, setFilterModel] = useState({ items: [] });
   const [sortModel, setSortModel] = useState([
@@ -278,26 +119,19 @@ const ResultsPage = () => {
     ids: new Set(),
   });
 
-  const handleQuery = () => {
-    if (typeof actions.loadSummary === "function") {
-      return actions.loadSummary(filters);
-    }
-    return Promise.resolve();
-  };
+  const handleQuery = () => actions.loadSummary(filters);
 
   const handleSortModelChange = useCallback(
     (model) => {
       setSortModel(model);
       sortRef.current = model;
       const sort = model[0];
-      if (typeof actions.loadSummary === "function") {
-        actions.loadSummary({
-          ...filters,
-          page: 1,
-          sort_by: sort?.field,
-          sort_order: sort?.sort ?? "asc",
-        });
-      }
+      actions.loadSummary({
+        ...filters,
+        page: 1,
+        sort_by: sort?.field,
+        sort_order: sort?.sort ?? "asc",
+      });
     },
     [actions, filters],
   );
@@ -324,16 +158,11 @@ const ResultsPage = () => {
     const run = async () => {
       setLoading(true);
       try {
-        if (typeof actions.loadSummary === "function") {
-          await actions.loadSummary(filters);
-        }
+        await actions.loadSummary(filters);
       } catch (err) {
         if (!cancelled) {
-          console.warn(
-            "Using dummy results because summary failed to load",
-            err,
-          );
-          enqueueSnackbar("Using dummy results", { variant: "info" });
+          console.error("Failed to load results summary", err);
+          enqueueSnackbar("Failed to load results", { variant: "error" });
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -356,10 +185,8 @@ const ResultsPage = () => {
 
   const normalizedResults = useMemo(
     () =>
-      sourceItems.map((item, index) =>
-        normalizeChoRow(item, index, availableSet),
-      ),
-    [sourceItems, availableSet],
+      items.map((item, index) => normalizeChoRow(item, index, availableSet)),
+    [items, availableSet],
   );
 
   const columns = useMemo(() => {
@@ -471,7 +298,6 @@ const ResultsPage = () => {
 
   const getRowId = useCallback((row) => {
     const baseId =
-      row.id ??
       row.series_id ??
       row.series_uuid ??
       row.series_instance_uid ??
@@ -495,10 +321,10 @@ const ResultsPage = () => {
         : {};
 
       if (model.page !== paginationModel.page) {
-        actions.changePage?.(model.page + 1, sortExtras);
+        actions.changePage(model.page + 1, sortExtras);
       }
       if (model.pageSize !== paginationModel.pageSize) {
-        actions.changePageSize?.(model.pageSize, sortExtras);
+        actions.changePageSize(model.pageSize, sortExtras);
       }
     },
     [actions, paginationModel.page, paginationModel.pageSize],

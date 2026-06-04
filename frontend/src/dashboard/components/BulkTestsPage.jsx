@@ -8,14 +8,11 @@ import Menu from "@mui/material/Menu";
 import Stack from "@mui/material/Stack";
 import Divider from "@mui/material/Divider";
 import Tooltip from "@mui/material/Tooltip";
-import ContentPasteSearchIcon from "@mui/icons-material/ContentPasteSearch";
 import PlayArrowRoundedIcon from "@mui/icons-material/PlayArrowRounded";
 import CloudDownloadRoundedIcon from "@mui/icons-material/CloudDownloadRounded";
-import CloudOffRoundedIcon from "@mui/icons-material/CloudOffRounded";
 import CloudDoneRoundedIcon from "@mui/icons-material/CloudDoneRounded";
 import ViewColumnIcon from "@mui/icons-material/ViewColumn";
 import FileDownloadIcon from "@mui/icons-material/FileDownload";
-import { useNavigate } from "react-router-dom";
 import { useDashboard } from "../context/DashboardContext";
 import { useSnackbar } from "notistack";
 import {
@@ -28,8 +25,19 @@ import {
 } from "@mui/x-data-grid";
 import FiltersPanel from "./FiltersPanel";
 import { useFilters } from "../../hooks/useFilters";
+import {
+  defaultChoParams,
+  fetchJson,
+  normalizeChoRow,
+  resolveSeriesKey,
+  sleep,
+  statusColorMap,
+  statusLabelMap,
+} from "../utils/choResultsShared";
 
-const apiBase = import.meta.env.VITE_API_URL;
+// ─────────────────────────────────────────────────────────────────────────────
+// GridToolbar
+// ─────────────────────────────────────────────────────────────────────────────
 const GridToolbar = () => {
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const exportMenuTriggerRef = useRef(null);
@@ -85,106 +93,31 @@ const GridToolbar = () => {
     </Toolbar>
   );
 };
-const defaultChoParams = {
-  resamples: 500,
-  internalNoise: 2.25,
-  resamplingMethod: "Bootstrap",
-  roiSize: 6,
-  thresholdLow: 0,
-  thresholdHigh: 150,
-  windowLength: 15,
-  stepSize: 5,
-  channelType: "Gabor",
-  lesionSet: "standard",
-};
 
-const statusColorMap = {
-  full: "success",
-  partial: "warning",
-  error: "error",
-  untested: "default",
-  none: "default",
-  pending: "default",
-};
-
-const statusLabelMap = {
-  full: "Tested",
-  partial: "Global Noise",
-  untested: "Untested",
-  error: "Error",
-  none: "Unknown",
-  pending: "Pending",
-};
-
-const fetchJson = async (path, options = {}) => {
-  const response = await fetch(`${apiBase}${path}`, {
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    ...options,
-  });
-  if (!response.ok) {
-    const message = await response.text();
-    throw new Error(message || response.statusText || "Request failed");
-  }
-  const contentType = response.headers.get("content-type");
-  if (contentType && contentType.includes("application/json")) {
-    return response.json();
-  }
-  return response.text();
-};
-
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-const formatDateTime = (value) => {
-  if (!value) return "--";
-  try {
-    return new Date(value).toLocaleString();
-  } catch (error) {
-    console.debug("Failed to format date", error);
-    return value;
-  }
-};
-
-const deriveRowId = (item, index) => {
-  return (
-    item.series_uuid ??
-    item.series_id ??
-    item.series_instance_uid ??
-    item.seriesId ??
-    item.study_id ??
-    item.study_instance_uid ??
-    `${item.patient_id ?? "row"}-${index}`
-  );
-};
-
-const resolveSeriesKey = (row) => {
-  if (!row) return null;
-  if (row.seriesUuid) return String(row.seriesUuid);
-  if (row.seriesInstanceUid) return String(row.seriesInstanceUid);
-  if (row.studyInstanceUid) return String(row.studyInstanceUid);
-  if (row.raw?.series_id) return String(row.raw.series_id);
-  if (row.raw?.series_uuid) return String(row.raw.series_uuid);
-  return null;
-};
-
+// ─────────────────────────────────────────────────────────────────────────────
+// BulkTestsPage
+//
+// Testing-focused counterpart to ResultsPage. Owns everything related to
+// kicking off CHO analyses: modality selection for DICOM recovery, test type,
+// per-row Pull DICOM and Run buttons, the calculationStates wiring that
+// surfaces in-progress chips in the Status column, and the beforeunload guard
+// that warns when navigating away while tests are still running.
+//
+// The "View Results" action used to live in this page's actions column; that
+// has moved to ResultsPage so the two pages have a clean responsibility split.
+// ─────────────────────────────────────────────────────────────────────────────
 const BulkTestsPage = () => {
-  const navigate = useNavigate();
   const { enqueueSnackbar } = useSnackbar();
-  const [filterModel, setFilterModel] = useState({ items: [] });
   const { summary, calculationStates, actions } = useDashboard();
+  const { filters, updateFilter, resetFilters } = useFilters();
+  const { items, pagination } = summary;
+
+  const [filterModel, setFilterModel] = useState({ items: [] });
   const [sortModel, setSortModel] = useState([
     { field: "patientName", sort: "asc" },
   ]);
   const sortRef = useRef(sortModel);
-  const handleQuery = () => actions.loadSummary(filters);
-  const { filters, updateFilter, resetFilters } = useFilters();
-  //   console.log(actions.loadSummary(filters));
-  const { items, pagination } = summary;
-  //   const { items, pagination } = {
-  //     items: [],
-  //     pagination: { page: 1, totalPages: 1, totalItems: 0 },
-  //   };
-  const [results, setResults] = useState([]);
+
   const [loading, setLoading] = useState(true);
   const [availableSeries, setAvailableSeries] = useState([]);
   const [modalities, setModalities] = useState([]);
@@ -194,17 +127,21 @@ const BulkTestsPage = () => {
     type: "include",
     ids: new Set(),
   });
-  const [testType, setTestType] = useState("full");
+  const [testType] = useState("full");
   const [bulkProgress, setBulkProgress] = useState({});
   const [runningBulk, setRunningBulk] = useState(false);
   const [recoveringMap, setRecoveringMap] = useState({});
   const [activeRunCount, setActiveRunCount] = useState(0);
+
   const calculationStatesRef = useRef(calculationStates);
   useEffect(() => {
     calculationStatesRef.current = calculationStates;
   }, [calculationStates]);
 
+  const handleQuery = () => actions.loadSummary(filters);
+
   const shouldWarnOnLeave = runningBulk || activeRunCount > 0;
+
   const handleSortModelChange = useCallback(
     (model) => {
       setSortModel(model);
@@ -219,6 +156,10 @@ const BulkTestsPage = () => {
     },
     [actions, filters],
   );
+
+  // Warn the user before they navigate away mid-run. Without this, closing the
+  // tab silently abandons in-flight analyses and the progress chips never
+  // resolve.
   useEffect(() => {
     if (!shouldWarnOnLeave) {
       return undefined;
@@ -254,7 +195,7 @@ const BulkTestsPage = () => {
     } finally {
       setLoadingModalities(false);
     }
-  }, [selectedModality]);
+  }, [selectedModality, enqueueSnackbar]);
 
   const loadAvailableSeries = useCallback(async () => {
     try {
@@ -270,106 +211,44 @@ const BulkTestsPage = () => {
     }
   }, []);
 
-  const loadResults = useCallback(async (overrides = {}) => {
-    setLoading(true);
-    try {
-      const params = new URLSearchParams({
-        limit: String(overrides.limit ?? 250),
-        page: String(overrides.page ?? 1),
-      });
-      if (overrides.patientSearch) {
-        params.append("patient_search", overrides.patientSearch);
-      }
-      if (overrides.protocolName) {
-        params.append("protocol_name", overrides.protocolName);
-      }
-      if (overrides.status && overrides.status !== "all") {
-        params.append("test_status", overrides.status);
-      }
-
-      const response = await fetchJson(`/cho-results?${params.toString()}`);
-      const items = Array.isArray(response)
-        ? response
-        : Array.isArray(response?.data)
-          ? response.data
-          : [];
-      setResults(items);
-    } catch (err) {
-      console.error("Failed to load results", err);
-      enqueueSnackbar("Failed to load results", {
-        variant: "error",
-      });
-      setResults([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
+  // Initial load: summary (drives the grid), Orthanc availability (for the
+  // hasDicom badge / Pull DICOM gating), and the modality list (for recovery).
   useEffect(() => {
-    loadResults();
+    let cancelled = false;
+    const run = async () => {
+      setLoading(true);
+      try {
+        await actions.loadSummary(filters);
+      } catch (err) {
+        if (!cancelled) {
+          console.error("Failed to load summary", err);
+          enqueueSnackbar("Failed to load results", { variant: "error" });
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    run();
     loadAvailableSeries();
     loadModalities();
-  }, [loadResults, loadAvailableSeries, loadModalities]);
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const availableSet = useMemo(
-    () => new Set(availableSeries.filter(Boolean)),
+    () => new Set(availableSeries.filter(Boolean).map((v) => String(v))),
     [availableSeries],
   );
-  const normalizedResults = useMemo(() => {
-    return items.map((item, index) => {
-      const id = deriveRowId(item, index);
-      const seriesUuid =
-        item.series_uuid ?? item.seriesUuid ?? item.series_id ?? null;
-      const seriesInstanceUid =
-        item.series_id ??
-        item.series_instance_uid ??
-        item.seriesInstanceUid ??
-        null;
-      const studyInstanceUid =
-        item.study_id ??
-        item.study_instance_uid ??
-        item.studyInstanceUid ??
-        null;
-      const statusRaw = (item.test_status ?? "").toLowerCase();
-      const status =
-        statusRaw === "full" ||
-        statusRaw === "partial" ||
-        statusRaw === "error" ||
-        statusRaw === "untested"
-          ? statusRaw
-          : statusRaw || "none";
-      const hasDicom =
-        Boolean(seriesUuid) && availableSet.has(String(seriesUuid));
-      console.log(
-        "Row",
-        id,
-        "has DICOM:",
-        hasDicom,
-        "seriesUuid:",
-        seriesUuid,
-        "availableSet:",
-        availableSet,
-      );
 
-      return {
-        id,
-        raw: item,
-        seriesUuid,
-        seriesInstanceUid,
-        studyInstanceUid,
-        patientName: item.patient_name ?? "N/A",
-        institutionName: item.institution_name ?? "N/A",
-        protocolName: item.protocol_name ?? "N/A",
-        scannerModel: item.scanner_model ?? "N/A",
-        stationName: item.station_name ?? "N/A",
-        latestAnalysis: item.latest_analysis_date ?? null,
-        testStatus: status,
-        hasDicom,
-        // CHANGED: map pull_schedule_name from the API response
-        pullScheduleName: item.pull_schedule_name ?? null,
-      };
-    });
-  }, [items, availableSet]);
+  const normalizedResults = useMemo(
+    () =>
+      items.map((item, index) => normalizeChoRow(item, index, availableSet)),
+    [items, availableSet],
+  );
+
+  // ── Test running ──────────────────────────────────────────────────────────
 
   const updateBulkProgress = useCallback((id, next) => {
     setBulkProgress((prev) => ({
@@ -435,80 +314,9 @@ const BulkTestsPage = () => {
     [testType],
   );
 
-  const numSelected = useMemo(() => {
-    const type = selectionModel.type;
-    if (type === "include") {
-      return selectionModel.ids.size;
-    } else if (type === "exclude") {
-      return normalizedResults.length;
-    }
-  }, [selectionModel, normalizedResults]);
-
-  const handleRunBulk = async () => {
-    setActiveRunCount((count) => count + 1);
-    const type = selectionModel.type;
-    const rowsById = new Map(normalizedResults.map((row) => [row.id, row]));
-    let selectedIds = null;
-    if (type === "include") {
-      if (selectionModel.ids.size === 0) {
-        enqueueSnackbar("Select at least one row to start bulk testing.", {
-          variant: "warning",
-        });
-        return;
-      }
-
-      selectedIds = selectionModel.ids.intersection(rowsById);
-      if (selectedIds.size === 0) {
-        enqueueSnackbar(
-          "Selected rows are no longer available in the current data set.",
-          { variant: "error" },
-        );
-        return;
-      }
-    } else if (type === "exclude") {
-      if (selectionModel.ids.size === rowsById.size) {
-        enqueueSnackbar("Select at least one row to start bulk testing.", {
-          variant: "warning",
-        });
-        return;
-      }
-      selectedIds = new Set(rowsById.keys()).difference(selectionModel.ids);
-    }
-
-    const queue = [];
-    const enqueueRow = (rowId) => {
-      if (rowsById.has(rowId)) {
-        queue.push(rowsById.get(rowId));
-      }
-    };
-    if (selectedIds) {
-      if (Array.isArray(selectedIds)) {
-        selectedIds.forEach(enqueueRow);
-      } else if (typeof selectedIds.forEach === "function") {
-        selectedIds.forEach(enqueueRow);
-      } else if (typeof selectedIds[Symbol.iterator] === "function") {
-        for (const value of selectedIds) {
-          enqueueRow(value);
-        }
-      }
-    }
-    if (queue.length === 0) {
-      enqueueSnackbar("No valid selections remain to process.", {
-        variant: "error",
-      });
-      return;
-    }
-
-    setRunningBulk(true);
-    for (const row of queue) {
-      await handleRunSingle(row);
-    }
-    setRunningBulk(false);
-    setActiveRunCount((count) => Math.max(0, count - 1));
-  };
-
   const handleRunSingle = useCallback(
     async (row) => {
+      setActiveRunCount((count) => count + 1);
       updateBulkProgress(row.id, { status: "running", message: "Starting…" });
       try {
         await runAnalysisForSeries(row);
@@ -539,6 +347,64 @@ const BulkTestsPage = () => {
       waitForSeriesCompletion,
     ],
   );
+
+  const handleRunBulk = useCallback(async () => {
+    const type = selectionModel.type;
+    const rowsById = new Map(normalizedResults.map((row) => [row.id, row]));
+    let selectedIds = null;
+    if (type === "include") {
+      if (selectionModel.ids.size === 0) {
+        enqueueSnackbar("Select at least one row to start bulk testing.", {
+          variant: "warning",
+        });
+        return;
+      }
+      selectedIds = selectionModel.ids.intersection
+        ? selectionModel.ids.intersection(rowsById)
+        : new Set([...selectionModel.ids].filter((id) => rowsById.has(id)));
+      if (selectedIds.size === 0) {
+        enqueueSnackbar(
+          "Selected rows are no longer available in the current data set.",
+          { variant: "error" },
+        );
+        return;
+      }
+    } else if (type === "exclude") {
+      if (selectionModel.ids.size === rowsById.size) {
+        enqueueSnackbar("Select at least one row to start bulk testing.", {
+          variant: "warning",
+        });
+        return;
+      }
+      selectedIds = new Set(rowsById.keys()).difference
+        ? new Set(rowsById.keys()).difference(selectionModel.ids)
+        : new Set(
+            [...rowsById.keys()].filter((id) => !selectionModel.ids.has(id)),
+          );
+    }
+
+    const queue = [];
+    if (selectedIds) {
+      for (const value of selectedIds) {
+        if (rowsById.has(value)) queue.push(rowsById.get(value));
+      }
+    }
+    if (queue.length === 0) {
+      enqueueSnackbar("No valid selections remain to process.", {
+        variant: "error",
+      });
+      return;
+    }
+
+    setRunningBulk(true);
+    try {
+      for (const row of queue) {
+        await handleRunSingle(row);
+      }
+    } finally {
+      setRunningBulk(false);
+    }
+  }, [enqueueSnackbar, handleRunSingle, normalizedResults, selectionModel]);
 
   const handleRecoverDicom = useCallback(
     async (row) => {
@@ -588,6 +454,8 @@ const BulkTestsPage = () => {
       loadAvailableSeries,
     ],
   );
+
+  // ── Grid config ───────────────────────────────────────────────────────────
 
   const columns = useMemo(() => {
     return [
@@ -705,70 +573,19 @@ const BulkTestsPage = () => {
         },
       },
       {
-        field: "scannerModel",
-        headerName: "Scanner Model",
-        minWidth: 190,
-        flex: 0.8,
-      },
-      {
-        field: "stationName",
-        headerName: "Station Name",
-        minWidth: 190,
-        flex: 0.8,
-      },
-      {
-        field: "latestAnalysis",
-        headerName: "Last Analysis",
-        minWidth: 190,
-        flex: 0.8,
-        valueFormatter: (value) => formatDateTime(value),
-      },
-      {
-        field: "hasDicom",
-        headerName: "DICOM",
-        width: 140,
-        renderCell: (params) => {
-          if (params.row.hasDicom) {
-            return (
-              <Chip
-                size='small'
-                color='success'
-                icon={<CloudDoneRoundedIcon fontSize='small' />}
-                label='Available'
-                variant='outlined'
-              />
-            );
-          }
-          return (
-            <Chip
-              size='small'
-              color='warning'
-              icon={<CloudOffRoundedIcon fontSize='small' />}
-              label='Missing'
-              variant='outlined'
-            />
-          );
-        },
-      },
-      {
         field: "actions",
         headerName: "Actions",
-        width: 140,
+        width: 160,
         sortable: false,
         filterable: false,
+        disableColumnMenu: true,
         renderCell: (params) => {
           const row = params.row;
-          const { seriesInstanceUid } = row;
           const isRecovering = recoveringMap[row.id] ?? false;
           return (
-            <Stack direction='row' spacing={1} alignItems='center'>
+            <Stack direction='row' spacing={0.5} alignItems='center'>
               {!row.hasDicom ? (
-                <Tooltip
-                  title={
-                    selectedModality
-                      ? `Pull from server ${selectedModality}`
-                      : "Select a server first"
-                  }>
+                <Tooltip title='Recover DICOM from the selected modality'>
                   <span>
                     <Button
                       size='small'
@@ -805,23 +622,6 @@ const BulkTestsPage = () => {
                   </span>
                 </Tooltip>
               )}
-
-              <Tooltip title='View results for this series'>
-                <span>
-                  <IconButton
-                    size='small'
-                    color='primary'
-                    disabled={runningBulk || !row.hasDicom}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      navigate(
-                        `/results/${encodeURIComponent(seriesInstanceUid)}`,
-                      );
-                    }}>
-                    <ContentPasteSearchIcon fontSize='small' />
-                  </IconButton>
-                </span>
-              </Tooltip>
             </Stack>
           );
         },
@@ -835,7 +635,6 @@ const BulkTestsPage = () => {
     runningBulk,
     handleRecoverDicom,
     handleRunSingle,
-    navigate,
   ]);
 
   const paginationModel = useMemo(
@@ -879,6 +678,10 @@ const BulkTestsPage = () => {
     },
     [actions, paginationModel.page, paginationModel.pageSize],
   );
+
+  // `handleRunBulk`, `modalities`, and `loadingModalities` are kept in scope for
+  // a future bulk-action toolbar (the page used to surface them inline); they
+  // remain unread by the current render, matching the file's pre-split state.
 
   return (
     <Stack spacing={3}>
@@ -937,7 +740,6 @@ const BulkTestsPage = () => {
           },
         }}
       />
-      {/* </Paper> */}
     </Stack>
   );
 };

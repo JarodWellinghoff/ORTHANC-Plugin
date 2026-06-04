@@ -25,8 +25,16 @@ const mainNavItems = [
     text: "Bulk Tests",
     icon: ScienceRoundedIcon,
     to: "/main-dashboard",
-    isActive: (pathname) =>
-      pathname.startsWith("/main-dashboard") || pathname.startsWith("/results"),
+    // Testing page only — Results has its own entry below.
+    isActive: (pathname) => pathname.startsWith("/main-dashboard"),
+  },
+  {
+    text: "Results",
+    icon: ContentPasteSearchIcon,
+    to: "/results",
+    // Covers both the listing (/results) and the per-series detail
+    // (/results/:seriesId) so the icon stays selected while drilling in.
+    isActive: (pathname) => pathname.startsWith("/results"),
   },
   {
     text: "DICOM Pulls",

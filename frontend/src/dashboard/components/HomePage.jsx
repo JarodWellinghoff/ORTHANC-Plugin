@@ -11,6 +11,7 @@ import Button from "@mui/material/Button";
 import { alpha } from "@mui/material/styles";
 
 import ScienceRoundedIcon from "@mui/icons-material/ScienceRounded";
+import ContentPasteSearchIcon from "@mui/icons-material/ContentPasteSearch";
 import CloudDownloadRoundedIcon from "@mui/icons-material/CloudDownloadRounded";
 import ViewInArRoundedIcon from "@mui/icons-material/ViewInArRounded";
 import BiotechRoundedIcon from "@mui/icons-material/BiotechRounded";
@@ -23,10 +24,18 @@ const navCards = [
   {
     title: "Bulk Tests",
     description:
-      "Browse the analyzed CT series catalog, filter by patient, protocol, or institute, and queue CHO analyses across many series at once.",
+      "Browse the CT series catalog, pull missing DICOM, and queue CHO analyses across many series at once. Focused on running tests.",
     icon: ScienceRoundedIcon,
     to: "/main-dashboard",
     accent: "primary",
+  },
+  {
+    title: "Results",
+    description:
+      "Read-only view of analyzed series. Filter by patient, protocol, or institute and drill into any series' CHO, NPS, MTF, and dose metrics.",
+    icon: ContentPasteSearchIcon,
+    to: "/results",
+    accent: "secondary",
   },
   {
     title: "DICOM Pulls",
@@ -135,6 +144,12 @@ const HomePage = () => {
             <Button
               variant='outlined'
               size='large'
+              onClick={() => navigate("/results")}>
+              View Results
+            </Button>
+            <Button
+              variant='outlined'
+              size='large'
               onClick={() => navigate("/dicom-pulls")}>
               Pull DICOM Studies
             </Button>
@@ -153,7 +168,11 @@ const HomePage = () => {
         <Box
           sx={{
             display: "grid",
-            gridTemplateColumns: { xs: "1fr", md: "repeat(3, 1fr)" },
+            gridTemplateColumns: {
+              xs: "1fr",
+              sm: "repeat(2, 1fr)",
+              lg: "repeat(4, 1fr)",
+            },
             gap: 2.5,
           }}>
           {navCards.map((card) => {
@@ -276,11 +295,15 @@ const HomePage = () => {
           <Box component='span' sx={{ fontWeight: 600, color: "text.primary" }}>
             DICOM Pulls
           </Box>
-          , then head over to{" "}
+          , queue analyses in{" "}
           <Box component='span' sx={{ fontWeight: 600, color: "text.primary" }}>
             Bulk Tests
-          </Box>{" "}
-          to filter the series catalog and queue analyses.
+          </Box>
+          , and then browse what's been measured in{" "}
+          <Box component='span' sx={{ fontWeight: 600, color: "text.primary" }}>
+            Results
+          </Box>
+          .
         </Typography>
       </Box>
     </Stack>
