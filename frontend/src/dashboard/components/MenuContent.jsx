@@ -22,6 +22,12 @@ const mainNavItems = [
     isActive: (pathname) => pathname === "/" || pathname.startsWith("/home"),
   },
   {
+    text: "DICOM Pulls",
+    icon: CloudDownloadRoundedIcon,
+    to: "/dicom-pulls",
+    isActive: (pathname) => pathname.startsWith("/dicom-pulls"),
+  },
+  {
     text: "Bulk Tests",
     icon: ScienceRoundedIcon,
     to: "/main-dashboard",
@@ -35,12 +41,6 @@ const mainNavItems = [
     // Covers both the listing (/results) and the per-series detail
     // (/results/:seriesId) so the icon stays selected while drilling in.
     isActive: (pathname) => pathname.startsWith("/results"),
-  },
-  {
-    text: "DICOM Pulls",
-    icon: CloudDownloadRoundedIcon,
-    to: "/dicom-pulls",
-    isActive: (pathname) => pathname.startsWith("/dicom-pulls"),
   },
   {
     text: "DICOM Viewer",
