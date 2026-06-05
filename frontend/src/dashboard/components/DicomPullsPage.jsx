@@ -31,6 +31,7 @@ import ScheduleRoundedIcon from "@mui/icons-material/ScheduleRounded";
 import { DateTimePicker } from "@mui/x-date-pickers/DateTimePicker";
 import { LocalizationProvider } from "@mui/x-date-pickers/LocalizationProvider";
 import { AdapterDayjs } from "@mui/x-date-pickers/AdapterDayjs";
+import { alpha } from "@mui/material/styles";
 
 import FiltersPanel, { FILTER_FIELDS } from "./FiltersPanel";
 import { useFilters } from "../../hooks/useFilters";
@@ -626,6 +627,11 @@ const DicomPullsPage = () => {
         minWidth: 160,
       },
       {
+        field: "age",
+        headerName: "Age",
+        width: 75,
+      },
+      {
         field: "institutionName",
         headerName: "Institute",
         flex: 1,
@@ -658,11 +664,8 @@ const DicomPullsPage = () => {
         field: "studyDate",
         headerName: "Study Date",
         width: 120,
-      },
-      {
-        field: "age",
-        headerName: "Age",
-        width: 75,
+        valueFormatter: (value) =>
+          value.replace(/^(\d{4})(\d{2})(\d{2})$/, "$2/$3/$1"),
       },
       {
         field: "numberOfInstances",
@@ -678,29 +681,29 @@ const DicomPullsPage = () => {
         width: 110,
         valueFormatter: (value) => formatDuration(value),
       },
-      {
-        field: "hasDicom",
-        headerName: "DICOM",
-        width: 140,
-        renderCell: (params) =>
-          params.row.hasDicom ? (
-            <Chip
-              size='small'
-              color='success'
-              icon={<CloudDoneRoundedIcon fontSize='small' />}
-              label='Available'
-              variant='outlined'
-            />
-          ) : (
-            <Chip
-              size='small'
-              color='warning'
-              icon={<CloudOffRoundedIcon fontSize='small' />}
-              label='Remote'
-              variant='outlined'
-            />
-          ),
-      },
+      //   {
+      //     field: "hasDicom",
+      //     headerName: "DICOM",
+      //     width: 140,
+      //     renderCell: (params) =>
+      //       params.row.hasDicom ? (
+      //         <Chip
+      //           size='small'
+      //           color='success'
+      //           icon={<CloudDoneRoundedIcon fontSize='small' />}
+      //           label='Available'
+      //           variant='outlined'
+      //         />
+      //       ) : (
+      //         <Chip
+      //           size='small'
+      //           color='warning'
+      //           icon={<CloudOffRoundedIcon fontSize='small' />}
+      //           label='Remote'
+      //           variant='outlined'
+      //         />
+      //       ),
+      //   },
     ],
     [],
   );
@@ -709,6 +712,42 @@ const DicomPullsPage = () => {
 
   return (
     <Stack spacing={3}>
+      {/* Hero */}
+      <Box
+        variant='outlined'
+        sx={(theme) => ({
+          position: "relative",
+          overflow: "hidden",
+          px: { xs: 3, md: 6 },
+          py: { xs: 4, md: 7 },
+          borderRadius: 1,
+          border: "1px solid",
+          borderColor: "divider",
+          backgroundImage: `linear-gradient(135deg, ${alpha(
+            theme.palette.success.main,
+            0.14,
+          )} 0%, ${alpha(theme.palette.primary.dark, 0.04)} 100%)`,
+        })}>
+        <Stack spacing={2.5} sx={{ maxWidth: 880, position: "relative" }}>
+          <Typography
+            variant='h3'
+            component='h1'
+            sx={{
+              fontWeight: 600,
+              letterSpacing: "-0.02em",
+              fontSize: { xs: "2rem", md: "2.75rem" },
+            }}>
+            DICOM Pulls
+          </Typography>
+          <Typography
+            variant='body1'
+            color='text.secondary'
+            sx={{ fontSize: "1.05rem", lineHeight: 1.65 }}>
+            Query remote PACS modalities via C-FIND and retrieve studies with
+            C-MOVE. Schedule pull batches and monitor their progress.
+          </Typography>
+        </Stack>
+      </Box>
       {/* Modality picker — lives right above the filters so it's clear the
           filters are scoped to whatever server is selected. */}
       <Paper variant='outlined' sx={{ p: 2 }}>
@@ -776,7 +815,7 @@ const DicomPullsPage = () => {
 
       {/* Results grid — mirrors BulkTestsPage's grid configuration so the
           look and feel is identical. */}
-      <Paper variant='outlined' sx={{ p: 2 }}>
+      {/* <Paper variant='outlined' sx={{ p: 2 }}>
         <Stack spacing={2}>
           <Stack
             direction='row'
@@ -789,36 +828,36 @@ const DicomPullsPage = () => {
                 ? ` · ${selectedItems.length} selected`
                 : ""}
             </Typography>
-          </Stack>
-          <Box sx={{ minHeight: 420 }}>
-            <DataGrid
-              rows={loadingResults ? [] : results}
-              columns={columns}
-              getRowId={(row) => row.id}
-              loading={loadingResults}
-              checkboxSelection
-              disableRowSelectionOnClick
-              rowSelectionModel={selectionModel}
-              onRowSelectionModelChange={(model) => setSelectionModel(model)}
-              pageSizeOptions={[25, 50, 100]}
-              slots={{ toolbar: GridToolbar }}
-              showToolbar
-              initialState={{
-                pagination: { paginationModel: { pageSize: 25, page: 0 } },
-                sorting: {
-                  sortModel: [{ field: "patientName", sort: "asc" }],
-                },
-              }}
-              slotProps={{
-                toolbar: {
-                  showQuickFilter: true,
-                  quickFilterProps: { debounceMs: 500 },
-                },
-              }}
-            />
-          </Box>
+          </Stack> */}
+      {/* <Box sx={{ minHeight: 420 }}> */}
+      <DataGrid
+        rows={loadingResults ? [] : results}
+        columns={columns}
+        getRowId={(row) => row.id}
+        loading={loadingResults}
+        checkboxSelection
+        disableRowSelectionOnClick
+        rowSelectionModel={selectionModel}
+        onRowSelectionModelChange={(model) => setSelectionModel(model)}
+        pageSizeOptions={[25, 50, 100]}
+        slots={{ toolbar: GridToolbar }}
+        showToolbar
+        initialState={{
+          pagination: { paginationModel: { pageSize: 25, page: 0 } },
+          sorting: {
+            sortModel: [{ field: "patientName", sort: "asc" }],
+          },
+        }}
+        slotProps={{
+          toolbar: {
+            showQuickFilter: true,
+            quickFilterProps: { debounceMs: 500 },
+          },
+        }}
+      />
+      {/* </Box>
         </Stack>
-      </Paper>
+      </Paper> */}
 
       {/* Schedule pull panel — unchanged in behaviour from before, just
           cleaned up visually. */}

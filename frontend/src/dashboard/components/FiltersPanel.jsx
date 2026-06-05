@@ -87,6 +87,7 @@ const AUTOCOMPLETE_SX = {
  *                   which fields are rendered. Defaults to all fields.
  */
 const FiltersPanel = ({
+  children,
   filters,
   onChange,
   onQuery,
@@ -416,6 +417,9 @@ const FiltersPanel = ({
                     textField: {
                       placeholder: "",
                       InputLabelProps: { shrink: true },
+                      sx: {
+                        "&&": { height: "100%" },
+                      },
                     },
                   }}
                   label='Study Date End'
@@ -428,7 +432,7 @@ const FiltersPanel = ({
                   onChange={(newValue) =>
                     onChange("studyDateEndSearch", newValue)
                   }
-                  sx={{ width: "100%" }}
+                  sx={{ width: "100%", height: "100%" }}
                 />
               </Stack>
             </LocalizationProvider>
@@ -535,6 +539,7 @@ const FiltersPanel = ({
               onClick={onReset}>
               Clear Filters
             </Button>
+            {children}
           </Stack>
         </Grid>
       </Grid>

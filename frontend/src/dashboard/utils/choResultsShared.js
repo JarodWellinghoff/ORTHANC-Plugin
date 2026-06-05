@@ -32,11 +32,11 @@ export const statusColorMap = {
 };
 
 export const statusLabelMap = {
-  full: "Full",
+  full: "Complete",
   partial: "Global Noise",
   error: "Error",
   none: "Unknown",
-  pending: "Pending",
+  untested: "Pending",
 };
 
 export const fetchJson = async (path, options = {}) => {
@@ -118,6 +118,25 @@ export const normalizeChoRow = (item, index, availableSet) => {
     availableSet instanceof Set &&
     availableSet.has(String(seriesUuid));
 
+  console.log({
+    id,
+    raw: item,
+    seriesUuid,
+    seriesInstanceUid,
+    studyInstanceUid,
+    patientId: item.patient_id ?? "N/A",
+    patientName: item.patient_name ?? "N/A",
+    institutionName: item.institution_name ?? "N/A",
+    protocolName: item.protocol_name ?? "N/A",
+    scannerModel: item.scanner_model ?? "N/A",
+    stationName: item.station_name ?? "N/A",
+    latestAnalysis: item.latest_analysis_date ?? null,
+    testStatus: status,
+    hasDicom,
+    pullScheduleName: item.pull_schedule_name ?? null,
+    studyDate: item.study_date ?? null,
+  });
+
   return {
     id,
     raw: item,
@@ -134,5 +153,6 @@ export const normalizeChoRow = (item, index, availableSet) => {
     testStatus: status,
     hasDicom,
     pullScheduleName: item.pull_schedule_name ?? null,
+    studyDate: item.study_date ?? null,
   };
 };

@@ -25,7 +25,7 @@ const GridToolbar = () => {
         </ColumnsPanelTrigger>
       </Tooltip>
       <Tooltip title='Filters'></Tooltip>
-      <Divider
+      {/* <Divider
         orientation='vertical'
         variant='middle'
         flexItem
@@ -64,7 +64,7 @@ const GridToolbar = () => {
           onClick={() => setExportMenuOpen(false)}>
           Download as CSV
         </ExportCsv>
-      </Menu>
+      </Menu> */}
     </Toolbar>
   );
 };

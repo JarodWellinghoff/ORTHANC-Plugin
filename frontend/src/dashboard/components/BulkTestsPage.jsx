@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
@@ -19,6 +20,7 @@ import ViewColumnIcon from "@mui/icons-material/ViewColumn";
 import FileDownloadIcon from "@mui/icons-material/FileDownload";
 import { useDashboard } from "../context/DashboardContext";
 import { useSnackbar } from "notistack";
+import { alpha } from "@mui/material/styles";
 import {
   DataGrid,
   Toolbar,
@@ -31,6 +33,7 @@ import FiltersPanel from "./FiltersPanel";
 import { useFilters } from "../../hooks/useFilters";
 import {
   defaultChoParams,
+  formatDateTime,
   fetchJson,
   normalizeChoRow,
   resolveSeriesKey,
@@ -54,7 +57,7 @@ const GridToolbar = () => {
         </ColumnsPanelTrigger>
       </Tooltip>
       <Tooltip title='Filters'></Tooltip>
-      <Divider
+      {/* <Divider
         orientation='vertical'
         variant='middle'
         flexItem
@@ -93,7 +96,7 @@ const GridToolbar = () => {
           onClick={() => setExportMenuOpen(false)}>
           Download as CSV
         </ExportCsv>
-      </Menu>
+      </Menu> */}
     </Toolbar>
   );
 };
@@ -561,6 +564,26 @@ const BulkTestsPage = () => {
         minWidth: 160,
       },
       {
+        field: "scannerModel",
+        headerName: "Scanner Model",
+        flex: 1,
+        minWidth: 160,
+      },
+      {
+        field: "stationName",
+        headerName: "Scanner Station",
+        flex: 1,
+        minWidth: 160,
+      },
+      {
+        field: "studyDate",
+        headerName: "Study Date",
+        flex: 1,
+        minWidth: 50,
+        valueFormatter: (value) =>
+          value.replace(/^(\d{4})-(\d{2})-(\d{2})$/, "$2/$3/$1"),
+      },
+      {
         field: "pullScheduleName",
         headerName: "Pull Schedule",
         flex: 1,
@@ -610,7 +633,9 @@ const BulkTestsPage = () => {
                 <Chip
                   size='small'
                   color={isDone ? "success" : isError ? "error" : "info"}
-                  label={isDone ? "Done" : isError ? "Failed" : runningLabel}
+                  label={
+                    isDone ? "Complete" : isError ? "Failed" : runningLabel
+                  }
                 />
               </Tooltip>
             );
@@ -681,6 +706,13 @@ const BulkTestsPage = () => {
         },
       },
       {
+        field: "latestAnalysis",
+        headerName: "Latest Analysis",
+        flex: 1,
+        minWidth: 180,
+        valueFormatter: (value) => formatDateTime(value),
+      },
+      {
         field: "actions",
         headerName: "Actions",
         width: 160,
@@ -709,6 +741,10 @@ const BulkTestsPage = () => {
                       onClick={(event) => {
                         event.stopPropagation();
                         handleRecoverDicom(row);
+                      }}
+                      sx={{
+                        height: "2.5rem",
+                        width: "2.5rem",
                       }}>
                       {isRecovering ? "Recovering" : "Pull DICOM"}
                     </Button>
@@ -724,6 +760,10 @@ const BulkTestsPage = () => {
                       onClick={(event) => {
                         event.stopPropagation();
                         handleRunSingle(row);
+                      }}
+                      sx={{
+                        height: "2.5rem",
+                        width: "2.5rem",
                       }}>
                       <PlayArrowRoundedIcon fontSize='small' />
                     </IconButton>
@@ -789,16 +829,83 @@ const BulkTestsPage = () => {
 
   return (
     <Stack spacing={3}>
+      {/* Hero */}
+      <Box
+        variant='outlined'
+        sx={(theme) => ({
+          position: "relative",
+          overflow: "hidden",
+          px: { xs: 3, md: 6 },
+          py: { xs: 4, md: 7 },
+          borderRadius: 1,
+          border: "1px solid",
+          borderColor: "divider",
+          backgroundImage: `linear-gradient(135deg, ${alpha(
+            theme.palette.primary.main,
+            0.14,
+          )} 0%, ${alpha(theme.palette.primary.dark, 0.04)} 100%)`,
+        })}>
+        <Stack spacing={2.5} sx={{ maxWidth: 880, position: "relative" }}>
+          <Typography
+            variant='h3'
+            component='h1'
+            sx={{
+              fontWeight: 600,
+              letterSpacing: "-0.02em",
+              fontSize: { xs: "2rem", md: "2.75rem" },
+            }}>
+            Bulk Runs
+          </Typography>
+          <Typography
+            variant='body1'
+            color='text.secondary'
+            sx={{ fontSize: "1.05rem", lineHeight: 1.65 }}>
+            Browse the CT series catalog, pull missing DICOM, and queue CHO
+            analyses across many series at once. Focused on running tests.
+          </Typography>
+        </Stack>
+      </Box>
       <FiltersPanel
         filters={filters}
         onChange={updateFilter}
         onQuery={handleQuery}
-        onReset={resetFilters}
-      />
-
+        onReset={resetFilters}>
+        <Stack direction='row' spacing={1.5} alignItems='center'>
+          <Tooltip
+            title={
+              selectedCount === 0
+                ? "Select one or more series to run"
+                : "Run the selected tests one at a time"
+            }>
+            <span>
+              <Button
+                variant='contained'
+                startIcon={
+                  runningBulk ? (
+                    <CircularProgress size={16} color='inherit' />
+                  ) : (
+                    <PlayArrowRoundedIcon />
+                  )
+                }
+                disabled={runningBulk || selectedCount === 0}
+                onClick={handleRunBulk}>
+                {runningBulk
+                  ? "Running…"
+                  : `Run Selected${selectedCount ? ` (${selectedCount})` : ""}`}
+              </Button>
+            </span>
+          </Tooltip>
+          {runningBulk && bulkRun.total > 0 ? (
+            <Typography variant='body2' color='text.secondary'>
+              Running {Math.min(bulkRun.done + 1, bulkRun.total)} of{" "}
+              {bulkRun.total}
+            </Typography>
+          ) : null}
+        </Stack>
+      </FiltersPanel>
       {/* Bulk action bar: run the current selection one series at a time, plus
           the recovery-server picker that gates the per-row Pull DICOM action. */}
-      <Stack
+      {/* <Stack
         direction='row'
         spacing={1.5}
         alignItems='center'
@@ -855,7 +962,7 @@ const BulkTestsPage = () => {
             ))}
           </Select>
         </FormControl>
-      </Stack>
+      </Stack> */}
 
       <DataGrid
         rows={loading ? [] : (normalizedResults ?? [])}
@@ -882,6 +989,10 @@ const BulkTestsPage = () => {
           columns: {
             columnVisibilityModel: {
               latestAnalysis: false,
+              pullScheduleName: false,
+              studyDate: false,
+              stationName: false,
+              patientId: false,
             },
           },
         }}

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Chip from "@mui/material/Chip";
+import Box from "@mui/material/Box";
 import IconButton from "@mui/material/IconButton";
+import Typography from "@mui/material/Typography";
 import MenuItem from "@mui/material/MenuItem";
 import Menu from "@mui/material/Menu";
 import Stack from "@mui/material/Stack";
@@ -12,6 +14,7 @@ import FileDownloadIcon from "@mui/icons-material/FileDownload";
 import { useNavigate } from "react-router-dom";
 import { useDashboard } from "../context/DashboardContext";
 import { useSnackbar } from "notistack";
+import { alpha } from "@mui/material/styles";
 import {
   DataGrid,
   Toolbar,
@@ -46,7 +49,7 @@ const GridToolbar = () => {
         </ColumnsPanelTrigger>
       </Tooltip>
       <Tooltip title='Filters'></Tooltip>
-      <Divider
+      {/* <Divider
         orientation='vertical'
         variant='middle'
         flexItem
@@ -85,7 +88,7 @@ const GridToolbar = () => {
           onClick={() => setExportMenuOpen(false)}>
           Download as CSV
         </ExportCsv>
-      </Menu>
+      </Menu> */}
     </Toolbar>
   );
 };
@@ -106,7 +109,9 @@ const ResultsPage = () => {
   const { filters, updateFilter, resetFilters } = useFilters();
   const { items, pagination } = summary;
 
-  const [filterModel, setFilterModel] = useState({ items: [] });
+  const [filterModel, setFilterModel] = useState({
+    items: [{ field: "testStatus", operator: "equals", value: "full" }],
+  });
   const [sortModel, setSortModel] = useState([
     { field: "latestAnalysis", sort: "desc" },
   ]);
@@ -216,6 +221,26 @@ const ResultsPage = () => {
         minWidth: 160,
       },
       {
+        field: "scannerModel",
+        headerName: "Scanner Model",
+        flex: 1,
+        minWidth: 160,
+      },
+      {
+        field: "stationName",
+        headerName: "Scanner Station",
+        flex: 1,
+        minWidth: 160,
+      },
+      {
+        field: "studyDate",
+        headerName: "Study Date",
+        flex: 1,
+        minWidth: 50,
+        valueFormatter: (value) =>
+          value.replace(/^(\d{4})-(\d{2})-(\d{2})$/, "$2/$3/$1"),
+      },
+      {
         field: "pullScheduleName",
         headerName: "Pull Schedule",
         flex: 1,
@@ -277,6 +302,10 @@ const ResultsPage = () => {
                     navigate(
                       `/results/${encodeURIComponent(seriesInstanceUid)}`,
                     );
+                  }}
+                  sx={{
+                    height: "2.5rem",
+                    width: "2.5rem",
                   }}>
                   <ContentPasteSearchIcon fontSize='small' />
                 </IconButton>
@@ -332,6 +361,43 @@ const ResultsPage = () => {
 
   return (
     <Stack spacing={3}>
+      {/* Hero */}
+      <Box
+        variant='outlined'
+        sx={(theme) => ({
+          position: "relative",
+          overflow: "hidden",
+          px: { xs: 3, md: 6 },
+          py: { xs: 4, md: 7 },
+          borderRadius: 1,
+          border: "1px solid",
+          borderColor: "divider",
+          backgroundImage: `linear-gradient(135deg, ${alpha(
+            theme.palette.secondary.main,
+            0.14,
+          )} 0%, ${alpha(theme.palette.primary.dark, 0.04)} 100%)`,
+        })}>
+        <Stack spacing={2.5} sx={{ maxWidth: 880, position: "relative" }}>
+          <Typography
+            variant='h3'
+            component='h1'
+            sx={{
+              fontWeight: 600,
+              letterSpacing: "-0.02em",
+              fontSize: { xs: "2rem", md: "2.75rem" },
+            }}>
+            Results
+          </Typography>
+          <Typography
+            variant='body1'
+            color='text.secondary'
+            sx={{ fontSize: "1.05rem", lineHeight: 1.65 }}>
+            Read-only view of analyzed series. Filter by patient, protocol, or
+            institute and drill into any series' CHO, NPS, MTF, and dose
+            metrics.
+          </Typography>
+        </Stack>
+      </Box>
       <FiltersPanel
         filters={filters}
         onChange={updateFilter}
@@ -360,7 +426,24 @@ const ResultsPage = () => {
         slots={{ toolbar: GridToolbar }}
         showToolbar
         initialState={{
+          filter: {
+            filterModel: {
+              items: [
+                { field: "testStatus", operator: "is", value: "Complete" },
+              ],
+            },
+          },
           pagination: { paginationModel: paginationModel },
+          columns: {
+            columnVisibilityModel: {
+              latestAnalysis: false,
+              pullScheduleName: false,
+              studyDate: false,
+              stationName: false,
+              patientId: false,
+              testStatus: false,
+            },
+          },
         }}
         onRowSelectionModelChange={(model) => setSelectionModel(model)}
         rowSelectionModel={selectionModel}

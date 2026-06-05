@@ -167,7 +167,7 @@ const ChoPlots = ({ children, data, comparison, direction = "column" }) => {
         }
       }
     });
-    return max;
+    return max / 10;
   }, [comparisonResults, comparisonSeries, resultsData, seriesData]);
   const baseLayout = React.useMemo(() => {
     const createAxisLayout = (overrides = {}) => ({
@@ -298,7 +298,7 @@ const ChoPlots = ({ children, data, comparison, direction = "column" }) => {
   ]);
 
   const ctdiPlot = React.useMemo(() => {
-    const location = resultsData?.location || [];
+    const location = resultsData?.location.map((val) => val / 10) || [];
     const ctdi = resultsData?.ctdivol || [];
     const ssde_inc = resultsData?.ssde_inc || [];
     console.log("CTDI plot data:", { location, ctdi, ssde_inc });
@@ -415,7 +415,7 @@ const ChoPlots = ({ children, data, comparison, direction = "column" }) => {
   ]);
 
   const dwPlot = React.useMemo(() => {
-    const location = resultsData?.location;
+    const location = resultsData?.location.map((val) => val / 10) || [];
     const dw = resultsData?.dw;
     // const comparisonLocation = comparisonResults?.location;
     // const comparisonDw = comparisonResults?.dw;
@@ -519,7 +519,7 @@ const ChoPlots = ({ children, data, comparison, direction = "column" }) => {
   ]);
 
   const noisePlot = React.useMemo(() => {
-    const location = resultsData?.location_sparse;
+    const location = resultsData?.location_sparse?.map((val) => val / 10); // convert mm to cm
     const noise = resultsData?.noise_level;
     // const comparisonLocation = comparisonResults?.location_sparse;
     // const comparisonNoise = comparisonResults?.noise_level;
@@ -625,7 +625,7 @@ const ChoPlots = ({ children, data, comparison, direction = "column" }) => {
   ]);
 
   const choPlot = React.useMemo(() => {
-    const location = resultsData?.location_sparse;
+    const location = resultsData?.location_sparse?.map((val) => val / 10); // convert mm to cm
     const detectability = resultsData?.cho_detectability;
     // const comparisonLocation = comparisonResults?.location_sparse;
     // const comparisonDetectability = comparisonResults?.cho_detectability;

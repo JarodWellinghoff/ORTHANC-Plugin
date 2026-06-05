@@ -22,7 +22,15 @@ import ArrowForwardRoundedIcon from "@mui/icons-material/ArrowForwardRounded";
 
 const navCards = [
   {
-    title: "Bulk Tests",
+    title: "DICOM Pulls",
+    description:
+      "Query remote PACS modalities via C-FIND and retrieve studies with C-MOVE. Schedule pull batches and monitor their progress.",
+    icon: CloudDownloadRoundedIcon,
+    to: "/dicom-pulls",
+    accent: "success",
+  },
+  {
+    title: "Bulk Runs",
     description:
       "Browse the CT series catalog, pull missing DICOM, and queue CHO analyses across many series at once. Focused on running tests.",
     icon: ScienceRoundedIcon,
@@ -37,22 +45,14 @@ const navCards = [
     to: "/results",
     accent: "secondary",
   },
-  {
-    title: "DICOM Pulls",
-    description:
-      "Query remote PACS modalities via C-FIND and retrieve studies with C-MOVE. Schedule pull batches and monitor their progress.",
-    icon: CloudDownloadRoundedIcon,
-    to: "/dicom-pulls",
-    accent: "success",
-  },
-  {
-    title: "DICOM Viewer",
-    description:
-      "Inspect series in a built-in multi-planar reconstruction (MPR) viewer powered by Cornerstone for axial, coronal, and sagittal views.",
-    icon: ViewInArRoundedIcon,
-    to: "/dicom-viewer",
-    accent: "info",
-  },
+  //   {
+  //     title: "DICOM Viewer",
+  //     description:
+  //       "Inspect series in a built-in multi-planar reconstruction (MPR) viewer powered by Cornerstone for axial, coronal, and sagittal views.",
+  //     icon: ViewInArRoundedIcon,
+  //     to: "/dicom-viewer",
+  //     accent: "info",
+  //   },
 ];
 
 const capabilities = [
@@ -139,7 +139,7 @@ const HomePage = () => {
               size='large'
               endIcon={<ArrowForwardRoundedIcon />}
               onClick={() => navigate("/main-dashboard")}>
-              Go to Bulk Tests
+              Go to Bulk Runs
             </Button>
             <Button
               variant='outlined'
@@ -170,8 +170,7 @@ const HomePage = () => {
             display: "grid",
             gridTemplateColumns: {
               xs: "1fr",
-              sm: "repeat(2, 1fr)",
-              lg: "repeat(4, 1fr)",
+              sm: "repeat(3, 1fr)",
             },
             gap: 2.5,
           }}>
@@ -297,7 +296,7 @@ const HomePage = () => {
           </Box>
           , queue analyses in{" "}
           <Box component='span' sx={{ fontWeight: 600, color: "text.primary" }}>
-            Bulk Tests
+            Bulk Runs
           </Box>
           , and then browse what's been measured in{" "}
           <Box component='span' sx={{ fontWeight: 600, color: "text.primary" }}>

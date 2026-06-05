@@ -781,8 +781,8 @@ const ChoAnalysisPage = () => {
   return (
     <Box
       sx={{
-        py: 4,
-        pb: { xs: 16, md: 14 },
+        pb: 2,
+        // pb: { xs: 16, md: 14 },
       }}>
       <Stack spacing={3}>
         {/* <Box>
@@ -855,7 +855,7 @@ const ChoAnalysisPage = () => {
               </Paper>
             </Stack>
           </Grid>
-          <Grid item size={12} sx={{ width: "100%" }}>
+          {/* <Grid item size={12} sx={{ width: "100%" }}>
             <Paper
               variant='outlined'
               sx={{
@@ -1119,7 +1119,7 @@ const ChoAnalysisPage = () => {
                 ) : null}
               </Stack>
             </Paper>
-          </Grid>
+          </Grid> */}
           <Grid item size={12} sx={{ width: "100%" }}>
             <Paper
               variant='outlined'
@@ -1257,7 +1257,10 @@ const ChoAnalysisPage = () => {
             <Button
               variant='outlined'
               startIcon={<ArrowBackIcon />}
-              onClick={handleBackToDashboard}>
+              onClick={handleBackToDashboard}
+              sx={{
+                height: "2.5rem",
+              }}>
               Back to Dashboard
             </Button>
             {/* <Button
@@ -1271,7 +1274,10 @@ const ChoAnalysisPage = () => {
               variant='outlined'
               startIcon={<FileDownloadIcon />}
               onClick={() => seriesId && actions.exportSeries(seriesId)}
-              disabled={!displayedResults}>
+              disabled={!displayedResults}
+              sx={{
+                height: "2.5rem",
+              }}>
               Export XLS
             </Button>
             {/* <Tooltip title={analysisTooltip}>

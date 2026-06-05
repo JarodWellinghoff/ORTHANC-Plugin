@@ -28,7 +28,7 @@ const mainNavItems = [
     isActive: (pathname) => pathname.startsWith("/dicom-pulls"),
   },
   {
-    text: "Bulk Tests",
+    text: "Bulk Runs",
     icon: ScienceRoundedIcon,
     to: "/main-dashboard",
     // Testing page only — Results has its own entry below.
@@ -42,12 +42,12 @@ const mainNavItems = [
     // (/results/:seriesId) so the icon stays selected while drilling in.
     isActive: (pathname) => pathname.startsWith("/results"),
   },
-  {
-    text: "DICOM Viewer",
-    icon: ViewInArRoundedIcon,
-    to: "/dicom-viewer",
-    isActive: (pathname) => pathname.startsWith("/dicom-viewer"),
-  },
+  //   {
+  //     text: "DICOM Viewer",
+  //     icon: ViewInArRoundedIcon,
+  //     to: "/dicom-viewer",
+  //     isActive: (pathname) => pathname.startsWith("/dicom-viewer"),
+  //   },
 ];
 
 export default function MenuContent() {

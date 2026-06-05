@@ -38,7 +38,7 @@ export const inputsCustomizations = {
               size: "small",
             },
             style: {
-              height: "2.25rem",
+              height: "3.25rem",
               padding: "8px 12px",
             },
           },
@@ -47,7 +47,7 @@ export const inputsCustomizations = {
               size: "medium",
             },
             style: {
-              height: "2.5rem", // 40px
+              height: "3.5rem", // 40px
             },
           },
           {
@@ -113,11 +113,11 @@ export const inputsCustomizations = {
               backgroundColor: brand[300],
               backgroundImage: `linear-gradient(to bottom, ${alpha(
                 brand[400],
-                0.8
+                0.8,
               )}, ${brand[500]})`,
               boxShadow: `inset 0 2px 0 ${alpha(
                 brand[200],
-                0.2
+                0.2,
               )}, inset 0 -2px 0 ${alpha(brand[700], 0.4)}`,
               border: `1px solid ${brand[500]}`,
               "&:hover": {
@@ -278,10 +278,10 @@ export const inputsCustomizations = {
               size: "small",
             },
             style: {
-              width: "2.25rem",
-              height: "2.25rem",
+              width: "3.25rem",
+              height: "3.25rem",
               padding: "0.25rem",
-              [`& .${svgIconClasses.root}`]: { fontSize: "1rem" },
+              [`& .${svgIconClasses.root}`]: { fontSize: "1.25rem" },
             },
           },
           {
@@ -289,8 +289,9 @@ export const inputsCustomizations = {
               size: "medium",
             },
             style: {
-              width: "2.5rem",
-              height: "2.5rem",
+              width: "3.5rem",
+              height: "3.5rem",
+              [`& .${svgIconClasses.root}`]: { fontSize: "1.5rem" },
             },
           },
         ],
@@ -389,21 +390,24 @@ export const inputsCustomizations = {
   MuiInputBase: {
     styleOverrides: {
       root: {
-        border: "none",
+        // border: "none",
+        height: "3.25rem",
       },
       input: {
+        height: "3.25rem",
         "&::placeholder": {
           opacity: 0.7,
-          color: gray[500],
+          color: gray[100],
+          fontSize: "1.25rem",
         },
       },
     },
   },
   MuiOutlinedInput: {
     styleOverrides: {
-      //   input: {
-      //     padding: 0,
-      //   },
+      input: {
+        height: "3.25rem",
+      },
       root: ({ theme }) => ({
         // padding: "8px 12px",
         color: (theme.vars || theme).palette.text.primary,
@@ -418,13 +422,14 @@ export const inputsCustomizations = {
         ...theme.applyStyles("dark", {
           "--TextField-brandBorderHoverColor": gray[500],
         }),
+        fontSize: "1.25rem",
         variants: [
           {
             props: {
               size: "small",
             },
             style: {
-              height: "2.25rem",
+              height: "3.25rem",
             },
           },
           {
@@ -432,7 +437,7 @@ export const inputsCustomizations = {
               size: "medium",
             },
             style: {
-              height: "2.5rem",
+              height: "4.2rem",
             },
           },
         ],
@@ -485,7 +490,7 @@ export const inputsCustomizations = {
   //               size: "small",
   //             },
   //             style: {
-  //               height: "2.25rem",
+  //               height: "3.25rem",
   //             },
   //           },
   //           {
@@ -493,7 +498,7 @@ export const inputsCustomizations = {
   //               size: "medium",
   //             },
   //             style: {
-  //               height: "2.5rem",
+  //               height: "3.5rem",
   //             },
   //           },
   //         ],
