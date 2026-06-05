@@ -6,6 +6,7 @@ import os
 import queue
 import orthanc
 import pandas as pd
+import re
 import numpy as np
 from ChangeType import ChangeType
 from ResourceType import ResourceType
@@ -22,7 +23,6 @@ import threading
 from patient_specific_calculation import create_lesion_model
 from PIL import Image
 
-
 TOKEN = orthanc.GenerateRestApiAuthorizationToken()
 
 print(f"=== CHO Analysis Plugin Initialized ===")
@@ -30,6 +30,7 @@ print(f"=== CHO Analysis Plugin Initialized ===")
 SSE_HEARTBEAT_SECONDS = 15
 SSE_RETRY_MILLISECONDS = 4000
 
+_SHEET_NAME_FORBIDDEN = re.compile(r"[:\\/?*\[\]]")
 
 print("=== CHO Analysis Plugin Initialized ===")
 print("Available endpoints:")
@@ -787,91 +788,180 @@ def ExportCHOResultsCSV(output: orthanc.RestOutput, url: str, **request) -> None
 #         send_json(output, error, status=500)
 
 
-def ServeExportResults(output: orthanc.RestOutput, url: str, **request) -> None:
-    """Serve the export results endpoint
+def _sanitize_sheet_name(raw_name, index, used_names):
+    """Coerce ``raw_name`` into a valid, unique xlwt sheet name.
 
-    Args:
-        output (orthanc.RestOutput): The output object for sending responses
-        url (str): The request URL
+    Excel's .xls format caps sheet names at 31 characters and rejects
+    ``: \\ / ? * [ ]``. xlwt also raises silently-confusing errors on duplicate
+    names. We prefix every name with the sequential ``index`` so a workbook
+    that mixes series for the same patient still gets stable, ordered tabs.
     """
-    print(request)
+    cleaned = _SHEET_NAME_FORBIDDEN.sub("_", str(raw_name or "")).strip()
+    # xlwt also rejects names starting or ending with a single quote; strip
+    # those defensively along with any whitespace we just exposed.
+    cleaned = cleaned.strip("'").strip() or f"Series_{index}"
+
+    prefix = f"{index}_"
+    available = 31 - len(prefix)
+    candidate = (prefix + cleaned)[:31] if available > 0 else f"S{index}"[:31]
+
+    # Disambiguate if a truncated name collides with one we already used.
+    base = candidate
+    bump = 1
+    while candidate in used_names:
+        bump += 1
+        tail = f"_{bump}"
+        candidate = (base[: 31 - len(tail)]) + tail
+
+    used_names.add(candidate)
+    return candidate
+
+
+def _write_cho_result_to_sheet(sheet, result_dict):
+    """Write a single CHO result dict to ``sheet``.
+
+    Mirrors the layout the single-series export has always produced: column
+    headers across row 0, scalar values appearing once on row 1, and list-
+    valued columns (per-location CTDIvol, NPS curves, etc.) expanded
+    vertically beneath their header. If a column type isn't xlwt-friendly
+    (dict / nested list) we fall back to a JSON string so the cell never
+    explodes the workbook.
+    """
+    headers = list(result_dict.keys())
+    for col_num, header in enumerate(headers):
+        sheet.write(0, col_num, header)
+
+    # The vertical extent is dictated by the longest list-valued field. If the
+    # result has only scalars we still want one data row so the user sees the
+    # values rather than just an empty header strip.
+    list_lengths = [
+        len(value) for value in result_dict.values() if isinstance(value, list)
+    ]
+    longest = max(list_lengths) if list_lengths else 1
+
+    for row_num in range(1, longest + 1):
+        for col_num, header in enumerate(headers):
+            value = result_dict[header]
+            if isinstance(value, list):
+                cell = value[row_num - 1] if row_num - 1 < len(value) else ""
+            elif row_num == 1:
+                cell = value if value is not None else "N/A"
+            else:
+                cell = ""
+
+            # xlwt only handles primitives + datetime. Coerce anything else.
+            if isinstance(cell, (dict, list)):
+                try:
+                    cell = json.dumps(cell)
+                except (TypeError, ValueError):
+                    cell = str(cell)
+
+            sheet.write(row_num, col_num, cell)
+
+
+def ServeExportResults(output: orthanc.RestOutput, url: str, **request) -> None:
+    """Serve the CHO export endpoint.
+
+    POST body: ``{"series_ids": [<series_instance_uid>, ...]}``.
+
+    Single id   → one workbook with a single sheet (legacy behavior).
+    Many ids    → one workbook with one sheet per series. Individual fetch
+                  failures are logged and the workbook is still returned with
+                  whichever series succeeded; we only 502 if every fetch
+                  failed.
+    """
     if handle_cors_preflight(output, request):
         return
 
     method = request.get("method")
-
     if method != "POST":
         output.SendMethodNotAllowed("POST")
         return
 
     try:
-        # Get request body with parameters
         body = request.get("body", b"{}")
         if isinstance(body, bytes):
             body = body.decode("utf-8")
-
         params = json.loads(body)
-        series_ids = params.get("series_ids")
-        if not series_ids:
-            error = {"error": "Series IDs are required."}
-            send_json(output, error, status=400)
-            return
-        elif len(series_ids) == 1:
-            # Handle single series export
-            series_id = series_ids[0]
-            r = orthanc.RestApiGetAfterPlugins(f"/cho-results/{series_id}")
-            r = json.loads(r)
-            del r["id"], r["series_id_fk"]
-
-            # Create a new Excel workbook and add a worksheet
-            excel = xlwt.Workbook()
-            sheet = excel.add_sheet("Results")
-
-            # Write the header row
-            headers = r.keys()
-            for col_num, header in enumerate(headers):
-                sheet.write(0, col_num, header)
-
-            my_dict_2 = {}
-
-            for key, value in r.items():
-                if isinstance(value, list):
-                    my_dict_2[key] = len(value)
-                else:
-                    my_dict_2[key] = 0
-
-            longest_list_count = max(my_dict_2.values())
-
-            # Write the data rows
-            for row_num in range(1, longest_list_count + 1):
-                for col_num, header in enumerate(headers):
-                    value = ""
-                    if row_num == 1:
-                        if isinstance(r[header], list):
-                            value = r[header][0]
-                        else:
-                            value = r[header] if r[header] is not None else "N/A"
-                    else:
-                        if isinstance(r[header], list):
-                            value = (
-                                r[header][row_num - 1]
-                                if row_num - 1 < len(r[header])
-                                else ""
-                            )
-
-                    sheet.write(row_num, col_num, value)
-
-            # Save the workbook to a BytesIO buffer
-            b = io.BytesIO()
-            excel.save(b)
-            output.AnswerBuffer(b.getvalue(), "application/vnd.ms-excel")
-        # else:
-        #     # Handle multiple series export
-        #     ServeExportMultipleSeries(output, series_ids)
     except Exception as e:
         print(f"Error decoding request body: {e}")
         error = {"error": "Invalid request body."}
         send_json(output, error, status=400)
+        return
+
+    series_ids = params.get("series_ids") or []
+    if not series_ids:
+        error = {"error": "Series IDs are required."}
+        send_json(output, error, status=400)
+        return
+
+    workbook = xlwt.Workbook()
+    used_names = set()
+    successes = 0
+    failures = []
+
+    for index, series_id in enumerate(series_ids, start=1):
+        try:
+            raw = orthanc.RestApiGetAfterPlugins(f"/cho-results/{series_id}")
+            result = json.loads(raw)
+        except Exception as fetch_err:
+            # Don't let one bad series sink the whole export. Capture it,
+            # surface it in the server log, and keep going.
+            print(
+                f"[ServeExportResults] Failed to fetch CHO results for "
+                f"{series_id}: {fetch_err}"
+            )
+            failures.append(series_id)
+            continue
+
+        # These DB-internal columns aren't useful in the export. ``pop`` with a
+        # default keeps us robust if the API shape ever changes.
+        result.pop("id", None)
+        result.pop("series_id_fk", None)
+
+        # Single-series export historically used "Results" for the lone sheet;
+        # preserve that for the n=1 case so existing downstream tooling that
+        # parses by sheet name doesn't have to change.
+        if len(series_ids) == 1:
+            sheet_name = "Results"
+            used_names.add(sheet_name)
+        else:
+            # Prefer patient name as the human-readable label; fall back to a
+            # piece of the series UID, then to the raw id. ``_sanitize_sheet_name``
+            # handles the 31-char limit, forbidden chars, and dedup.
+            label_seed = (
+                result.get("patient_name")
+                or result.get("series_instance_uid")
+                or series_id
+            )
+            sheet_name = _sanitize_sheet_name(label_seed, index, used_names)
+
+        sheet = workbook.add_sheet(sheet_name)
+        _write_cho_result_to_sheet(sheet, result)
+        successes += 1
+
+    if successes == 0:
+        send_json(
+            output,
+            {
+                "error": "Could not fetch results for any of the requested series.",
+                "failed_series_ids": failures,
+            },
+            status=502,
+        )
+        return
+
+    if failures:
+        # Partial-success path: log so an operator can investigate, but still
+        # hand the user the workbook for the series that did come back.
+        print(
+            f"[ServeExportResults] Partial export — "
+            f"{successes} succeeded, {len(failures)} failed: {failures}"
+        )
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    output.AnswerBuffer(buffer.getvalue(), "application/vnd.ms-excel")
 
 
 def ServeSaveResults(output: orthanc.RestOutput, url: str, **request) -> None:

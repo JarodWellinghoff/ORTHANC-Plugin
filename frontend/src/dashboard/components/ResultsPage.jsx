@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
 import Box from "@mui/material/Box";
+import CircularProgress from "@mui/material/CircularProgress";
 import IconButton from "@mui/material/IconButton";
 import Typography from "@mui/material/Typography";
 import MenuItem from "@mui/material/MenuItem";
@@ -99,8 +101,13 @@ const GridToolbar = () => {
 // Read-only counterpart to BulkTestsPage. Same filter shape, same data source
 // (DashboardContext `summary`), but stripped of every testing-related concern:
 // no modality picker, no testType, no per-row run/recover buttons, no
-// beforeunload guard, no calculationStates wiring. The one action per row is
+// beforeunload guard, no calculationStates wiring. The per-row action is
 // "View Results", which deep-links into the existing ChoAnalysisRoute view.
+//
+// The page-level action is "Export Selected" — a bulk counterpart to the
+// per-series "Export XLS" button in ChoAnalysisPage. It posts the selected
+// series ids to /cho-export-results and the backend returns a single .xls
+// workbook with one sheet per selected series.
 // ─────────────────────────────────────────────────────────────────────────────
 const ResultsPage = () => {
   const navigate = useNavigate();
@@ -123,6 +130,10 @@ const ResultsPage = () => {
     type: "include",
     ids: new Set(),
   });
+  // In-flight flag for the Export Selected button. Drives the spinner icon and
+  // the disabled state so a user can't fire a second export while the first
+  // request is still streaming the workbook back.
+  const [exporting, setExporting] = useState(false);
 
   const handleQuery = () => actions.loadSummary(filters);
 
@@ -193,6 +204,118 @@ const ResultsPage = () => {
       items.map((item, index) => normalizeChoRow(item, index, availableSet)),
     [items, availableSet],
   );
+
+  // Resolve the current selection (handling both the "include" and "exclude"
+  // selection-model shapes) down to an ordered queue of rows on this page.
+  // Mirrors `resolveSelectedQueue` from BulkTestsPage so behavior across the
+  // two pages stays consistent.
+  const resolveSelectedQueue = useCallback(() => {
+    const type = selectionModel.type;
+    const rowsById = new Map(normalizedResults.map((row) => [row.id, row]));
+    let selectedIds = null;
+
+    if (type === "include") {
+      if (selectionModel.ids.size === 0) {
+        return [];
+      }
+      selectedIds = selectionModel.ids.intersection
+        ? selectionModel.ids.intersection(rowsById)
+        : new Set([...selectionModel.ids].filter((id) => rowsById.has(id)));
+    } else if (type === "exclude") {
+      if (selectionModel.ids.size === rowsById.size) {
+        return [];
+      }
+      selectedIds = new Set(rowsById.keys()).difference
+        ? new Set(rowsById.keys()).difference(selectionModel.ids)
+        : new Set(
+            [...rowsById.keys()].filter((id) => !selectionModel.ids.has(id)),
+          );
+    }
+
+    const queue = [];
+    if (selectedIds) {
+      for (const value of selectedIds) {
+        if (rowsById.has(value)) queue.push(rowsById.get(value));
+      }
+    }
+    return queue;
+  }, [normalizedResults, selectionModel]);
+
+  // Bulk export entry point. Filters the selection down to rows that actually
+  // have results in the database — anything else would just produce empty
+  // sheets and waste a backend round-trip. Surfaces any skipped rows so the
+  // user knows why their selection count might not match the export count.
+  const handleExportSelected = useCallback(async () => {
+    if (exporting) return;
+
+    const queue = resolveSelectedQueue();
+    if (queue.length === 0) {
+      enqueueSnackbar("Select at least one row to export.", {
+        variant: "warning",
+      });
+      return;
+    }
+
+    const exportable = queue.filter((row) => {
+      const status = row.testStatus;
+      const hasUid = Boolean(row.seriesInstanceUid ?? row.seriesUuid);
+      return (
+        hasUid &&
+        status &&
+        status !== "none" &&
+        status !== "pending" &&
+        status !== "untested"
+      );
+    });
+    const skipped = queue.length - exportable.length;
+
+    if (exportable.length === 0) {
+      enqueueSnackbar("None of the selected series have results to export.", {
+        variant: "error",
+      });
+      return;
+    }
+    if (skipped > 0) {
+      enqueueSnackbar(
+        `${skipped} selected series ${
+          skipped === 1 ? "has" : "have"
+        } no results yet and will be skipped.`,
+        { variant: "warning" },
+      );
+    }
+
+    // Backend keys on series_instance_uid for /cho-results/{id}; the
+    // normalized row stashes that on `seriesInstanceUid` (with `seriesUuid`
+    // as a last-resort fallback for older items that lack it).
+    const seriesIds = exportable.map(
+      (row) => row.seriesInstanceUid ?? row.seriesUuid,
+    );
+
+    setExporting(true);
+    try {
+      await actions.exportSeries(seriesIds);
+      // exportSeries surfaces success/failure via the context's status
+      // channel; we add a snackbar here so the feedback is also visible in
+      // the page where the user took the action.
+      enqueueSnackbar(`Export started for ${seriesIds.length} series.`, {
+        variant: "info",
+      });
+    } finally {
+      setExporting(false);
+    }
+  }, [actions, enqueueSnackbar, exporting, resolveSelectedQueue]);
+
+  // Count of currently selected rows on this page, for the action bar button.
+  // Handles both selection-model shapes ("include" of explicit ids, or
+  // "exclude" of unchecked ids after a "select all").
+  const selectedCount = useMemo(() => {
+    const ids = selectionModel?.ids;
+    if (!ids) return 0;
+    if (selectionModel.type === "exclude") {
+      return Math.max(0, normalizedResults.length - ids.size);
+    }
+    return ids.size;
+  }, [selectionModel, normalizedResults.length]);
 
   const columns = useMemo(() => {
     return [
@@ -402,8 +525,40 @@ const ResultsPage = () => {
         filters={filters}
         onChange={updateFilter}
         onQuery={handleQuery}
-        onReset={resetFilters}
-      />
+        onReset={resetFilters}>
+        {/* Bulk action bar lives inside the FiltersPanel children slot, the
+            same way BulkTestsPage hosts its "Run Selected" button. Keeping it
+            here means the action sits visually adjacent to the filters that
+            shape the selection. */}
+        <Stack direction='row' spacing={1.5} alignItems='center'>
+          <Tooltip
+            title={
+              selectedCount === 0
+                ? "Select one or more series to export"
+                : "Export the selected series as a single XLS with one sheet per case"
+            }>
+            <span>
+              <Button
+                variant='contained'
+                startIcon={
+                  exporting ? (
+                    <CircularProgress size={16} color='inherit' />
+                  ) : (
+                    <FileDownloadIcon />
+                  )
+                }
+                disabled={exporting || selectedCount === 0}
+                onClick={handleExportSelected}>
+                {exporting
+                  ? "Exporting…"
+                  : `Export Selected${
+                      selectedCount ? ` (${selectedCount})` : ""
+                    }`}
+              </Button>
+            </span>
+          </Tooltip>
+        </Stack>
+      </FiltersPanel>
 
       <DataGrid
         rows={loading ? [] : (normalizedResults ?? [])}

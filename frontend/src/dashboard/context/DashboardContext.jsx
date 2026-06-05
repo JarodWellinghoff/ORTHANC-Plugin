@@ -842,14 +842,34 @@ export const DashboardProvider = ({ children }) => {
   }, [choModal.seriesUuid, closeChoModal, loadSummary, setStatus]);
 
   const exportSeries = useCallback(
-    async (seriesId) => {
+    async (seriesIdOrIds) => {
+      // Accept either a single id (legacy: ChoAnalysisPage's "Export XLS"
+      // button) or an array of ids (ResultsPage's new "Export Selected"
+      // bulk action). Normalize up front so the rest of the function only
+      // has to think about arrays.
+      const seriesIds = Array.isArray(seriesIdOrIds)
+        ? seriesIdOrIds.filter(Boolean)
+        : seriesIdOrIds
+          ? [seriesIdOrIds]
+          : [];
+      if (seriesIds.length === 0) {
+        setStatus("No series selected for export", "error");
+        return;
+      }
+
+      const isBulk = seriesIds.length > 1;
+      setStatus(
+        isBulk ? `Exporting ${seriesIds.length} series…` : "Exporting…",
+        "loading",
+      );
+
       try {
         const response = await fetch(
           `${import.meta.env.VITE_API_URL}/cho-export-results`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ series_ids: [seriesId] }),
+            body: JSON.stringify({ series_ids: seriesIds }),
             credentials: "include",
           },
         );
@@ -861,12 +881,25 @@ export const DashboardProvider = ({ children }) => {
         const url = window.URL.createObjectURL(blob);
         const link = document.createElement("a");
         link.href = url;
-        link.download = `${seriesId}-results.xls`;
+        // Filename adapts to the request shape: single id keeps the
+        // historical `<uid>-results.xls` shape so individual-case exports
+        // still drop in with the same name. Bulk exports get a timestamp
+        // so the user can do multiple exports in a row without clobbering
+        // each other's downloads.
+        if (isBulk) {
+          const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+          link.download = `cho-results-${seriesIds.length}-series-${stamp}.xls`;
+        } else {
+          link.download = `${seriesIds[0]}-results.xls`;
+        }
         document.body.appendChild(link);
         link.click();
         link.remove();
         window.URL.revokeObjectURL(url);
-        setStatus("Export ready", "success");
+        setStatus(
+          isBulk ? `Export ready (${seriesIds.length} series)` : "Export ready",
+          "success",
+        );
       } catch (error) {
         console.debug(error);
         setStatus(`Download failed: ${error.message}`, "error");
