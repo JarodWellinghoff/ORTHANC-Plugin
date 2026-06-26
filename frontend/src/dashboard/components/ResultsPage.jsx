@@ -567,6 +567,7 @@ const ResultsPage = () => {
         rowCount={pagination.total ?? normalizedResults?.length ?? 0}
         paginationMode='server'
         filterMode='client'
+        disableColumnFilter
         filterModel={filterModel}
         onFilterModelChange={setFilterModel}
         paginationModel={paginationModel}

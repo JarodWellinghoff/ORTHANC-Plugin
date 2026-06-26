@@ -965,6 +965,7 @@ const BulkTestsPage = () => {
       </Stack> */}
 
       <DataGrid
+        disableColumnFilter
         rows={loading ? [] : (normalizedResults ?? [])}
         columns={columns}
         getRowId={getRowId}

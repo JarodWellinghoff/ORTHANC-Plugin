@@ -10,6 +10,7 @@ HEADERS = [
     "manufacturer",
     "model",
     "kernel",
+    "protocol",
     "eta_peak",
     "f_peak",
     "f_50",
@@ -51,6 +52,7 @@ def parse_json_files(mtf_files):
             manufacturer = data["dcm_info"]["Manufacturer"].lower()
             model = data["dcm_info"]["ModelName"].lower()
             kernel = "_".join(data["dcm_info"]["ConvolutionKernel"])
+            protocol = data["dcm_info"].get("ProtocolName", "unknown")
             rois = data["rois"]
             optimal_roi = max(rois, key=lambda r: r["is_optimal"])
             metrics = optimal_roi["metrics"]
@@ -65,6 +67,7 @@ def parse_json_files(mtf_files):
                 MANUFACTURER_MAP.get(manufacturer, manufacturer),
                 MODEL_MAP.get(model, model),
                 kernel,
+                protocol,
                 eta_peak,
                 f_peak,
                 f_50,
@@ -121,6 +124,7 @@ def parse_xls_files(mtf_dir, mtf_files):
                 MANUFACTURER_MAP.get(manufacturer, manufacturer),
                 MODEL_MAP.get(model, model),
                 kernel,
+                "unknown",
                 eta_peak,
                 f_peak,
                 f_50,

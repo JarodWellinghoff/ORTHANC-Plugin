@@ -831,6 +831,7 @@ const DicomPullsPage = () => {
           </Stack> */}
       {/* <Box sx={{ minHeight: 420 }}> */}
       <DataGrid
+        disableColumnFilter
         rows={loadingResults ? [] : results}
         columns={columns}
         getRowId={(row) => row.id}
