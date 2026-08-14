@@ -17,6 +17,8 @@ import { useNavigate } from "react-router-dom";
 import { useDashboard } from "../context/DashboardContext";
 import { useSnackbar } from "notistack";
 import { alpha } from "@mui/material/styles";
+import InsightsRoundedIcon from "@mui/icons-material/InsightsRounded";
+import AggregatePlotsDialog from "./plots/AggregatePlotsDialog";
 import {
   DataGrid,
   Toolbar,
@@ -110,6 +112,8 @@ const GridToolbar = () => {
 // workbook with one sheet per selected series.
 // ─────────────────────────────────────────────────────────────────────────────
 const ResultsPage = () => {
+  const [plotOpen, setPlotOpen] = useState(false);
+  const [plotRows, setPlotRows] = useState([]);
   const navigate = useNavigate();
   const { enqueueSnackbar } = useSnackbar();
   const { summary, actions } = useDashboard();
@@ -304,7 +308,55 @@ const ResultsPage = () => {
       setExporting(false);
     }
   }, [actions, enqueueSnackbar, exporting, resolveSelectedQueue]);
+  // A row is worth fetching if an analysis row exists for it at all. `partial`
+  // (global-noise-only) series are kept deliberately: they carry CTDIvol, SSDE
+  // and Dw even though the detectability and NPS columns are null, and the
+  // aggregate view drops nulls per metric rather than per series.
+  const hasStoredResults = useCallback((row) => {
+    const status = row.testStatus;
+    const hasUid = Boolean(row.seriesInstanceUid ?? row.seriesUuid);
+    return (
+      hasUid &&
+      status &&
+      status !== "none" &&
+      status !== "pending" &&
+      status !== "untested"
+    );
+  }, []);
 
+  // Cohort plot entry point. Mirrors handleExportSelected: resolve the
+  // selection, drop rows with nothing stored, tell the user what was skipped,
+  // then hand the survivors to the dialog.
+  const handlePlotSelected = useCallback(() => {
+    const queue = resolveSelectedQueue();
+    if (queue.length === 0) {
+      enqueueSnackbar("Select at least one row to plot.", {
+        variant: "warning",
+      });
+      return;
+    }
+
+    const plottable = queue.filter(hasStoredResults);
+    const skipped = queue.length - plottable.length;
+
+    if (plottable.length === 0) {
+      enqueueSnackbar("None of the selected series have results to plot.", {
+        variant: "error",
+      });
+      return;
+    }
+    if (skipped > 0) {
+      enqueueSnackbar(
+        `${skipped} selected series ${
+          skipped === 1 ? "has" : "have"
+        } no results yet and will be skipped.`,
+        { variant: "warning" },
+      );
+    }
+
+    setPlotRows(plottable);
+    setPlotOpen(true);
+  }, [enqueueSnackbar, hasStoredResults, resolveSelectedQueue]);
   // Count of currently selected rows on this page, for the action bar button.
   // Handles both selection-model shapes ("include" of explicit ids, or
   // "exclude" of unchecked ids after a "select all").
@@ -557,6 +609,23 @@ const ResultsPage = () => {
               </Button>
             </span>
           </Tooltip>
+
+          <Tooltip
+            title={
+              selectedCount === 0
+                ? "Select one or more series to plot"
+                : "Plot the selected series' summary metrics against each other"
+            }>
+            <span>
+              <Button
+                variant='outlined'
+                startIcon={<InsightsRoundedIcon />}
+                disabled={selectedCount === 0}
+                onClick={handlePlotSelected}>
+                {`Plot Selected${selectedCount ? ` (${selectedCount})` : ""}`}
+              </Button>
+            </span>
+          </Tooltip>
         </Stack>
       </FiltersPanel>
 
@@ -609,6 +678,12 @@ const ResultsPage = () => {
             quickFilterProps: { debounceMs: 500 },
           },
         }}
+      />
+
+      <AggregatePlotsDialog
+        open={plotOpen}
+        onClose={() => setPlotOpen(false)}
+        rows={plotRows}
       />
     </Stack>
   );

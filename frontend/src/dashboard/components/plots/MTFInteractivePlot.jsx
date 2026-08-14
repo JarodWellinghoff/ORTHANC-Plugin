@@ -244,7 +244,7 @@ const chartContainerSx = {
   position: "relative",
   p: 1,
   maxHeight: 512,
-  height: 400,
+  height: 1500,
   //   flex: 1,
 };
 
@@ -820,7 +820,7 @@ const MTFInteractivePlot = ({
               <DialogContent
                 dividers
                 sx={{
-                  height: { xs: 400, sm: 500, md: 600 },
+                  height: { xs: 400, sm: 500, md: 1200 },
                   p: (theme) => theme.spacing(2),
                 }}>
                 <Box sx={{ height: "100%", width: "100%" }}>
