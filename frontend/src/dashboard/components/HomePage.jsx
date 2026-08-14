@@ -102,14 +102,14 @@ const HomePage = () => {
             0.14,
           )} 0%, ${alpha(theme.palette.primary.dark, 0.04)} 100%)`,
         })}>
-        <Stack spacing={2.5} sx={{ maxWidth: 880, position: "relative" }}>
-          <Chip
+        <Stack spacing={2.5} sx={{ maxWidth: 1100, position: "relative" }}>
+          {/* <Chip
             label='ORTHANC · CHO Analysis Platform'
             color='primary'
             variant='outlined'
             size='small'
             sx={{ alignSelf: "flex-start", fontWeight: 500 }}
-          />
+          /> */}
           <Typography
             variant='h3'
             component='h1'
@@ -118,17 +118,17 @@ const HomePage = () => {
               letterSpacing: "-0.02em",
               fontSize: { xs: "2rem", md: "2.75rem" },
             }}>
-            Welcome to the CHO Analysis Platform
+            Software for CT Image Quality and Dose Monitoring
           </Typography>
           <Typography
             variant='body1'
             color='text.secondary'
             sx={{ fontSize: "1.05rem", lineHeight: 1.65 }}>
-            A research and clinical workbench for CT image quality analysis. The
-            platform combines an Orthanc DICOM server, PostgreSQL-backed result
-            storage, and a Channelized Hotelling Observer pipeline to quantify
-            lesion detectability, noise, resolution, and dose across your CT
-            series.
+            A research and clinical workbench for CT image quality and dose
+            monitoring analysis. The platform combines an Orthanc DICOM server,
+            PostgreSQL-backed result storage, and a Channelized Hotelling
+            Observer pipeline to quantify lesion detectability, noise,
+            resolution, and dose across your CT series.
           </Typography>
           <Stack
             direction={{ xs: "column", sm: "row" }}

@@ -94,6 +94,7 @@ const FiltersPanel = ({
   onReset,
   filterOptions: filterOptionsProp,
   visibleFields,
+  showOptions = true,
 }) => {
   const { filterOptions: contextFilterOptions } = useDashboard();
 
@@ -124,7 +125,7 @@ const FiltersPanel = ({
               multiple
               autoSelect
               fullWidth
-              options={filterOptions.patient_ids ?? []}
+              options={showOptions ? (filterOptions.patient_ids ?? []) : []}
               freeSolo
               sx={AUTOCOMPLETE_SX}
               value={filters?.patientIdSearch ?? []}
@@ -159,7 +160,7 @@ const FiltersPanel = ({
               multiple
               autoSelect
               fullWidth
-              options={filterOptions.patient_names ?? []}
+              options={showOptions ? (filterOptions.patient_names ?? []) : []}
               freeSolo
               sx={AUTOCOMPLETE_SX}
               value={filters?.patientNameSearch ?? []}
@@ -197,7 +198,7 @@ const FiltersPanel = ({
               autoSelect
               fullWidth
               id='institutions'
-              options={filterOptions.institutes ?? []}
+              options={showOptions ? (filterOptions.institutes ?? []) : []}
               freeSolo
               sx={AUTOCOMPLETE_SX}
               value={filters?.instituteSearch ?? []}
@@ -233,7 +234,7 @@ const FiltersPanel = ({
               autoSelect
               fullWidth
               id='protocol-names'
-              options={filterOptions.protocol_names ?? []}
+              options={showOptions ? (filterOptions.protocol_names ?? []) : []}
               freeSolo
               sx={AUTOCOMPLETE_SX}
               value={filters?.protocolNameSearch ?? []}
@@ -274,7 +275,7 @@ const FiltersPanel = ({
               autoSelect
               fullWidth
               id='scanner-models'
-              options={filterOptions.scanner_models ?? []}
+              options={showOptions ? (filterOptions.scanner_models ?? []) : []}
               freeSolo
               sx={AUTOCOMPLETE_SX}
               value={filters?.scannerModelSearch ?? []}
@@ -314,7 +315,9 @@ const FiltersPanel = ({
               autoSelect
               fullWidth
               id='scanner-stations'
-              options={filterOptions.scanner_stations ?? []}
+              options={
+                showOptions ? (filterOptions.scanner_stations ?? []) : []
+              }
               freeSolo
               sx={AUTOCOMPLETE_SX}
               value={filters?.scannerStationSearch ?? []}
@@ -488,7 +491,7 @@ const FiltersPanel = ({
               multiple
               autoSelect
               fullWidth
-              options={filterOptions.pull_schedules ?? []}
+              options={showOptions ? (filterOptions.pull_schedules ?? []) : []}
               freeSolo
               sx={AUTOCOMPLETE_SX}
               value={filters?.pullScheduleSearch ?? []}

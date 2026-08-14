@@ -855,7 +855,7 @@ const ChoAnalysisPage = () => {
               </Paper>
             </Stack>
           </Grid>
-          {/* <Grid item size={12} sx={{ width: "100%" }}>
+          <Grid item size={12} sx={{ width: "100%" }}>
             <Paper
               variant='outlined'
               sx={{
@@ -1119,7 +1119,7 @@ const ChoAnalysisPage = () => {
                 ) : null}
               </Stack>
             </Paper>
-          </Grid> */}
+          </Grid>
           <Grid item size={12} sx={{ width: "100%" }}>
             <Paper
               variant='outlined'
@@ -1280,7 +1280,7 @@ const ChoAnalysisPage = () => {
               }}>
               Export XLS
             </Button>
-            {/* <Tooltip title={analysisTooltip}>
+            <Tooltip title={analysisTooltip}>
               <span style={{ display: "inline-flex" }}>
                 <Button
                   variant='contained'
@@ -1317,7 +1317,7 @@ const ChoAnalysisPage = () => {
                   </Box>
                 </Button>
               </span>
-            </Tooltip> */}
+            </Tooltip>
             {/* <Box sx={{ position: "relative", display: "inline-flex" }}></Box> */}
             {/* <Button
               variant='outlined'

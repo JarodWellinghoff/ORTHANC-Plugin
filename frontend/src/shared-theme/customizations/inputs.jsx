@@ -393,14 +393,14 @@ export const inputsCustomizations = {
         // border: "none",
         height: "3.25rem",
       },
-      input: {
+      input: ({ theme }) => ({
         height: "3.25rem",
         "&::placeholder": {
           opacity: 0.7,
-          color: gray[100],
-          fontSize: "1.25rem",
+          color: (theme.vars || theme).palette.text.primary,
+          fontSize: "2rem",
         },
-      },
+      }),
     },
   },
   MuiOutlinedInput: {

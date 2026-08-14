@@ -23,9 +23,14 @@ from numpy.linalg import inv
 import os
 from pydicom import dcmread
 import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
+import matplotlib.patches as patches
+from matplotlib import cm, colors
+from mpl_toolkits.mplot3d import Axes3D
 from scipy import ndimage
 from scipy.stats import linregress
 from skimage import feature, measure
+from skimage import exposure, util
 import math
 import pandas as pd
 import scipy.io as sio
@@ -44,6 +49,8 @@ from matplotlib.widgets import Slider
 from sklearn.metrics import mean_absolute_percentage_error
 from dataclasses import dataclass
 from typing import Optional
+from scipy.interpolate import RegularGridInterpolator as RGI
+from skimage.util import crop
 
 KERNEL_RE = re.compile(r"^([A-Za-z]+?)(\d+)([A-Za-z]*)(?:_(\d+))?$")
 
@@ -71,131 +78,192 @@ class SmoothnessResult:
     # ---------------------------------------------------------------------------
 
 
-def scroll_plot_3d(data):
-    """Scroll through slices of a 3D array using the mouse wheel."""
-
-    class IndexTracker:
-        def __init__(self, ax, X, start_slice=None):
-            self.ax = ax
-            ax.set_title("use scroll wheel to navigate images")
-            self.X = X
-            self.slices, _, _ = X.shape
-            if start_slice is None:
-                self.ind = self.slices // 2
-            else:
-                self.ind = start_slice
-
-            self.im = ax.imshow(self.X[self.ind], cmap="gray")
-            self.update()
-
-        def onscroll(self, event):
-            if event.button == "up":
-                self.ind = (self.ind + 1) % self.slices
-            else:
-                self.ind = (self.ind - 1) % self.slices
-            self.update()
-
-        def update(self):
-            self.im.set_data(self.X[self.ind])
-            self.ax.set_ylabel(f"slice {self.ind}")
-            self.im.axes.figure.canvas.draw()
-
-    fig, ax = plt.subplots(1, 1)
-    tracker = IndexTracker(ax, data)
-    fig.canvas.mpl_connect("scroll_event", tracker.onscroll)
-    plt.show()
-    # return fig, ax, tracker
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
 
 
-def measure_smoothness(
-    signal: np.ndarray,
-    cutoff_fraction: float = 0.2,
-    window: bool = True,
-    fit_range: Optional[tuple[float, float]] = (0.02, 0.45),
-) -> SmoothnessResult:
-    """
-    Measure the smoothness of a 1D signal.
+def scroll_plot_3d(
+    data,
+    rois=None,
+    side=10,
+    depth=1,
+    colors=None,
+    labels=None,
+    titles=None,
+    start_slice=None,
+    layout=None,
+    block=None,
+):
+    """Scroll through slices of one or more 3D arrays using the mouse wheel.
 
     Parameters
     ----------
-    signal : array_like
-        1D input array (real-valued).
-    cutoff_fraction : float
-        Normalised frequency threshold for the high-freq ratio (0-0.5).
-        Default 0.2 means the top 60 % of the spectrum is "high frequency".
-    window : bool
-        Apply a Hann window before computing the DFT to reduce spectral
-        leakage.  Recommended for non-periodic signals.
-    fit_range : tuple(float, float) or None
-        Normalised frequency range (0-0.5) over which to fit the spectral
-        slope.  Set to None to use the full one-sided spectrum (excluding DC).
-
-    Returns
-    -------
-    SmoothnessResult
+    data : (S, R, C) array or sequence of such arrays
+        One volume, or several to view side by side. All volumes must share
+        the same number of slices S; scrolling is synced across them.
+    rois : sequence, optional
+        Square ROI centers (slice, row, col). Either:
+          * a flat list of centers -> drawn on every panel, or
+          * a list of length n_panels, each a sequence of centers (or None)
+            -> per-panel ROIs.
+    side, depth, colors, labels :
+        ROI styling, as before. Each may be a scalar/sequence applied to all
+        panels, or a list of length n_panels for per-panel control.
+    titles : sequence of str, optional
+        Per-panel titles.
+    start_slice : int, optional
+        First slice shown. Defaults to the middle slice.
+    layout : (nrows, ncols), optional
+        Subplot grid. Defaults to a single row.
     """
-    signal = np.asarray(signal, dtype=float)
-    if signal.ndim != 1:
-        raise ValueError("signal must be 1-D")
 
-    N = len(signal)
+    # --- normalize the volumes -------------------------------------------
+    arrays = [data] if isinstance(data, np.ndarray) else list(data)
+    n_panels = len(arrays)
 
-    # --- optional windowing ---
-    s = signal - signal.mean()  # remove DC before windowing
-    if window:
-        s = s * np.hanning(N)
+    n_slices = arrays[0].shape[0]
+    for k, a in enumerate(arrays):
+        if a.shape[0] != n_slices:
+            raise ValueError(
+                f"all volumes must have the same number of slices; "
+                f"volume 0 has {n_slices}, volume {k} has {a.shape[0]}"
+            )
 
-    # --- DFT (one-sided) ---
-    X = rfft(s)
-    power = np.abs(X) ** 2  # power spectrum
-    freqs = rfftfreq(N)  # normalised frequencies [0, 0.5]
-    K = len(freqs)
+    half_depth = max(depth - 1, 0) // 2
 
-    total_power = power.sum()
-    if total_power == 0:
-        raise ValueError("Signal has zero power (constant array).")
+    # --- broadcast per-panel parameters ----------------------------------
+    def _is_center(x):
+        return (
+            isinstance(x, (tuple, list, np.ndarray))
+            and len(x) == 3
+            and all(np.isscalar(v) for v in x)
+        )
 
-    # --- 1. High-frequency energy ratio ---
-    high_mask = freqs > cutoff_fraction
-    high_freq_ratio = power[high_mask].sum() / total_power
+    def _per_panel(value):
+        """Length-n_panels list: use as-is if it already matches, else broadcast."""
+        if isinstance(value, (list, tuple)) and len(value) == n_panels:
+            return list(value)
+        return [value] * n_panels
 
-    # --- 2. Spectral centroid (normalised) ---
-    spectral_centroid = float(np.dot(freqs, power) / total_power) / 0.5  # norm to [0,1]
-
-    # --- 3. Sobolev H1 semi-norm ---
-    k_indices = np.arange(K)
-    sobolev_H1 = float(np.dot(k_indices**2, power))
-
-    # --- 4. Spectral slope via log-log linear regression ---
-    # Exclude DC (index 0) and optionally restrict to fit_range
-    if fit_range is not None:
-        mask = (freqs > fit_range[0]) & (freqs <= fit_range[1])
+    if rois is None or len(rois) == 0:
+        panel_rois = [[] for _ in range(n_panels)]
+    elif _is_center(rois[0]):
+        panel_rois = [list(rois) for _ in range(n_panels)]  # broadcast
     else:
-        mask = freqs > 0
+        panel_rois = [list(r) if r is not None else [] for r in rois]  # per-panel
 
-    if mask.sum() < 5:
-        spectral_slope = float("nan")
+    panel_side = _per_panel(side)
+    panel_colors = _per_panel(colors)
+    panel_labels = _per_panel(labels)
+    panel_titles = titles if titles is not None else [None] * n_panels
+
+    palette = ["red", "lime", "cyan", "yellow", "magenta", "orange"]
+
+    def _build_rois(ax, centers, side_spec, color_spec, label_spec):
+        """Create (rect, text, slice) entries for one panel; returns list."""
+        m = len(centers)
+        sides = [side_spec] * m if np.isscalar(side_spec) else list(side_spec)
+
+        if color_spec is None:
+            cols = [palette[i % len(palette)] for i in range(m)]
+        elif isinstance(color_spec, str):
+            cols = [color_spec] * m
+        else:
+            cols = list(color_spec)
+
+        entries = []
+        for i, (s, r, c) in enumerate(centers):
+            hs = sides[i] / 2.0
+            rect = Rectangle(
+                (c - hs, r - hs),
+                sides[i],
+                sides[i],
+                fill=False,
+                edgecolor=cols[i],
+                linewidth=1.5,
+            )
+            rect.set_visible(False)
+            ax.add_patch(rect)
+
+            txt = None
+            if label_spec is not None:
+                txt = ax.text(
+                    c - hs,
+                    r - hs - 1,
+                    str(label_spec[i]),
+                    color=cols[i],
+                    fontsize=8,
+                    va="bottom",
+                )
+                txt.set_visible(False)
+            entries.append((rect, txt, s))
+        return entries
+
+    class _Panel:
+        __slots__ = ("im", "X", "rois")
+
+    class SyncedScroller:
+        def __init__(self, fig, axes):
+            self.fig = fig
+            self.n_slices = n_slices
+            self.half_depth = half_depth
+            self.ind = n_slices // 2 if start_slice is None else start_slice
+
+            self.panels = []
+            for k, ax in enumerate(axes):
+                p = _Panel()
+                p.X = arrays[k]
+                p.im = ax.imshow(p.X[self.ind], cmap="gray")
+                p.rois = _build_rois(
+                    ax,
+                    panel_rois[k],
+                    panel_side[k],
+                    panel_colors[k],
+                    panel_labels[k],
+                )
+                if panel_titles[k] is not None:
+                    ax.set_title(panel_titles[k])
+                self.panels.append(p)
+
+            self.update()
+
+        def onscroll(self, event):
+            step = 1 if event.button == "up" else -1
+            self.ind = (self.ind + step) % self.n_slices
+            self.update()
+
+        def update(self):
+            for p in self.panels:
+                p.im.set_data(p.X[self.ind])
+                for rect, txt, s in p.rois:
+                    on = abs(self.ind - s) <= self.half_depth
+                    rect.set_visible(on)
+                    if txt is not None:
+                        txt.set_visible(on)
+            self.fig.suptitle(
+                f"slice {self.ind} / {self.n_slices - 1}    (scroll to navigate)"
+            )
+            self.fig.canvas.draw_idle()
+
+    # --- figure / axes ---------------------------------------------------
+    if layout is None:
+        nrows, ncols = 1, n_panels
     else:
-        log_k = np.log10(freqs[mask])
-        log_amp = np.log10(np.abs(X[mask]) + 1e-12)
-        slope, _, _, _, _ = linregress(log_k, log_amp)
-        spectral_slope = float(-slope)  # positive s means decay |X|~k^{-s}
+        nrows, ncols = layout
 
-    # --- 5. Composite smoothness score ---
-    # Map spectral slope to [0,1]: slope=0 -> 0, slope>=4 -> ~1
-    # Sigmoid-like clamping avoids score being dominated by outliers.
-    if np.isfinite(spectral_slope):
-        smoothness_score = float(np.clip(spectral_slope / 4.0, 0.0, 1.0))
-    else:
-        smoothness_score = float("nan")
+    fig, axes = plt.subplots(nrows, ncols, squeeze=False, sharex=True, sharey=True)
+    axes = axes.ravel()
+    for ax in axes[n_panels:]:  # hide unused cells
+        ax.set_visible(False)
 
-    return SmoothnessResult(
-        high_freq_ratio=float(high_freq_ratio),
-        spectral_centroid=float(spectral_centroid),
-        sobolev_norm_H1=sobolev_H1,
-        spectral_slope=spectral_slope,
-        smoothness_score=smoothness_score,
-    )
+    scroller = SyncedScroller(fig, axes[:n_panels])
+    fig.canvas.mpl_connect("scroll_event", scroller.onscroll)
+
+    if block is None:
+        block = not plt.isinteractive()
+    plt.show(block=block)
+    return scroller
 
 
 def _parse_kernel(name):
@@ -515,52 +583,11 @@ def ChannelMatrix_Generation(Chnl, roiSize_xy):
     return channelMatrix
 
 
-# def CHO_patient_with_resampling(
-#     sig_true,
-#     bkg_ordered,
-#     internalNoise,
-#     Resampling_method,
-#     Chnl,
-#     sample_idxs,
-#     lesion_count,
-# ):
-#     """Compute detectability (d') using Channelized Hotelling Observer with resampling."""
-#     dps = []
-#     for i in range(lesion_count):
-#         channelMatrix = ChannelMatrix_Generation(Chnl, sample_idxs[i])
-#         N_total_bkg = bkg_ordered.shape[1]
-#         rand_scanSelect_bkg = np.arange(N_total_bkg)
-#         if Resampling_method == "Bootstrap":
-#             rand_scanSelect_bkg = np.random.randint(N_total_bkg, size=N_total_bkg)
-#         elif Resampling_method == "Shuffle":
-#             rand_scanSelect_bkg = np.random.permutation(N_total_bkg)
-#         sig = sig_true
-#         bkg = bkg_ordered[:, rand_scanSelect_bkg].astype(float)
-#         if (
-#             sig.shape[0] != channelMatrix.shape[0]
-#             or bkg.shape[0] != channelMatrix.shape[0]
-#         ):
-#             print("Numbers of pixels do not match.")
-#         vN = channelMatrix.T @ bkg
-#         sbar = np.squeeze(sig)
-#         S = np.cov(vN.T, rowvar=False)
-#         wCh = np.linalg.inv(S) @ channelMatrix.T @ sbar
-#         temp = channelMatrix.T @ sbar
-#         tsN_Mean = wCh.T @ temp
-#         tN0 = wCh.T @ vN
-#         tN = tN0 + np.random.randn(tN0.size) * internalNoise * np.std(tN0)
-#         dp = np.sqrt((tsN_Mean**2) / np.var(tN))
-#         dps.append(dp)
-
-#     return dps
-
-
 def CHO_patient_with_resampling(
     sig_true, bkg_ordered, channelMatrix, internalNoise, Resampling_method
 ):
     """Compute detectability (d') using Channelized Hotelling Observer with resampling."""
-    # if len(bkg_ordered.shape) != 2 or bkg_ordered.shape[0] != roi_size**2:
-    #     return np.nan, 0
+
     N_total_bkg = bkg_ordered.shape[1]
     try:
         rand_scanSelect_bkg = np.arange(N_total_bkg)
@@ -605,22 +632,6 @@ def interpolate_grid(X0, Y0, L0, XX, YY, method):
 def max_consecutive_ones_2d(arr):
     """Longest True run in a 2D array, scanning rows and columns. Scalar."""
 
-    #! This only accounts for horizontal direction. Added edits for vertical
-    #! and should talk to Zhongxing if this is the intended behaviour or if we want to consider all directions (e.g. diagonals).
-    # """Find maximum consecutive ones in any row of a 2D boolean array."""
-    # max_consecutive = 0
-    # for row in bool_array_2d:
-    #     max_count = 0
-    #     count = 0
-    #     for value in row:
-    #         if value:
-    #             count += 1
-    #         else:
-    #             max_count = max(max_count, count)
-    #             count = 0
-    #     max_count = max(max_count, count)
-    #     max_consecutive = max(max_consecutive, max_count)
-    # return max_consecutive
     def max_consecutive_true(arr, axis):
         """Length of the longest consecutive run of True along `axis`, per line.
 
@@ -760,12 +771,70 @@ def compute_presampling_mtf(psf, unit_dx, maxfreq=100.0, normal_round=round):
     return freq, mtf, mtf_eval
 
 
+def interpolate_rgi(img, scale):
+    h, w = img.shape
+
+    x = np.arange(0, w)
+    y = np.arange(0, h)
+
+    xnew = np.arange(0, w, 1 / scale)
+    ynew = np.arange(0, h, 1 / scale)
+
+    xxnew, yynew = np.meshgrid(xnew, ynew, indexing="ij", sparse=True)
+
+    r = RGI(
+        (x, y),
+        img.T,
+        method="linear",
+        bounds_error=False,
+        fill_value=img[0, 0],
+    )
+
+    return r((xxnew, yynew)).T
+
+
+def roi_pad(image, target_size=80):
+    """Pad the center of an image to the target size."""
+    pad_width = np.tile(target_size - np.array(image.shape[0:2]), (2, 1)).T / 2
+    pad_width[:, 0] = np.floor(pad_width[:, 0])
+    pad_width[:, 1] = np.ceil(pad_width[:, 1])
+
+    return np.pad(image, pad_width.astype(int))
+
+
+def roi_crop(image, target_size):
+    """Crop the center of an image to the target size."""
+
+    crop_width = np.tile(np.array(image.shape[0:2]) - target_size, (2, 1)).T / 2
+    crop_width[:, 0] = np.floor(crop_width[:, 0])
+    crop_width[:, 1] = np.ceil(crop_width[:, 1])
+    return crop(image, crop_width.astype(int))
+
+
+def ahe(images):
+    images = images.transpose()
+    kernel_size = np.array(
+        [
+            images.shape[0] // 5,
+            images.shape[1] // 5,
+            images.shape[2] // 2,
+        ]
+    )
+    images = np.clip(images, np.percentile(images, 5), np.percentile(images, 95))
+    images_min = images.min()
+    images_max = images.max()
+    images = (images - images_min) / (images_max - images_min)
+    images = exposure.equalize_adapthist(images, kernel_size=kernel_size)
+    images = images * (images_max - images_min) + images_min
+    return images.transpose()
+
+
 def prepare_Lesion_sig(
     lesion_file,
     contrast_target,
     width_mm_target,
     roi_size_mm,
-    PSF_sim,
+    psf_sim,
     dx_psf,
     pixel_spacing_patient,
 ):
@@ -790,17 +859,17 @@ def prepare_Lesion_sig(
         lesion_dcm_info = patient_data[0][0][0][0]["DicomHeader"][0][0]
         lesion_dcm_pixel_spacing = lesion_dcm_info["PixelSpacing"][0]
 
-    loc = round(lesion.shape[-1] / 2)
-    L0 = lesion[:, :, loc]
-    M0 = lesion_mask[:, :, loc].astype(bool)
+    mid_slice = round(lesion.shape[-1] / 2)
+    lesion = lesion[:, :, mid_slice]
+    mask_slice = lesion_mask[:, :, mid_slice].astype(bool)
 
     # --------------------------------------------------------------
     # 3. Scale lesion to target physical size
     # --------------------------------------------------------------
-    lesion_pixels_width_input = max_consecutive_ones_2d(M0)
+    lesion_pixels_width_input = max_consecutive_ones_2d(mask_slice)
     #! Would median be more robust than mean here?
-    lesion_median_hu = np.median(L0[M0])
-    background_median_hu = np.median(L0[~M0]) if np.any(~M0) else 0
+    lesion_median_hu = np.median(lesion[mask_slice])
+    background_median_hu = np.median(lesion[~mask_slice]) if np.any(~mask_slice) else 0
 
     if contrast_target is None:
         contrast_target = lesion_median_hu - background_median_hu
@@ -808,71 +877,41 @@ def prepare_Lesion_sig(
         lesion_mm_width_input = lesion_pixels_width_input * lesion_dcm_pixel_spacing
         width_mm_target = lesion_mm_width_input.max()
     if roi_size_mm is None:
+        # A linear fit to the ROI size vs lesion width (mm) from our standard 3 lesion sizes
         roi_size_mm = width_mm_target * 0.833 + 11.67
-    ROI_size = int(roi_size_mm / pixel_spacing_patient) | 1
+
+    roi_size = int(roi_size_mm / pixel_spacing_patient) | 1
     lesion_pixels_width_input = lesion_pixels_width_input.max()
 
-    L0 = L0 - lesion_median_hu + contrast_target
-    L0[~M0] = 0
+    lesion = lesion - lesion_median_hu + contrast_target
+    lesion[~mask_slice] = 0
 
     lesion_pixels_width_target = width_mm_target / pixel_spacing_patient
     scale = lesion_pixels_width_target / lesion_pixels_width_input
 
-    s1, s2 = L0.shape
-    os0 = np.floor(np.array(L0.shape) * scale).astype(int)
-    x0 = np.linspace(0, s2 - 1, s2)
-    y0 = np.linspace(0, s1 - 1, s1)
-    X0, Y0 = np.meshgrid(x0, y0)
-    x_out = np.linspace(0, s2 - 1, os0[1])
-    y_out = np.linspace(0, s1 - 1, os0[0])
-    XX, YY = np.meshgrid(x_out, y_out)
-    Lesion = interpolate_grid(X0, Y0, L0, XX, YY, "linear")
-
-    # --------------------------------------------------------------
-    # 4. Simulate PSF using MTF50 and MTF10 (always used now)
-    # --------------------------------------------------------------
-    # psf_size = wire_Matrix_size + (
-    #     wire_Matrix_size % 2 == 0
-    # )  # ensure odd size for centering
-    # PSF_sim, dx_psf = simulate_psf_damped_cosine(
-    #     mtf50=mtf50, mtf10=mtf10, size=psf_size, wire_fov_mm=wire_fov_mm
-    # )
+    Lesion = interpolate_rgi(lesion, scale)
 
     # Compute presampling MTF (for verification)
-    freq, mtf, mtf_eval = compute_presampling_mtf(PSF_sim, dx_psf)
+    freq, mtf, _ = compute_presampling_mtf(psf_sim, dx_psf)
 
     # Resample simulated PSF to patient pixel spacing
     scaling_factor = dx_psf / pixel_spacing_patient
-    os0_psf = np.floor(np.array(PSF_sim.shape) * scaling_factor).astype(int)
-
-    x0_psf = np.linspace(0, PSF_sim.shape[1] - 1, PSF_sim.shape[1])
-    y0_psf = np.linspace(0, PSF_sim.shape[0] - 1, PSF_sim.shape[0])
-    X0_psf, Y0_psf = np.meshgrid(x0_psf, y0_psf)
-
-    x_out_psf = np.linspace(0, PSF_sim.shape[1] - 1, os0_psf[1])
-    y_out_psf = np.linspace(0, PSF_sim.shape[0] - 1, os0_psf[0])
-    XX_psf, YY_psf = np.meshgrid(x_out_psf, y_out_psf)
-
-    PSF_end = interpolate_grid(X0_psf, Y0_psf, PSF_sim, XX_psf, YY_psf, "linear")
+    PSF_end = interpolate_rgi(psf_sim, scaling_factor)
     PSF_end /= PSF_end.sum()  # final normalization
 
     # --------------------------------------------------------------
     # 5. Convolution & crop to ROI
     # --------------------------------------------------------------
-    Lesion_ext = np.zeros((80, 80))
-    r0 = (Lesion_ext.shape[0] - Lesion.shape[0]) // 2
-    c0 = (Lesion_ext.shape[1] - Lesion.shape[1]) // 2
-    Lesion_ext[r0 : r0 + Lesion.shape[0], c0 : c0 + Lesion.shape[1]] = Lesion
 
+    Lesion_ext = roi_pad(Lesion)
     Lesion_conv = convolve2d(Lesion_ext, PSF_end, mode="full")
-    r0 = (Lesion_conv.shape[0] - ROI_size) // 2
-    c0 = (Lesion_conv.shape[1] - ROI_size) // 2
-    Lesion_conv_end = Lesion_conv[r0 : r0 + ROI_size, c0 : c0 + ROI_size]
+    Lesion_conv_end = roi_crop(Lesion_conv, roi_size)
+
     return (
         Lesion_conv_end,
         freq,
         mtf,
-        ROI_size,
+        roi_size,
         contrast_target,
         width_mm_target,
         roi_size_mm,
@@ -892,23 +931,10 @@ def integrate_image(image, window_size=[3, 3], _mode="edge"):
         win = window_size
         window_size = np.zeros((3, 2), dtype=int)
         window_size[1:, :] = win
+        return np.pad(image, window_size, mode=_mode).cumsum(axis=1).cumsum(axis=2)
     elif len(image.shape) != 2:
         raise ValueError("Input image must be 2D or 3D.")
-    # m, n = window_size
-    # pad_width = ((m // 2, m // 2), (n // 2, n // 2))
-    # pad_width = np.tile(window_size, (2, 1)) // 2
-    # if padding == "circular":
-    #     padded_image = np.pad(image, pad_width, mode="wrap")
-    # elif padding == "replicate":
-    #     padded_image = np.pad(image, pad_width, mode="edge")
-    # elif padding == "symmetric":
-    #     padded_image = np.pad(image, pad_width, mode="symmetric")
-    # else:
-    #     padded_image = np.pad(image, pad_width, mode="constant", constant_values=0)
-    # padded_image = np.pad(image, pad_width, mode=_mode)
-    # imageD = padded_image.astype(np.float64)
-    # t = np.pad(image, np.tile(window_size, (2, 1)) // 2, mode=_mode).cumsum(axis=0).cumsum(axis=1)
-    return np.pad(image, window_size, mode=_mode).cumsum(axis=1).cumsum(axis=2)
+    return np.pad(image, window_size, mode=_mode).cumsum(axis=0).cumsum(axis=1)
 
 
 def calculate_std_dev(
@@ -917,11 +943,7 @@ def calculate_std_dev(
     intel_edge,
     roi_size,
     padding_size,
-    # Im_Size,
-    # N1,
-    # N2,
     init_shape,
-    # N_sub,
     thr1,
     thr2,
     corrected=False,
@@ -986,7 +1008,7 @@ def extract_ROIs(std_map, sd_thresh, roi_size_half, images, group=False):
     """Extract ROIs with low standard deviation for NPS and CHO analysis."""
     h = roi_size_half
     slices, rows, cols = images.shape
-    size = (1, 2 * h, 2 * h)  # flat across slices -> slices stay independent
+    size = (1, 4 * h, 4 * h)  # flat across slices -> slices stay independent
 
     r_idx, c_idx = np.mgrid[:rows, :cols]
     dist = np.minimum.reduce([r_idx, c_idx, rows - 1 - r_idx, cols - 1 - c_idx])
@@ -1002,7 +1024,6 @@ def extract_ROIs(std_map, sd_thresh, roi_size_half, images, group=False):
     work = np.where(valid, std_map, np.inf)
     selected = np.zeros(std_map.shape, dtype=bool)
     available = valid.copy()
-
     while available.any():
         local_min = minimum_filter(work, size=size, mode="constant", cval=np.inf)
         is_min = available & (work <= local_min)  # equals window-min => local minimum
@@ -1020,9 +1041,10 @@ def extract_ROIs(std_map, sd_thresh, roi_size_half, images, group=False):
     rois = np.array(rois)
     centers = np.column_stack((ss, rr, cc))
     centers = centers[order]
+    # scroll_plot_3d(images, rois=centers, side=2 * roi_size_half + 1)
     total_nps = 0
     if rois.size > 0:
-        total_nps = rois.shape[-1]
+        total_nps = rois.shape[0]
 
     # ====================== FINAL SAFETY FILTER  ======================
     if total_nps > 0:
@@ -1405,22 +1427,38 @@ def _save_all_figures(output_dir: pathlib.Path):
 
 def update_arrays(arr, remove_run_window, eval_run_window):
     new_arr = np.zeros_like(arr)
-    new_arr[:, :, np.logical_not(eval_run_window)] = arr[
-        :, :, np.logical_not(remove_run_window)
-    ]
+    new_arr[np.logical_not(eval_run_window)] = arr[np.logical_not(remove_run_window)]
     return new_arr
 
 
-def group_boundaries(counts, threshold):
-    bounds, start, total = [], 0, 0
-    for i, c in enumerate(counts):
-        total += c
+def group_boundaries(counts, threshold, overlap=0.0):
+    bounds, totals, start, end = [], [], 0, 1
+
+    while end <= len(counts):
+        total = np.sum(counts[start:end])
         if total >= threshold:
-            bounds.append((start, i + 1))
-            start, total = i + 1, 0
-    if start < len(counts):  # merge remainder into last group
-        s, _ = bounds.pop() if bounds else (start, None)
-        bounds.append((s, len(counts)))
+            bounds.append((int(start), int(end)))
+            totals.append(total)
+            length = end - start + 1
+            overlap_length = int(length * overlap)
+            start = max(end - overlap_length, start + 1)
+            end = start + 1
+        elif end == len(counts):
+            bounds.append((int(start), int(end)))
+            totals.append(np.sum(counts[start:end]))
+            break
+        else:
+            end += 1
+
+    if totals[-1] < threshold and len(bounds) > 1:
+        last_start, last_end = bounds[-1]
+        for i in range(last_start - 1, 0, -1):
+            new_total = np.sum(counts[i:last_end])
+            if new_total >= threshold:
+                bounds[-1] = (i, last_end)
+                totals[-1] = new_total
+                break
+
     return bounds
 
 
@@ -1464,6 +1502,46 @@ def main(
     # Demo Main Program
     import time
 
+    Thr1 = 0
+    Thr2 = 150
+    numResample = 500
+    internalNoise = 2.25
+    Resampling_method = "Bootstrap"
+    # lesion_contrasts = [
+    #     -30,
+    #     -30,
+    #     -30,
+    #     -10,
+    #     -10,
+    #     -10,
+    #     -50,
+    #     -50,
+    #     -50,
+    # ]  # HU contrast levels
+    # lesion_sizes_mm = [3, 9, 6, 3, 9, 6, 3, 9, 6]  # Lesion diameters in mm
+    # roi_sizes_mm = [
+    #     14,
+    #     19,
+    #     17,
+    #     14,
+    #     19,
+    #     17,
+    #     14,
+    #     19,
+    #     17,
+    # ]  # ROI sizes in mm for each condition
+    lesion_contrasts = [-30, -30, -10, -30, -50]  # HU contrast levels
+    lesion_sizes_mm = [3, 9, 6, 6, 6]  # Lesion diameters in mm
+    roi_sizes_mm = [14, 19, 17, 17, 17]  # ROI sizes in mm for each condition
+    # lesion_contrasts = [None, None, None, None]  # HU contrast levels
+    # lesion_sizes_mm = [None, 3, 9, 6]  # Lesion diameters in mm
+    # roi_sizes_mm = [None, None, None, None]  # ROI sizes in mm for each condition
+    # lesion_contrasts = [None]  # HU contrast levels
+    # lesion_sizes_mm = [None]  # Lesion diameters in mm
+    # roi_sizes_mm = [None]  # ROI sizes in mm for each condition
+    wire_fov_mm = 50
+    wire_Matrix_size = 512
+
     out_path = pathlib.Path(output_dir) if output_dir else None
     start = time.time()
 
@@ -1490,95 +1568,6 @@ def main(
     patient_matrix = (
         dcm_info.Rows
     )  # Matrix size from DICOM metadata (assumes square matrix)
-
-    lesion_contrasts = [-30, -30, -10, -30, -50]  # HU contrast levels
-    lesion_sizes_mm = [3, 9, 6, 6, 6]  # Lesion diameters in mm
-    roi_sizes_mm = [14, 19, 17, 17, 17]  # ROI sizes in mm for each condition
-    lesion_contrasts = [None, None, None, None]  # HU contrast levels
-    lesion_sizes_mm = [None, 3, 9, 6]  # Lesion diameters in mm
-    roi_sizes_mm = [None, None, None, None]  # ROI sizes in mm for each condition
-    pixel_size = patient_FOV / patient_matrix  # Pixel size in mm (~0.6640625)
-    wire_fov_mm = 50
-    wire_Matrix_size = 512
-
-    # Define reconstruction kernel information
-    kernel_file = r".\src\data\Recon_Kernels.xlsx"  # ← Update this path
-    psf_size = wire_Matrix_size + (wire_Matrix_size % 2 == 0)
-    if mtf50 is None:
-        mtf50, mtf10 = get_mtf_from_excel(kernel_file, manufacturer, model, kernel)
-
-    psf_sim, dx_psf = simulate_psf_damped_cosine(
-        mtf50=mtf50, mtf10=mtf10, size=psf_size, wire_fov_mm=wire_fov_mm
-    )
-
-    lesion_sigs = []
-    roi_sizes_px = []
-    print(f"Using MTF50 = {mtf50:.3f}, MTF10 = {mtf10:.3f} for PSF simulation")
-
-    for i in range(len(lesion_contrasts)):
-        contrast_target = lesion_contrasts[i]
-        width_mm_target = lesion_sizes_mm[i]
-        roi_size_mm = roi_sizes_mm[i]
-
-        (
-            Lesion_sig,
-            freq,
-            mtf,
-            roi_size_px,
-            contrast_target,
-            width_mm_target,
-            roi_size_mm,
-        ) = prepare_Lesion_sig(
-            lesion_file,
-            contrast_target,
-            width_mm_target,
-            roi_size_mm,
-            psf_sim,
-            dx_psf,
-            pixel_size,
-        )
-
-        lesion_sigs.append(Lesion_sig)
-        roi_sizes_px.append(roi_size_px)
-        lesion_contrasts[i] = contrast_target
-        roi_sizes_mm[i] = roi_size_mm
-        lesion_sizes_mm[i] = width_mm_target
-        plot_lesion_signals(Lesion_sig, freq, mtf, contrast_target, width_mm_target, i)
-
-    # Calculate CTDIvol and water-equivalent diameter (Dw)
-    CTDI_All = np.zeros(n_images)
-    slice_location = np.zeros(n_images)
-    Dw = np.zeros(n_images)
-    coronal_image = np.zeros((Im_Size[0], n_images))
-    slice_location = np.zeros(n_images)
-    pixel_roi = dx * dy * 100
-    for i in range(n_images):
-        dcm_info = dcmread(filepaths[i])
-        CTDI_All[i] = dcm_info.CTDIvol
-        im1 = dcm_info.pixel_array
-        im = im1 * dcm_info.RescaleSlope + dcm_info.RescaleIntercept
-        coronal_image[:, i] = im[Im_Size[1] // 2, :]
-        Mask = im >= -260
-        Mask22 = ndimage.binary_fill_holes(Mask).astype(bool)
-        labeled_image, num_labels = measure.label(Mask22, return_num=True)
-        if num_labels > 0:
-            largest_region = np.argmax(np.bincount(labeled_image.flat)[1:]) + 1
-            binaryImage = labeled_image == largest_region
-        else:
-            binaryImage = np.zeros_like(Mask22, dtype=bool)
-        pixel_No = np.sum(binaryImage)
-        A_roi = pixel_No * pixel_roi
-        im10_pat = im[binaryImage]
-        HU_Mean = np.mean(im10_pat)
-        Dw[i] = 2 * np.sqrt((HU_Mean / 1000 + 1) * A_roi / np.pi)
-        slice_location[i] = dcm_info.SliceLocation
-        if i == n_images - 1:
-            SliceLocation_end = dcm_info.SliceLocation
-    slice_location = slice_location - slice_location.min()
-
-    # Compute dose metrics: SSDE and DLP
-    Mean_CTDI_All = np.mean(CTDI_All)
-    Mean_Dw = np.mean(Dw) / 10
 
     # ------------------------------------------------------------------
     # Determine parameters a and b for SSDE calculation based on Body Part Examined
@@ -1618,6 +1607,87 @@ def main(
         print(
             "Body Part Examined tag (0018,0015) not found. Defaulting to abdomen parameters."
         )
+    pixel_size = patient_FOV / patient_matrix  # Pixel size in mm (~0.6640625)
+
+    # Define reconstruction kernel information
+    kernel_file = r".\src\data\Recon_Kernels.xlsx"  # ← Update this path
+    psf_size = wire_Matrix_size | 1
+    if mtf50 is None:
+        mtf50, mtf10 = get_mtf_from_excel(kernel_file, manufacturer, model, kernel)
+
+    psf_sim, dx_psf = simulate_psf_damped_cosine(
+        mtf50=mtf50, mtf10=mtf10, size=psf_size, wire_fov_mm=wire_fov_mm
+    )
+
+    lesion_sigs = []
+    roi_sizes_px = []
+    print(f"Using MTF50 = {mtf50:.3f}, MTF10 = {mtf10:.3f} for PSF simulation")
+
+    for i in range(len(lesion_contrasts)):
+        contrast_target = lesion_contrasts[i]
+        width_mm_target = lesion_sizes_mm[i]
+        roi_size_mm = roi_sizes_mm[i]
+
+        (
+            Lesion_sig,
+            freq,
+            mtf,
+            roi_size_px,
+            contrast_target,
+            width_mm_target,
+            roi_size_mm,
+        ) = prepare_Lesion_sig(
+            lesion_file,
+            contrast_target,
+            width_mm_target,
+            roi_size_mm,
+            psf_sim,
+            dx_psf,
+            pixel_size,
+        )
+
+        lesion_sigs.append(Lesion_sig)
+        roi_sizes_px.append(roi_size_px)
+        lesion_contrasts[i] = contrast_target
+        roi_sizes_mm[i] = roi_size_mm
+        lesion_sizes_mm[i] = width_mm_target
+        # plot_lesion_signals(Lesion_sig, freq, mtf, contrast_target, width_mm_target, i)
+
+    # Calculate CTDIvol and water-equivalent diameter (Dw)
+    CTDI_All = np.zeros(n_images)
+    slice_location = np.zeros(n_images)
+    Dw = np.zeros(n_images)
+    coronal_image = np.zeros((Im_Size[0], n_images))
+    slice_location = np.zeros(n_images)
+    pixel_roi = dx * dy * 100
+
+    for i in range(n_images):
+        dcm_info = dcmread(filepaths[i])
+        CTDI_All[i] = dcm_info.CTDIvol
+        im1 = dcm_info.pixel_array
+        im = im1 * dcm_info.RescaleSlope + dcm_info.RescaleIntercept
+        coronal_image[:, i] = im[Im_Size[1] // 2, :]
+        Mask = im >= -260
+        Mask22 = ndimage.binary_fill_holes(Mask).astype(bool)
+        labeled_image, num_labels = measure.label(Mask22, return_num=True)
+        if num_labels > 0:
+            largest_region = np.argmax(np.bincount(labeled_image.flat)[1:]) + 1
+            binaryImage = labeled_image == largest_region
+        else:
+            binaryImage = np.zeros_like(Mask22, dtype=bool)
+        pixel_No = np.sum(binaryImage)
+        A_roi = pixel_No * pixel_roi
+        im10_pat = im[binaryImage]
+        HU_Mean = np.mean(im10_pat)
+        Dw[i] = 2 * np.sqrt((HU_Mean / 1000 + 1) * A_roi / np.pi)
+        slice_location[i] = dcm_info.SliceLocation
+        if i == n_images - 1:
+            SliceLocation_end = dcm_info.SliceLocation
+    slice_location = slice_location - slice_location.min()
+
+    # Compute dose metrics: SSDE and DLP
+    Mean_CTDI_All = np.mean(CTDI_All)
+    Mean_Dw = np.mean(Dw) / 10
 
     # Now compute SSDE using the selected parameters
     f = para_a * np.exp(-para_b * Mean_Dw)
@@ -1632,11 +1702,6 @@ def main(
     ROI_size_N = int(2 * np.round((val - 1) / 2) + 1)  # round_to_nearest_odd
 
     Half_ROI_size_N = round(np.floor(ROI_size_N / 2))
-    Thr1 = 0
-    Thr2 = 150
-    numResample = 500
-    internalNoise = 2.25
-    Resampling_method = "Bootstrap"
 
     # Configure Gabor channels for CHO
     class Chnl:
@@ -1657,225 +1722,312 @@ def main(
         Chnl = channel_selection(Chnl, LG_order, LG_orien)
 
     # # Process image sections for NPS and CHO analysis
-    # window_size_mm = 150
-    # step_size_mm = 50
-    # window_size_idx = np.ceil((window_size_mm + 1e-6) / Sliceinterval).astype(int)
-    # step_size_idx = np.ceil((step_size_mm + 1e-6) / Sliceinterval).astype(int)
-    # windows = np.lib.stride_tricks.sliding_window_view(
-    #     np.arange(n_images), window_size_idx
-    # )[::step_size_idx]
-    # # Which elements in each window are unique (not in previous window).  Used to avoid double-counting slices.
-    # eval_run_windows = np.array(
-    #     [
-    #         (
-    #             [not val in set(windows[i - 1]) for val in windows[i]]
-    #             if i > 0
-    #             else [True] * len(windows[i])
-    #         )
-    #         for i in range(len(windows))
-    #     ]
-    # )
-    # # Which elements in each window are unique (not in next window).  Used to avoid double-counting slices.
-    # remove_run_windows = np.array(
-    #     [
-    #         (
-    #             [not val in set(windows[i + 1]) for val in windows[i]]
-    #             if i > -1
-    #             else [True] * len(windows[i])
-    #         )
-    #         for i in range(-1, len(windows) - 1)
-    #     ]
-    # )
-
-    # dps_location = np.mean(slice_location[windows], axis=-1)
-    # Calculate how many groups we have
-    # num_groups = windows.shape[0]
     num_lesions = len(lesion_sigs)
-
-    # All_dps = np.zeros([num_groups, num_lesions])
-    # dps_location = []
-    # Noise_level_local = np.zeros([num_groups, 1])
-
-    # Total_NPS_Num = 0
-    # NPS_1D_sum = 0
-    # Spatial_freq = []
-    # noise_level_sum = 0
-    # NPS_Cal = True
-
     Padding_size = int(2 * round(1.2 / dx))
     Padding_size += Padding_size % 2
-    # unit = 0
     window_size = [Padding_size, Padding_size]
-    # padded_shape = [
-    #     Im_Size[0] + Padding_size,
-    #     Im_Size[1] + Padding_size,
-    #     window_size_idx,
-    # ]
-    # init_shape = [
-    #     Im_Size[0],
-    #     Im_Size[1],
-    #     window_size_idx,
-    # ]
     # Desired buffer zone around edges (mm). Tune if needed: 1.5~2.5
     physical_buffer_mm = 1.5
     # gives the kernel size in pixels for the desired physical buffer in mm.
     kernel_size = max(3, int(np.round(physical_buffer_mm / (dx * 10)))) | 1
-    # kernel_size = kernel_size if kernel_size % 2 == 1 else kernel_size + 1
     structure = np.ones((kernel_size, kernel_size), dtype=bool)
-    # index of first occurrence per value
-    # arr = np.array([None])
-    # _, first_idx = np.unique(arr, return_index=True)
-    # mask = np.ones(len(arr), dtype=bool)
-    # mask[first_idx] = False
-    # same_roi_sizes = np.flatnonzero(mask)
-    # for mm in range(1, num_groups + 1):
+    window_size_mm = 150
+    step_size_mm = 50
+    window_size_idx = np.ceil((window_size_mm + 1e-6) / Sliceinterval).astype(int)
+    step_size_idx = np.ceil((step_size_mm + 1e-6) / Sliceinterval).astype(int)
 
-    images = np.array(
-        [
-            dcmread(filepaths[i]).pixel_array * dcm_info.RescaleSlope
-            + dcm_info.RescaleIntercept
-            for i in range(n_images)
-        ]
-    )
-    images_canny_edge_integrated = np.array(
-        [
-            binary_dilation(feature.canny(im, sigma=5), structure=structure)
-            for im in images
-        ]
-    )
-    images_integrated = integrate_image(images, window_size)
-    images_squared_integrated = integrate_image(images**2, window_size)
-    images_canny_edge_integrated = integrate_image(
-        images_canny_edge_integrated, window_size
-    )
-    nps_cropping = images.shape[0] // 3
-    nps_std_map = calculate_std_dev(
-        images_integrated,
-        images_squared_integrated,
-        images_canny_edge_integrated,
-        ROI_size_N,
-        Padding_size,
-        images.shape,
-        Thr1,
-        Thr2,
-        corrected=False,
-    )
-    max_values = np.nanmax(nps_std_map, axis=(1, 2))
-    histos = [
-        np.histogram(nps_std_map[i].flatten(), bins=np.arange(0, max_values[i], 0.2))
-        for i in range(nps_std_map.shape[0])
-    ]
-    h_Valuesss = [h[0] for h in histos]
-    edgess = [h[1] for h in histos]
-    whichbin_SDs = [np.argmax(h) for h in h_Valuesss]
-    Noise_level_local = [
-        edges[whichbin_SD] for edges, whichbin_SD in zip(edgess, whichbin_SDs)
-    ]
+    algorithm = "old"  # new old
+    if algorithm == "new":
 
-    max_value = np.nanmax(nps_std_map[nps_cropping : 2 * nps_cropping])
-    h_Values, edges = np.histogram(
-        nps_std_map[nps_cropping : 2 * nps_cropping].flatten(),
-        bins=np.arange(0, max_value, 0.2),
-    )
-    whichbin_SD = np.argmax(h_Values)
-    sd_thresh = edges[whichbin_SD]
-    ROI_All_NPS = extract_ROIs(
-        nps_std_map,
-        sd_thresh,
-        Half_ROI_size_N,
-        images,
-        group=True,
-    )
-    nps_rois_counts = [ROI_All_NPS[loc].shape[0] for loc in range(len(ROI_All_NPS))]
-    nps_rois_counts_grouped = group_boundaries(nps_rois_counts, threshold=1000)
-    num_nps_rois = min(200, np.sum(nps_rois_counts[nps_cropping : 2 * nps_cropping]))
-    Spatial_freq, NPS_1D_sum, noise_level_sum, unit = ROI_to_NPS_Sum(
-        ROI_size_N,
-        np.concatenate(ROI_All_NPS[nps_cropping : 2 * nps_cropping])[:num_nps_rois],
-        dx,
-        dy,
-    )
-
-    Left_Area = np.sum(h_Values[:whichbin_SD])
-    Left_Areas = [np.sum(h_Valuesss[i][: whichbin_SDs[i]]) for i in range(n_images)]
-    Two_sigma_area = np.ones(whichbin_SD) * Left_Area
-    Two_sigma_areas = [
-        np.ones(whichbin_SDs[i]) * Left_Areas[i] for i in range(n_images)
-    ]
-    cusu = np.cumsum(h_Values[: whichbin_SD - 1])
-    cusus = [np.cumsum(h_Valuesss[i][: whichbin_SDs[i] - 1]) for i in range(n_images)]
-    Two_sigma_area[1:] = Left_Area - cusu
-    for i in range(n_images):
-        Two_sigma_areas[i][1:] = Left_Areas[i] - cusus[i]
-    Ratios = Two_sigma_area / Left_Area
-    Ratioss = [Two_sigma_areas[i] / Left_Areas[i] for i in range(n_images)]
-    target_ratio = 0.9544
-    temp_dis = np.abs(target_ratio - Ratios)
-    temp_diss = [np.abs(target_ratio - Ratioss[i]) for i in range(n_images)]
-    closest = Ratios[np.argmin(temp_dis)]
-    closests = [Ratioss[i][np.argmin(temp_diss[i])] for i in range(n_images)]
-    loc = np.where(Ratios == closest)[0][0]
-    locs = [np.where(Ratioss[i] == closests[i])[0][0] for i in range(n_images)]
-    gap = whichbin_SD - loc
-    gaps = [whichbin_SDs[i] - locs[i] for i in range(n_images)]
-    Thre_SD = edges[whichbin_SD + gap]
-    Thre_SDs = np.array([edges[whichbin_SDs[i] + gaps[i]] for i in range(n_images)])
-    unique_roi_sizes = np.unique(roi_sizes_px)
-    lesion_std_maps = {
-        roi_size: calculate_std_dev(
+        images = np.array(
+            [
+                dcmread(filepaths[i]).pixel_array * dcm_info.RescaleSlope
+                + dcm_info.RescaleIntercept
+                for i in range(n_images)
+            ]
+        )
+        # images = ahe(images)
+        images_integrated = integrate_image(images, window_size)
+        images_squared_integrated = integrate_image(images**2, window_size)
+        images_canny_edge_integrated = integrate_image(
+            np.array(
+                [
+                    binary_dilation(feature.canny(im, sigma=5), structure=structure)
+                    for im in images
+                ]
+            ),
+            window_size,
+        )
+        nps_cropping = images.shape[0] // 3  # Reorder back to (z, y, x)
+        nps_std_map = calculate_std_dev(
             images_integrated,
             images_squared_integrated,
             images_canny_edge_integrated,
-            roi_size,
+            ROI_size_N,
             Padding_size,
             images.shape,
             Thr1,
             Thr2,
             corrected=False,
         )
-        for roi_size in unique_roi_sizes
-    }
-    lesion_roi_maps = {
-        roi_size: extract_ROIs(
-            lesion_std_maps[roi_size], Thre_SDs, roi_size // 2, images, group=True
-        )
-        for roi_size in unique_roi_sizes
-    }
+        max_values = np.nanmax(nps_std_map, axis=(1, 2))
+        max_values = np.lib.stride_tricks.sliding_window_view(
+            np.pad(max_values, window_size_idx // 2, mode="reflect"), window_size_idx
+        ).mean(axis=1)
 
-    for roi_size in unique_roi_sizes:
-        for si in range(len(lesion_roi_maps[roi_size])):
-            for li in range(lesion_roi_maps[roi_size][si].shape[0]):
-                lesion_roi_maps[roi_size][si][li] = lesion_roi_maps[roi_size][si][
-                    li
-                ] - np.mean(lesion_roi_maps[roi_size][si][li])
-    lesion_counts = {
-        roi_size: [
-            lesion_roi_maps[roi_size][loc].shape[0]
-            for loc in range(len(lesion_roi_maps[roi_size]))
+        histos = [
+            np.histogram(
+                nps_std_map[i].flatten(), bins=np.arange(0, max_values[i], 0.2)
+            )
+            for i in range(nps_std_map.shape[0])
         ]
-        for roi_size in unique_roi_sizes
-    }
-    group_by = "lesion_count"  # slice_location lesion_count
-    if group_by == "lesion_count":
-        lesion_counts_grouped = {
-            roi_size: group_boundaries(lesion_counts[roi_size], threshold=500)
+        h_Valuesss = [h[0] for h in histos]
+        edgess = [h[1] for h in histos]
+        whichbin_SDs = [np.argmax(h) for h in h_Valuesss]
+        Noise_level_local = [
+            edges[whichbin_SD] for edges, whichbin_SD in zip(edgess, whichbin_SDs)
+        ]
+
+        max_value = np.nanmax(nps_std_map[nps_cropping : 2 * nps_cropping])
+        h_Values, edges = np.histogram(
+            nps_std_map[nps_cropping : 2 * nps_cropping].flatten(),
+            bins=np.arange(0, max_value, 0.2),
+        )
+        whichbin_SD = np.argmax(h_Values)
+        sd_thresh = edges[whichbin_SD]
+        ROI_All_NPS = extract_ROIs(
+            nps_std_map,
+            sd_thresh,
+            Half_ROI_size_N,
+            images,
+            group=True,
+        )
+        nps_rois_counts = [ROI_All_NPS[loc].shape[0] for loc in range(len(ROI_All_NPS))]
+        group_by = "lesion_count"  # slice_location lesion_count
+        num_nps_rois = min(
+            200, np.sum(nps_rois_counts[nps_cropping : 2 * nps_cropping])
+        )
+        Spatial_freq, NPS_1D_sum, noise_level_sum, unit = ROI_to_NPS_Sum(
+            ROI_size_N,
+            np.concatenate(ROI_All_NPS[nps_cropping : 2 * nps_cropping])[:num_nps_rois],
+            dx,
+            dy,
+        )
+
+        Left_Area = np.sum(h_Values[:whichbin_SD])
+        Left_Areas = [np.sum(h_Valuesss[i][: whichbin_SDs[i]]) for i in range(n_images)]
+        Two_sigma_area = np.ones(whichbin_SD) * Left_Area
+        Two_sigma_areas = [
+            np.ones(whichbin_SDs[i]) * Left_Areas[i] for i in range(n_images)
+        ]
+        cusu = np.cumsum(h_Values[: whichbin_SD - 1])
+        cusus = [
+            np.cumsum(h_Valuesss[i][: whichbin_SDs[i] - 1]) for i in range(n_images)
+        ]
+        Two_sigma_area[1:] = Left_Area - cusu
+        for i in range(n_images):
+            Two_sigma_areas[i][1:] = Left_Areas[i] - cusus[i]
+        Ratios = Two_sigma_area / Left_Area
+        Ratioss = [Two_sigma_areas[i] / Left_Areas[i] for i in range(n_images)]
+        target_ratio = 0.9544
+        temp_dis = np.abs(target_ratio - Ratios)
+        temp_diss = [np.abs(target_ratio - Ratioss[i]) for i in range(n_images)]
+        closest = Ratios[np.argmin(temp_dis)]
+        closests = [Ratioss[i][np.argmin(temp_diss[i])] for i in range(n_images)]
+        loc = np.where(Ratios == closest)[0][0]
+        locs = [np.where(Ratioss[i] == closests[i])[0][0] for i in range(n_images)]
+        gap = whichbin_SD - loc
+        gaps = [whichbin_SDs[i] - locs[i] for i in range(n_images)]
+        Thre_SD = edges[whichbin_SD + gap]
+        Thre_SDs = np.array([edges[whichbin_SDs[i] + gaps[i]] for i in range(n_images)])
+        Thre_SDs = np.lib.stride_tricks.sliding_window_view(
+            np.pad(Thre_SDs, window_size_idx // 2, mode="reflect"), window_size_idx
+        ).mean(axis=1)
+        unique_roi_sizes = np.unique(roi_sizes_px)
+        lesion_std_maps = {
+            roi_size: calculate_std_dev(
+                images_integrated,
+                images_squared_integrated,
+                images_canny_edge_integrated,
+                roi_size,
+                Padding_size,
+                images.shape,
+                Thr1,
+                Thr2,
+                corrected=False,
+            )
             for roi_size in unique_roi_sizes
         }
         lesion_roi_maps = {
+            roi_size: extract_ROIs(
+                lesion_std_maps[roi_size], Thre_SDs, roi_size // 2, images, group=True
+            )
+            for roi_size in unique_roi_sizes
+        }
+
+        for roi_size in unique_roi_sizes:
+            for si in range(len(lesion_roi_maps[roi_size])):
+                for li in range(lesion_roi_maps[roi_size][si].shape[0]):
+                    lesion_roi_maps[roi_size][si][li] = lesion_roi_maps[roi_size][si][
+                        li
+                    ] - np.mean(lesion_roi_maps[roi_size][si][li])
+
+        lesion_counts = {
             roi_size: [
-                lesion_roi_maps[roi_size][start:end]
-                for start, end in lesion_counts_grouped[roi_size]
+                lesion_roi_maps[roi_size][loc].shape[0]
+                for loc in range(len(lesion_roi_maps[roi_size]))
             ]
             for roi_size in unique_roi_sizes
         }
-        lesion_roi_locs = {
+        if group_by == "lesion_count":
+            lesion_counts_grouped = {
+                roi_size: group_boundaries(
+                    lesion_counts[roi_size], threshold=500, overlap=0.667
+                )
+                for roi_size in unique_roi_sizes
+            }
+            lesion_roi_maps = {
+                roi_size: [
+                    lesion_roi_maps[roi_size][start:end]
+                    for start, end in lesion_counts_grouped[roi_size]
+                ]
+                for roi_size in unique_roi_sizes
+            }
+            lesion_roi_locs = {
+                roi_size: [
+                    np.mean(slice_location[start:end])
+                    for start, end in lesion_counts_grouped[roi_size]
+                ]
+                for roi_size in unique_roi_sizes
+            }
+            noise_level_local = {
+                roi_size: [
+                    np.mean(Noise_level_local[start:end])
+                    for start, end in lesion_counts_grouped[roi_size]
+                ]
+                for roi_size in unique_roi_sizes
+            }
+        elif group_by == "slice_location":
+            windows = np.lib.stride_tricks.sliding_window_view(
+                np.arange(n_images), window_size_idx
+            )[::step_size_idx]
+            windows = [(w[0], w[-1] + 1) for w in windows]
+
+            lesion_roi_maps = {
+                roi_size: [
+                    lesion_roi_maps[roi_size][start:end] for start, end in windows
+                ]
+                for roi_size in unique_roi_sizes
+            }
+            lesion_roi_locs = {
+                roi_size: [np.mean(slice_location[start:end]) for start, end in windows]
+                for roi_size in unique_roi_sizes
+            }
+            noise_level_local = {
+                roi_size: [
+                    np.mean(Noise_level_local[start:end]) for start, end in windows
+                ]
+                for roi_size in unique_roi_sizes
+            }
+        else:
+            raise ValueError(
+                "Invalid group_by value. Must be 'lesion_count' or 'slice_location'."
+            )
+        lesion_roi_maps = collapse_slice(lesion_roi_maps)
+        sample_idxs = {
             roi_size: [
-                np.mean(slice_location[start:end])
-                for start, end in lesion_counts_grouped[roi_size]
+                np.random.permutation(lesion_roi_maps[roi_size][win].shape[0])
+                for win in range(len(lesion_roi_maps[roi_size]))
             ]
             for roi_size in unique_roi_sizes
         }
-    elif group_by == "slice_location":
+        bkgs_ordered = {
+            roi_size: [
+                np.reshape(
+                    lesion_roi_maps[roi_size][win][sample_idxs[roi_size][win]],
+                    (roi_size**2, len(sample_idxs[roi_size][win])),
+                )
+                for win in range(len(lesion_roi_maps[roi_size]))
+            ]
+            for roi_size in unique_roi_sizes
+        }
+        sigs_true = {
+            f"{lesion_contrast}_{roi_size}": np.reshape(lesion_sig, (roi_size**2, 1))
+            for lesion_contrast, roi_size, lesion_sig in zip(
+                lesion_contrasts, roi_sizes_px, lesion_sigs
+            )
+        }
+
+        channel_matrices = {
+            roi_size: ChannelMatrix_Generation(Chnl, roi_size)
+            for roi_size in unique_roi_sizes
+        }
+        dps = {
+            f"{lesion_contrast}_{roi_size}": {
+                "dps": [
+                    CHO_patient_with_resampling(
+                        sigs_true[f"{lesion_contrast}_{roi_size}"],
+                        bkgs_ordered[roi_size][win],
+                        channel_matrices[roi_size],
+                        internalNoise,
+                        Resampling_method,
+                    )
+                    for win in range(len(lesion_roi_maps[roi_size]))
+                ],
+                "loc": lesion_roi_locs[roi_size],
+            }
+            for lesion_contrast, roi_size in zip(lesion_contrasts, roi_sizes_px)
+        }
+        loc_min = -np.inf
+        loc_max = np.inf
+        for les in dps.keys():
+            if les in ["avg", "all_lesions"]:
+                continue
+            loc_min = max(np.min(dps[les]["loc"]), loc_min)
+            loc_max = min(np.max(dps[les]["loc"]), loc_max)
+        locs = np.linspace(loc_min, loc_max, n_images)
+
+        for lesion_contrast, roi_size in zip(lesion_contrasts, roi_sizes_px):
+            dps[f"{lesion_contrast}_{roi_size}"]["interp"] = np.interp(
+                locs,
+                dps[f"{lesion_contrast}_{roi_size}"]["loc"],
+                dps[f"{lesion_contrast}_{roi_size}"]["dps"],
+                left=np.nan,
+                right=np.nan,
+            )
+        for roi_size in unique_roi_sizes:
+            noise_level_local[roi_size] = np.interp(
+                locs,
+                lesion_roi_locs[roi_size],
+                noise_level_local[roi_size],
+                left=np.nan,
+                right=np.nan,
+            )
+        Noise_level_local = np.mean(
+            [noise_level_local[roi_size] for roi_size in unique_roi_sizes], axis=0
+        )
+
+        dps["all_lesions"] = {
+            "dps": np.mean(
+                [
+                    dps[f"{lesion_contrast}_{roi_size}"]["interp"]
+                    for lesion_contrast, roi_size in zip(lesion_contrasts, roi_sizes_px)
+                ],
+                axis=0,
+            ),
+            "loc": locs,
+        }
+        dps["avg"] = np.nanmean(dps["all_lesions"]["dps"])
+
+        Mean_loc_dps = dps["all_lesions"]["dps"]
+        # Mean_All_dps = np.mean(Mean_loc_dps)
+        Mean_All_dps = dps["avg"]
+
+        dps_location = dps["all_lesions"]["loc"]
+    elif algorithm == "old":
+        # Average the DPS values across all lesions
+        # Interpolate DPS values to a common set of locations for averaging
+
         window_size_mm = 150
         step_size_mm = 50
         window_size_idx = np.ceil((window_size_mm + 1e-6) / Sliceinterval).astype(int)
@@ -1883,246 +2035,209 @@ def main(
         windows = np.lib.stride_tricks.sliding_window_view(
             np.arange(n_images), window_size_idx
         )[::step_size_idx]
-        windows = [(w[0], w[-1] + 1) for w in windows]
-
-        lesion_roi_maps = {
-            roi_size: [lesion_roi_maps[roi_size][start:end] for start, end in windows]
-            for roi_size in unique_roi_sizes
-        }
-        lesion_roi_locs = {
-            roi_size: [np.mean(slice_location[start:end]) for start, end in windows]
-            for roi_size in unique_roi_sizes
-        }
-    else:
-        raise ValueError(
-            "Invalid group_by value. Must be 'lesion_count' or 'slice_location'."
+        n_windows = windows.shape[0]
+        # Which elements in each window are unique (not in previous window).  Used to avoid double-counting slices.
+        eval_run_windows = np.array(
+            [
+                (
+                    [not val in set(windows[i - 1]) for val in windows[i]]
+                    if i > 0
+                    else [True] * len(windows[i])
+                )
+                for i in range(len(windows))
+            ]
         )
-    lesion_roi_maps = collapse_slice(lesion_roi_maps)
-    sample_idxs = {
-        roi_size: [
-            np.random.permutation(lesion_roi_maps[roi_size][win].shape[0])
-            for win in range(len(lesion_roi_maps[roi_size]))
+        # Which elements in each window are unique (not in next window).  Used to avoid double-counting slices.
+        remove_run_windows = np.array(
+            [
+                (
+                    [not val in set(windows[i + 1]) for val in windows[i]]
+                    if i > -1
+                    else [True] * len(windows[i])
+                )
+                for i in range(-1, len(windows) - 1)
+            ]
+        )
+
+        dps_location = np.mean(slice_location[windows], axis=-1)
+        padded_shape = [
+            window_size_idx,
+            Im_Size[0] + Padding_size,
+            Im_Size[1] + Padding_size,
         ]
-        for roi_size in unique_roi_sizes
-    }
-    bkgs_ordered = {
-        roi_size: [
-            np.reshape(
-                lesion_roi_maps[roi_size][win][sample_idxs[roi_size][win]],
-                (roi_size**2, len(sample_idxs[roi_size][win])),
+        init_shape = [
+            window_size_idx,
+            Im_Size[0],
+            Im_Size[1],
+        ]
+        Noise_level_local = np.zeros([n_windows, 1])
+        NPS_Cal = True
+        _, first_idx = np.unique(roi_sizes_mm, return_index=True)
+        mask = np.ones(len(roi_sizes_mm), dtype=bool)
+        mask[first_idx] = False
+        same_roi_sizes = np.flatnonzero(mask)
+
+        All_dps = np.zeros([n_windows, num_lesions])
+        image_section = np.zeros(init_shape, dtype=np.float32)
+        images_integrated = np.zeros(padded_shape, dtype=np.float32)
+        images_squared_integrated = np.zeros(padded_shape, dtype=np.float32)
+        images_canny_edge_integrated = np.zeros(padded_shape, dtype=np.float32)
+
+        for window_idx, window in enumerate(windows):
+            eval_run_window = eval_run_windows[window_idx]
+            remove_run_window = remove_run_windows[window_idx]
+            image_section = update_arrays(image_section, remove_run_window, eval_run_window)  # type: ignore
+            images_integrated = update_arrays(
+                images_integrated, remove_run_window, eval_run_window  # type: ignore
             )
-            for win in range(len(lesion_roi_maps[roi_size]))
-        ]
-        for roi_size in unique_roi_sizes
-    }
-    sigs_true = {
-        f"{lesion_contrast}_{roi_size}": np.reshape(lesion_sig, (roi_size**2, 1))
-        for lesion_contrast, roi_size, lesion_sig in zip(
-            lesion_contrasts, roi_sizes_px, lesion_sigs
-        )
-    }
+            images_squared_integrated = update_arrays(
+                images_squared_integrated, remove_run_window, eval_run_window  # type: ignore
+            )
+            images_canny_edge_integrated = update_arrays(
+                images_canny_edge_integrated, remove_run_window, eval_run_window  # type: ignore
+            )
+            for element_idx, image_idx in enumerate(window):
+                if not eval_run_window[element_idx]:
+                    continue
 
-    channel_matrices = {
-        roi_size: ChannelMatrix_Generation(Chnl, roi_size)
-        for roi_size in unique_roi_sizes
-    }
-    dps = {
-        f"{lesion_contrast}_{roi_size}": {
-            "dps": [
-                CHO_patient_with_resampling(
-                    sigs_true[f"{lesion_contrast}_{roi_size}"],
-                    bkgs_ordered[roi_size][win],
-                    channel_matrices[roi_size],
+                dcm_info = dcmread(filepaths[image_idx])
+                im = (
+                    dcm_info.pixel_array * dcm_info.RescaleSlope
+                    + dcm_info.RescaleIntercept
+                )
+
+                canny_edges = feature.canny(im, sigma=5)
+                dilated_edges = binary_dilation(canny_edges, structure=structure)
+
+                image_section[element_idx] = im
+                images_integrated[element_idx] = integrate_image(im, window_size)
+                images_squared_integrated[element_idx] = integrate_image(
+                    im**2, window_size
+                )
+                images_canny_edge_integrated[element_idx] = integrate_image(
+                    dilated_edges, window_size
+                )
+
+            STD_all = calculate_std_dev(
+                images_integrated,
+                images_squared_integrated,
+                images_canny_edge_integrated,
+                ROI_size_N,
+                Padding_size,
+                init_shape,
+                Thr1,
+                Thr2,
+                corrected=False,
+            )
+            max_value = np.nanmax(STD_all)
+            h_Values, edges = np.histogram(
+                STD_all.flatten(), bins=np.arange(0, max_value, 0.2)
+            )
+            whichbin_SD = np.argmax(h_Values)
+            bin_edge = edges[whichbin_SD]
+            Noise_level_local[window_idx] = bin_edge
+            if NPS_Cal and (window_idx >= n_windows // 2):
+                print(f"Calculating NPS from the middle period (group {window_idx+1})")
+                ROI_All_NPS = extract_ROIs(
+                    STD_all, bin_edge, Half_ROI_size_N, image_section
+                )
+                Total_NPS_No = ROI_All_NPS.shape[0]
+                # Use up to 200 ROIs (or all available if fewer)
+                num_nps_rois = min(200, Total_NPS_No)
+                Spatial_freq, NPS_1D_sum, noise_level_sum, unit = ROI_to_NPS_Sum(
+                    ROI_size_N, ROI_All_NPS[0:num_nps_rois], dx, dy
+                )
+                Total_NPS_Num = num_nps_rois
+                NPS_Cal = False
+            del STD_all
+            gc.collect()
+            Left_Area = np.sum(h_Values[:whichbin_SD])
+            Two_sigma_area = np.ones(whichbin_SD) * Left_Area
+            cusu = np.cumsum(h_Values[: whichbin_SD - 1])
+            Two_sigma_area[1:] = Left_Area - cusu
+            Ratios = Two_sigma_area / Left_Area
+            target_ratio = 0.9544
+            temp_dis = np.abs(target_ratio - Ratios)
+            closest = Ratios[np.argmin(temp_dis)]
+            loc = np.where(Ratios == closest)[0][0]
+            gap = whichbin_SD - loc
+            Thre_SD = edges[whichbin_SD + gap]
+            all_dps = []
+            for ii in range(num_lesions):
+                lesion_sig = lesion_sigs[ii]
+                roi_size_px = roi_sizes_px[ii]
+
+                Half_ROI_size = roi_size_px // 2
+                if ii in same_roi_sizes and ii > 0:
+                    print("use same ROI_All")
+                else:
+                    STD_map_all = calculate_std_dev(
+                        images_integrated,
+                        images_squared_integrated,
+                        images_canny_edge_integrated,
+                        roi_size_px,
+                        Padding_size,
+                        # Im_Size,
+                        # N1,
+                        # N2,
+                        init_shape,
+                        # window_size_idx,
+                        Thr1,
+                        Thr2,
+                        corrected=False,
+                    )
+                    ROI_All = extract_ROIs(
+                        STD_map_all, Thre_SD, Half_ROI_size, image_section
+                    )
+                    Total_NPS_No = ROI_All.shape[0]
+                Noise_ROI = ROI_All[:Total_NPS_No]  # type: ignore
+                depth = Noise_ROI.shape[0]
+                for i in range(depth):
+                    temp = Noise_ROI[i]
+                    Noise_ROI[i] = temp - np.mean(temp)
+                N_total = Noise_ROI.shape[0]
+                sample_idx = np.random.permutation(N_total)
+                channelMatrix = ChannelMatrix_Generation(Chnl, roi_size_px)
+                bkg_ordered = np.reshape(
+                    Noise_ROI[sample_idx], (roi_size_px**2, len(sample_idx))
+                )
+                sig_true = np.reshape(lesion_sig, (roi_size_px**2, 1))
+                dp = CHO_patient_with_resampling(
+                    sig_true,
+                    bkg_ordered,
+                    channelMatrix,
                     internalNoise,
                     Resampling_method,
                 )
-                for win in range(len(lesion_roi_maps[roi_size]))
-            ],
-            "loc": lesion_roi_locs[roi_size],
-        }
-        for lesion_contrast, roi_size in zip(lesion_contrasts, roi_sizes_px)
-    }
-    for lesion_contrast, roi_size in zip(lesion_contrasts, roi_sizes_px):
-        dps[f"{lesion_contrast}_{roi_size}"]["interp"] = np.interp(
-            slice_location,
-            dps[f"{lesion_contrast}_{roi_size}"]["loc"],
-            dps[f"{lesion_contrast}_{roi_size}"]["dps"],
-            left=np.nan,
-            right=np.nan,
-        )
-    dps["all_lesions"] = {
-        "dps": np.nanmean(
-            [
-                dps[f"{lesion_contrast}_{roi_size}"]["interp"]
-                for lesion_contrast, roi_size in zip(lesion_contrasts, roi_sizes_px)
-            ],
-            axis=0,
-        ),
-        "loc": slice_location,
-    }
-    dps["avg"] = np.nanmean(dps["all_lesions"]["dps"])
-    # Average the DPS values across all lesions
-    # Interpolate DPS values to a common set of locations for averaging
+                all_dps.append(dp)
+            All_dps[window_idx, :] = all_dps
+            # del (
+            #     images_integrated,
+            #     images_squared_integrated,
+            #     images_canny_edge_integrated,
+            #     image_section,
+            # )
+            gc.collect()
 
-    print("CHO analysis completed for all lesions and windows.")
-    # for window_idx, window in enumerate(windows):
-    #     # N1 = (mm - 1) * step_size_idx
-    #     # N2 = mm * step_size_idx
-    #     # Intel_images = np.zeros(padded_shape, dtype=np.float32)
-    #     # Intel_images_Square = np.zeros(padded_shape, dtype=np.float32)
-    #     # Intel_Edge = np.zeros(padded_shape, dtype=np.float32)
-    #     # Images_Section = np.zeros(init_shape, dtype=np.float32)
+        # Compute final metrics and plot NPS
+        # dps_location_array = np.array(dps_location)
+        # dps_location_array = dps_location_array - dps_location_array.min()
+        # dps_location_array = np.reshape(
+        #     dps_location_array, (n_images // window_size_idx - 2, -1)
+        # )
+        # dps_location_array = np.mean(dps_location_array, axis=-1)
+        Mean_loc_dps = np.mean(All_dps, axis=-1)
+        Mean_All_dps = np.mean(Mean_loc_dps)
 
-    #     # for nn in range(N1, N2 + step_size_idx * 2):
-    #     eval_run_window = eval_run_windows[window_idx]
-    #     remove_run_window = remove_run_windows[window_idx]
-    #     image_section = update_arrays(image_section, remove_run_window, eval_run_window)  # type: ignore
-    #     images_integrated = update_arrays(
-    #         images_integrated, remove_run_window, eval_run_window  # type: ignore
-    #     )
-    #     images_squared_integrated = update_arrays(
-    #         images_squared_integrated, remove_run_window, eval_run_window  # type: ignore
-    #     )
-    #     images_canny_edge_integrated = update_arrays(
-    #         images_canny_edge_integrated, remove_run_window, eval_run_window  # type: ignore
-    #     )
-    #     for element_idx, image_idx in enumerate(window):
-    #         if not eval_run_window[element_idx]:
-    #             continue
-
-    #         dcm_info = dcmread(filepaths[image_idx])
-    #         im = (
-    #             dcm_info.pixel_array * dcm_info.RescaleSlope + dcm_info.RescaleIntercept
-    #         )
-
-    #         canny_edges = feature.canny(im, sigma=5)
-    #         dilated_edges = binary_dilation(canny_edges, structure=structure)
-
-    #         image_section[:, :, element_idx] = im
-    #         images_integrated[:, :, element_idx] = integrate_image(im, window_size)
-    #         images_squared_integrated[:, :, element_idx] = integrate_image(
-    #             im**2, window_size
-    #         )
-    #         images_canny_edge_integrated[:, :, element_idx] = integrate_image(
-    #             dilated_edges, window_size
-    #         )
-
-    #     STD_all = calculate_std_dev(
-    #         images_integrated,
-    #         images_squared_integrated,
-    #         images_canny_edge_integrated,
-    #         ROI_size_N,
-    #         Padding_size,
-    #         # Im_Size,
-    #         # N1,
-    #         # N2,
-    #         init_shape,
-    #         # window_size_idx,
-    #         Thr1,
-    #         Thr2,
-    #         corrected=False,
-    #     )
-    #     max_value = np.nanmax(STD_all)
-    #     h_Values, edges = np.histogram(
-    #         STD_all.flatten(), bins=np.arange(0, max_value, 0.2)
-    #     )
-    #     whichbin_SD = np.argmax(h_Values)
-    #     bin_edge = edges[whichbin_SD]
-    #     Noise_level_local[window_idx] = bin_edge
-    #     if NPS_Cal and (window_idx >= num_groups // 2):
-    #         print(f"Calculating NPS from the middle period (group {window_idx+1})")
-    #         ROI_All_NPS, Total_NPS_No = extract_ROIs(
-    #             STD_all, bin_edge, Half_ROI_size_N, image_section
-    #         )
-    #         # Use up to 200 ROIs (or all available if fewer)
-    #         num_nps_rois = min(200, Total_NPS_No)
-    #         Spatial_freq, NPS_1D_sum, noise_level_sum, unit = ROI_to_NPS_Sum(
-    #             ROI_size_N, ROI_All_NPS[:, :, 0:num_nps_rois], dx, dy
-    #         )
-    #         Total_NPS_Num = num_nps_rois
-    #         NPS_Cal = False
-    #     del STD_all
-    #     gc.collect()
-    #     Left_Area = np.sum(h_Values[:whichbin_SD])
-    #     Two_sigma_area = np.ones(whichbin_SD) * Left_Area
-    #     cusu = np.cumsum(h_Values[: whichbin_SD - 1])
-    #     Two_sigma_area[1:] = Left_Area - cusu
-    #     Ratios = Two_sigma_area / Left_Area
-    #     target_ratio = 0.9544
-    #     temp_dis = np.abs(target_ratio - Ratios)
-    #     closest = Ratios[np.argmin(temp_dis)]
-    #     loc = np.where(Ratios == closest)[0][0]
-    #     gap = whichbin_SD - loc
-    #     Thre_SD = edges[whichbin_SD + gap]
-    #     all_dps = []
-    #     for ii in range(num_lesions):
-    #         lesion_sig = lesion_sigs[ii]
-    #         roi_size_px = roi_sizes_px[ii]
-
-    #         Half_ROI_size = roi_size_px // 2
-    #         if ii in same_roi_sizes and ii > 0:
-    #             print("use same ROI_All")
-    #         else:
-    #             STD_map_all = calculate_std_dev(
-    #                 images_integrated,
-    #                 images_squared_integrated,
-    #                 images_canny_edge_integrated,
-    #                 roi_size_px,
-    #                 Padding_size,
-    #                 # Im_Size,
-    #                 # N1,
-    #                 # N2,
-    #                 init_shape,
-    #                 # window_size_idx,
-    #                 Thr1,
-    #                 Thr2,
-    #                 corrected=False,
-    #             )
-    #             ROI_All, Total_NPS_No = extract_ROIs(
-    #                 STD_map_all, Thre_SD, Half_ROI_size, image_section
-    #             )
-    #         Noise_ROI = ROI_All[:, :, :Total_NPS_No]  # type: ignore
-    #         depth = Noise_ROI.shape[2]
-    #         for i in range(depth):
-    #             temp = Noise_ROI[:, :, i]
-    #             Noise_ROI[:, :, i] = temp - np.mean(temp)
-    #         N_total = Noise_ROI.shape[2]
-    #         sample_idx = np.random.permutation(N_total)
-    #         channelMatrix = ChannelMatrix_Generation(Chnl, roi_size_px)
-    #         bkg_ordered = np.reshape(
-    #             Noise_ROI[:, :, sample_idx], (roi_size_px**2, len(sample_idx))
-    #         )
-    #         sig_true = np.reshape(lesion_sig, (roi_size_px**2, 1))
-    #         dp = CHO_patient_with_resampling(
-    #             sig_true, bkg_ordered, channelMatrix, internalNoise, Resampling_method
-    #         )
-    #         all_dps.append(dp)
-    #     All_dps[window_idx, :] = all_dps
-    #     del (
-    #         images_integrated,
-    #         images_squared_integrated,
-    #         images_canny_edge_integrated,
-    #         image_section,
-    #     )
-    #     gc.collect()
-
-    # Compute final metrics and plot NPS
-    # dps_location_array = np.array(dps_location)
-    # dps_location_array = dps_location_array - dps_location_array.min()
-    # dps_location_array = np.reshape(
-    #     dps_location_array, (n_images // window_size_idx - 2, -1)
-    # )
-    # dps_location_array = np.mean(dps_location_array, axis=-1)
-    # Mean_loc_dps = np.mean(All_dps, axis=-1)
-    Mean_loc_dps = dps["all_lesions"]["dps"]
-    # Mean_All_dps = np.mean(Mean_loc_dps)
-    Mean_All_dps = dps["avg"]
+    # Mean_loc_dps = dps["all_lesions"]["dps"]
+    # # Mean_All_dps = np.mean(Mean_loc_dps)
+    # Mean_All_dps = dps["avg"]
     NPS_1D = NPS_1D_sum / num_nps_rois
     Ave_noise_level_NPS = noise_level_sum / num_nps_rois
     Ave_noise_level = np.mean(Noise_level_local)
     end = time.time()
     elapsed = end - start
-    dps_location = dps["all_lesions"]["loc"]
+    # dps_location = dps["all_lesions"]["loc"]
 
     # ---- original plot calls (unchanged) ----
     plot_Dw_with_image(slice_location, Dw, coronal_image)
@@ -2135,9 +2250,11 @@ def main(
     )
     fig, ax = plt.subplots(num="Detectability vs. Slice Location")
     for les in dps.keys():
-        if les == "avg":
+        if les in ["avg"]:
             continue
         ax.plot(dps[les]["loc"], dps[les]["dps"], label=les)
+    # for line in All_dps.T:
+    #     ax.plot(dps_location, line)
     y_min, y_max = ax.get_ylim()
     x_min, x_max = slice_location.min(), slice_location.max()
     img_extent = [x_min, x_max, y_min, y_max]
@@ -2154,8 +2271,8 @@ def main(
     ax.set_xlabel("Slice Location (mm)", fontsize=16)
     ax.set_ylabel("Detectability", fontsize=16)
     ax.legend()
-    plot_NPS(Spatial_freq, NPS_1D)
     # plt.show()
+    plot_NPS(Spatial_freq, NPS_1D)
 
     fav, peakfrequency, k, min10percent_frequency = NPS_statistics(NPS_1D, unit)
     print(f"peakfrequency = {peakfrequency:.3f}")

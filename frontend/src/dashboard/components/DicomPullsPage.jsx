@@ -531,7 +531,13 @@ const DicomPullsPage = () => {
           }
         }
       }
-
+      // Change the patientName and patientId to "******" temporarily for privacy reasons, since this is a public-facing demo.
+      for (const item of normalized) {
+        item.patientName = "***************************";
+        item.patientId = "******";
+        item.age = "****";
+      }
+      console.log("normalized results:", normalized);
       setResults(normalized);
       setSelectionModel({ type: "include", ids: new Set() });
 
@@ -811,6 +817,7 @@ const DicomPullsPage = () => {
         onReset={handleResetFilters}
         filterOptions={dicomFilterOptions}
         visibleFields={DICOM_VISIBLE_FIELDS}
+        showOptions={false}
       />
 
       {/* Results grid — mirrors BulkTestsPage's grid configuration so the
@@ -840,11 +847,17 @@ const DicomPullsPage = () => {
         disableRowSelectionOnClick
         rowSelectionModel={selectionModel}
         onRowSelectionModelChange={(model) => setSelectionModel(model)}
-        pageSizeOptions={[25, 50, 100]}
+        pageSizeOptions={[10, 25, 50, 100]}
         slots={{ toolbar: GridToolbar }}
         showToolbar
         initialState={{
           pagination: { paginationModel: { pageSize: 25, page: 0 } },
+          columns: {
+            columnVisibilityModel: {
+              modality: false,
+              estimatedSeconds: false,
+            },
+          },
           sorting: {
             sortModel: [{ field: "patientName", sort: "asc" }],
           },
@@ -870,7 +883,6 @@ const DicomPullsPage = () => {
               <Grid item size={{ xs: 12, sm: 6, md: 3 }}>
                 <TextField
                   fullWidth
-                  size='small'
                   label='Schedule Name'
                   name='displayName'
                   value={schedule.displayName}
@@ -884,7 +896,34 @@ const DicomPullsPage = () => {
                   onChange={(value) =>
                     setSchedule((prev) => ({ ...prev, start: value }))
                   }
-                  slotProps={{ textField: { size: "small", fullWidth: true } }}
+                  sx={{ width: "100%" }}
+                  enableAccessibleFieldDOMStructure={false}
+                  slots={{ textField: TextField }}
+                  slotProps={{
+                    actionBar: { actions: ["clear", "today", "accept"] },
+                    openPickerButton: {
+                      sx: {
+                        "&&": {
+                          border: "none",
+                          boxShadow: "none",
+                          bgcolor: "transparent",
+                          width: 36,
+                          height: 36,
+                          p: 0.5,
+                          "&:hover": {
+                            bgcolor: "transparent",
+                            borderColor: "transparent",
+                          },
+                          "&:active": { bgcolor: "transparent" },
+                          "& .MuiSvgIcon-root": { fontSize: 18 },
+                        },
+                      },
+                    },
+                    textField: {
+                      placeholder: "",
+                      InputLabelProps: { shrink: true },
+                    },
+                  }}
                 />
               </Grid>
               <Grid item size={{ xs: 12, sm: 6, md: 3 }}>
@@ -894,13 +933,39 @@ const DicomPullsPage = () => {
                   onChange={(value) =>
                     setSchedule((prev) => ({ ...prev, end: value }))
                   }
-                  slotProps={{ textField: { size: "small", fullWidth: true } }}
+                  sx={{ width: "100%" }}
+                  enableAccessibleFieldDOMStructure={false}
+                  slots={{ textField: TextField }}
+                  slotProps={{
+                    actionBar: { actions: ["clear", "today", "accept"] },
+                    openPickerButton: {
+                      sx: {
+                        "&&": {
+                          border: "none",
+                          boxShadow: "none",
+                          bgcolor: "transparent",
+                          width: 36,
+                          height: 36,
+                          p: 0.5,
+                          "&:hover": {
+                            bgcolor: "transparent",
+                            borderColor: "transparent",
+                          },
+                          "&:active": { bgcolor: "transparent" },
+                          "& .MuiSvgIcon-root": { fontSize: 18 },
+                        },
+                      },
+                    },
+                    textField: {
+                      placeholder: "",
+                      InputLabelProps: { shrink: true },
+                    },
+                  }}
                 />
               </Grid>
               <Grid item size={{ xs: 12, sm: 6, md: 3 }}>
                 <TextField
                   fullWidth
-                  size='small'
                   label='Notes'
                   name='notes'
                   value={schedule.notes}

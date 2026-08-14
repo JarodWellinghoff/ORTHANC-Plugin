@@ -967,6 +967,7 @@ const BulkTestsPage = () => {
       <DataGrid
         disableColumnFilter
         rows={loading ? [] : (normalizedResults ?? [])}
+        // rows={[]}
         columns={columns}
         getRowId={getRowId}
         rowCount={pagination.total ?? normalizedResults?.length ?? 0}
@@ -982,7 +983,7 @@ const BulkTestsPage = () => {
         checkboxSelection
         disableRowSelectionOnClick
         loading={loading}
-        pageSizeOptions={[25, 50, 100]}
+        pageSizeOptions={[10, 25, 50, 100]}
         slots={{ toolbar: GridToolbar }}
         showToolbar
         initialState={{

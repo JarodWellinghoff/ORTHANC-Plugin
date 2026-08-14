@@ -366,18 +366,24 @@ export const DashboardProvider = ({ children }) => {
     loadFilterOptions();
   }, [loadFilterOptions]);
 
+  //   useEffect(() => {
+  //     loadSummary();
+  //   }, [loadSummary]);
   useEffect(() => {
     loadSummary();
-  }, [loadSummary]);
-
+    // Mount only. Pages drive every subsequent load with their own params
+    // (filters/page/sort); re-running this on loadSummary identity changes
+    // re-fires the no-arg "clear everything" path on every pagination change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const refresh = useCallback(() => {
     loadSummary();
   }, [loadSummary]);
 
   const changePage = useCallback(
-    (page) => {
+    (page, extras = {}) => {
       setPagination((prev) => ({ ...prev, page }));
-      loadSummary({ page });
+      loadSummary({ page, ...extras });
     },
     [loadSummary],
   );
