@@ -7,7 +7,8 @@
   useRef,
   useState,
 } from "react";
-
+const AGE_FILTER_MIN = 0;
+const AGE_FILTER_MAX = 200;
 const DashboardContext = createContext(null);
 
 const defaultFilters = {
@@ -20,8 +21,8 @@ const defaultFilters = {
   pullScheduleSearch: [],
   studyDateStartSearch: null,
   studyDateEndSearch: null,
-  ageStartSearch: 0,
-  ageEndSearch: 200,
+  ageStartSearch: AGE_FILTER_MIN,
+  ageEndSearch: AGE_FILTER_MAX,
 };
 
 const defaultChoParams = {
@@ -238,6 +239,8 @@ export const DashboardProvider = ({ children }) => {
     (overrides = {}) => {
       const p = { ...filters, ...overrides };
       const params = {};
+      const ageMin = Number(p.ageStartSearch);
+      const ageMax = Number(p.ageEndSearch);
       if (p.patientIdSearch) params.patient_id = p.patientIdSearch.join(",");
       if (p.patientNameSearch)
         params.patient_name = p.patientNameSearch.join(",");
@@ -251,8 +254,10 @@ export const DashboardProvider = ({ children }) => {
       if (p.studyDateStartSearch)
         params.exam_date_from = p.studyDateStartSearch;
       if (p.studyDateEndSearch) params.exam_date_to = p.studyDateEndSearch;
-      if (p.ageStartSearch) params.age_min = p.ageStartSearch;
-      if (p.ageEndSearch) params.age_max = p.ageEndSearch;
+      if (Number.isFinite(ageMin) && ageMin > AGE_FILTER_MIN)
+        params.patient_age_min = ageMin;
+      if (Number.isFinite(ageMax) && ageMax < AGE_FILTER_MAX)
+        params.patient_age_max = ageMax;
       if (p.sort_by) params.sort_by = p.sort_by;
       if (p.sort_order) params.sort_order = p.sort_order;
       return params;

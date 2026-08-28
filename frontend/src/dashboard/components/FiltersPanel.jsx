@@ -450,11 +450,15 @@ const FiltersPanel = ({
                 label='Min Age'
                 type='number'
                 onChange={(e) => {
-                  const value = Math.min(
-                    Math.max(Number(e.target.value), MIN_AGE),
-                    filters?.ageEndSearch,
+                  const raw = e.target.value;
+                  if (raw === "") return onChange("ageStartSearch", MIN_AGE);
+                  const ceiling = Number.isFinite(Number(filters?.ageEndSearch))
+                    ? Number(filters.ageEndSearch)
+                    : MAX_AGE;
+                  onChange(
+                    "ageStartSearch",
+                    Math.min(Math.max(Number(raw), MIN_AGE), ceiling),
                   );
-                  onChange("ageStartSearch", value);
                 }}
               />
               <Slider
@@ -474,11 +478,15 @@ const FiltersPanel = ({
                 label='Max Age'
                 type='number'
                 onChange={(e) => {
-                  const value = Math.min(
-                    Math.max(Number(e.target.value), filters?.ageStartSearch),
-                    MAX_AGE,
+                  const raw = e.target.value;
+                  if (raw === "") return onChange("ageEndSearch", MAX_AGE);
+                  const floor = Number.isFinite(Number(filters?.ageStartSearch))
+                    ? Number(filters.ageStartSearch)
+                    : MIN_AGE;
+                  onChange(
+                    "ageEndSearch",
+                    Math.min(Math.max(Number(raw), floor), MAX_AGE),
                   );
-                  onChange("ageEndSearch", value);
                 }}
               />
             </Stack>

@@ -742,6 +742,12 @@ class CHOResultsStorage:
             """Split a comma-joined query param into a stripped, non-empty list."""
             return [v.strip() for v in raw.split(",") if v.strip()] if raw else []
 
+        def _parse_age(raw):
+            try:
+                return int(float(raw))
+            except (TypeError, ValueError):
+                return None
+
         if not self.connect_postgres() or self.postgres_connection is None:
             return False
 
@@ -759,8 +765,8 @@ class CHOResultsStorage:
         scanner_models = _parse_list(get.get("scanner_model", ""))
         exam_date_from = get.get("exam_date_from")
         exam_date_to = get.get("exam_date_to")
-        patient_age_min = get.get("patient_age_min")
-        patient_age_max = get.get("patient_age_max")
+        patient_age_min = get.get("patient_age_min") or get.get("age_min")
+        patient_age_max = get.get("patient_age_max") or get.get("age_max")
         sort_by = get.get("sort_by")
         sort_order = get.get("sort_order", "asc")
 
@@ -804,17 +810,19 @@ class CHOResultsStorage:
             conditions.append("st.study_date <= %s")
             params.append(exam_date_to)
 
-        if patient_age_min:
+        age_min = _parse_age(patient_age_min)
+        if age_min is not None:
             conditions.append(
                 "EXTRACT(YEAR FROM AGE(st.study_date::date, p.birth_date::date)) >= %s"
             )
-            params.append(int(patient_age_min))
+            params.append(age_min)
 
-        if patient_age_max:
+        age_max = _parse_age(patient_age_max)
+        if age_max is not None:
             conditions.append(
                 "EXTRACT(YEAR FROM AGE(st.study_date::date, p.birth_date::date)) <= %s"
             )
-            params.append(int(patient_age_max))
+            params.append(age_max)
         # ─────────────────────────────────────────────────────────
         # ── pagination ────────────────────────────────────────────
         page = int(get.get("page", "1"))
