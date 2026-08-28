@@ -80,6 +80,60 @@ export const deriveRowId = (item, index) => {
   );
 };
 
+// A row is worth fetching results for if an analysis row exists for it at
+// all. `partial` (global-noise-only) series are kept deliberately: they carry
+// CTDIvol, SSDE and Dw even though the detectability and NPS columns are
+// null, and aggregate views drop nulls per metric rather than per series.
+export const hasStoredResults = (row) => {
+  const status = row.testStatus;
+  const hasUid = Boolean(row.seriesInstanceUid ?? row.seriesUuid);
+  return (
+    hasUid &&
+    status &&
+    status !== "none" &&
+    status !== "pending" &&
+    status !== "untested"
+  );
+};
+
+const AGE_FILTER_MIN = 0;
+const AGE_FILTER_MAX = 200;
+
+/**
+ * Map the FiltersPanel filter-state shape onto the query params `/cho-results`
+ * understands. Mirrors DashboardContext's internal `buildFilterParams`; kept
+ * here too for pages that fetch results directly instead of going through the
+ * context's paginated `summary` state.
+ */
+export const buildChoQueryParams = (filters) => {
+  const params = {};
+  const ageMin = Number(filters?.ageStartSearch);
+  const ageMax = Number(filters?.ageEndSearch);
+  if (filters?.patientIdSearch?.length)
+    params.patient_id = filters.patientIdSearch.join(",");
+  if (filters?.patientNameSearch?.length)
+    params.patient_name = filters.patientNameSearch.join(",");
+  if (filters?.instituteSearch?.length)
+    params.institute = filters.instituteSearch.join(",");
+  if (filters?.scannerStationSearch?.length)
+    params.scanner_station = filters.scannerStationSearch.join(",");
+  if (filters?.protocolNameSearch?.length)
+    params.protocol_name = filters.protocolNameSearch.join(",");
+  if (filters?.scannerModelSearch?.length)
+    params.scanner_model = filters.scannerModelSearch.join(",");
+  if (filters?.pullScheduleSearch?.length)
+    params.pull_schedule_name = filters.pullScheduleSearch.join(",");
+  if (filters?.studyDateStartSearch)
+    params.exam_date_from = filters.studyDateStartSearch;
+  if (filters?.studyDateEndSearch)
+    params.exam_date_to = filters.studyDateEndSearch;
+  if (Number.isFinite(ageMin) && ageMin > AGE_FILTER_MIN)
+    params.patient_age_min = ageMin;
+  if (Number.isFinite(ageMax) && ageMax < AGE_FILTER_MAX)
+    params.patient_age_max = ageMax;
+  return params;
+};
+
 export const resolveSeriesKey = (row) => {
   if (!row) return null;
   if (row.seriesUuid) return String(row.seriesUuid);
