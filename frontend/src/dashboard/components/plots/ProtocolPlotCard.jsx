@@ -1,4 +1,4 @@
-import { useId, useMemo } from "react";
+import { useId, useMemo, useState } from "react";
 import Plot from "react-plotly.js";
 import CheckBoxIcon from "@mui/icons-material/CheckBox";
 import CheckBoxOutlineBlankIcon from "@mui/icons-material/CheckBoxOutlineBlank";
@@ -22,7 +22,9 @@ import { SCALAR_METRICS, toFiniteNumber } from "../../utils/aggregateMetrics";
 import { PLOT_CONFIG, PLOT_STYLE } from "../../theme/customizations/plotTheme";
 import { useAggregatePlot } from "./useAggregatePlot";
 import {
+  MAX_PLOT_NAME_LENGTH,
   MAX_PLOT_PROTOCOLS,
+  normalizePlotName,
   PROTOCOL_GROUP_KEY,
   resolvePlotProtocols,
   selectPlotRecords,
@@ -38,6 +40,8 @@ const ProtocolPlotCard = ({
   onRemove,
 }) => {
   const idPrefix = useId();
+  // Keep keystrokes local; the workspace/table receive only committed names.
+  const [draftName, setDraftName] = useState(null);
   const selectedProtocols = useMemo(
     () => resolvePlotProtocols(config.protocols, protocolOptions),
     [config.protocols, protocolOptions],
@@ -105,10 +109,44 @@ const ProtocolPlotCard = ({
         <Stack
           direction='row'
           alignItems='center'
-          justifyContent='space-between'>
-          <Typography variant='subtitle1' component='h4' fontWeight={600}>
-            {config.title}
-          </Typography>
+          justifyContent='space-between'
+          spacing={2}>
+          <TextField
+            fullWidth
+            size='small'
+            variant='standard'
+            id={`${idPrefix}-name`}
+            label='Plot name'
+            value={draftName ?? config.title}
+            onChange={(event) => setDraftName(event.target.value)}
+            onBlur={() => {
+              if (draftName === null) return;
+              onConfigChange({ name: normalizePlotName(draftName) });
+              setDraftName(null);
+            }}
+            onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+              if (event.key === "Enter") {
+                event.preventDefault();
+                event.target.blur();
+              } else if (event.key === "Escape") {
+                event.preventDefault();
+                event.stopPropagation();
+                // Keep focus: a synchronous blur would commit the old draft.
+                setDraftName(null);
+              }
+            }}
+            helperText='Enter or click away to save. Escape to cancel.'
+            slotProps={{
+              htmlInput: { maxLength: MAX_PLOT_NAME_LENGTH, title: config.title },
+            }}
+            sx={{
+              minWidth: 0,
+              flex: 1,
+              "& .MuiInputBase-input": { fontWeight: 600 },
+              "& .MuiInputBase-input:not(:focus)": { textOverflow: "ellipsis" },
+            }}
+          />
           <Tooltip
             title={
               canRemove

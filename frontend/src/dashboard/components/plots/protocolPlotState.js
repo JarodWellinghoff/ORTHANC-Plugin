@@ -1,5 +1,6 @@
 // Plotting-page state is independent of the cohort and of chart rendering.
 export const MAX_PLOT_PROTOCOLS = 10;
+export const MAX_PLOT_NAME_LENGTH = 120;
 export const PROTOCOL_GROUP_KEY = "protocol_name";
 export const DEFAULT_PLOT_METRIC = "average_index_of_detectability";
 
@@ -8,9 +9,24 @@ export const PLOT_COLUMNS = [
   { mode: "box", title: "Box plots", plotLabel: "Box plot", addLabel: "Add box plot" },
 ];
 
+/** Normalize only committed names so typing spaces never moves the caret. */
+export const normalizePlotName = (name) =>
+  typeof name === "string"
+    ? name.replace(/[\r\n\t]+/g, " ").trim().slice(0, MAX_PLOT_NAME_LENGTH).trim()
+    : "";
+
+/** Use one resolved title for the card, its controls, and the results table. */
+export const getPlotTitle = (plot, index) => {
+  const name = normalizePlotName(plot.name);
+  if (name) return name;
+  const column = PLOT_COLUMNS.find((item) => item.mode === plot.mode);
+  return `${column?.plotLabel ?? "Plot"} ${index + 1}`;
+};
+
 const createPlot = (mode, id) => ({
   id: `plot-${id}`,
   mode,
+  name: "",
   xKey: DEFAULT_PLOT_METRIC,
   groupKey: PROTOCOL_GROUP_KEY,
   // null selects the first ten available protocols; [] means none selected.
@@ -52,6 +68,9 @@ export const protocolPlotReducer = (state, action) => {
         const patch = action.patch ?? {};
         return {
           ...plot,
+          ...(typeof patch.name === "string"
+            ? { name: normalizePlotName(patch.name) }
+            : {}),
           ...(typeof patch.xKey === "string" ? { xKey: patch.xKey } : {}),
           ...(Array.isArray(patch.protocols)
             ? { protocols: [...new Set(patch.protocols)].slice(0, MAX_PLOT_PROTOCOLS) }
