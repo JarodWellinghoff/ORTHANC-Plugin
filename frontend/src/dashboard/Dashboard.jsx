@@ -16,6 +16,7 @@ import AppTheme from "../shared-theme/AppTheme.jsx";
 import HomePage from "./components/HomePage.jsx";
 import BulkTestsPage from "./components/BulkTestsPage.jsx";
 import ResultsPage from "./components/ResultsPage.jsx";
+import PlottingPage from "./components/PlottingPage.jsx";
 import DicomPullsPage from "./components/DicomPullsPage.jsx";
 import DicomViewerPage from "./components/DicomViewerPage.jsx";
 import DicomViewerRoute from "./components/DicomViewerRoute.jsx";
@@ -77,6 +78,9 @@ export default function Dashboard(props) {
                     path='/results/:seriesId'
                     element={<ChoAnalysisRoute />}
                   />
+                  {/* Cohort plotting — filters the whole analyzed set (no
+                      per-case selection) and plots it inline on the page. */}
+                  <Route path='/plotting' element={<PlottingPage />} />
                   <Route path='/dicom-pulls' element={<DicomPullsPage />} />
                   {/* Bulk Tests is now the testing-focused page. */}
                   <Route path='/main-dashboard' element={<BulkTestsPage />} />

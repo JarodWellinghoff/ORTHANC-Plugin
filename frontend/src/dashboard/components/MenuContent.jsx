@@ -12,6 +12,7 @@ import ContentPasteSearchIcon from "@mui/icons-material/ContentPasteSearch";
 import CloudDownloadRoundedIcon from "@mui/icons-material/CloudDownloadRounded";
 import ScienceRoundedIcon from "@mui/icons-material/ScienceRounded";
 import ViewInArRoundedIcon from "@mui/icons-material/ViewInArRounded";
+import InsightsRoundedIcon from "@mui/icons-material/InsightsRounded";
 import Tooltip from "@mui/material/Tooltip";
 
 const mainNavItems = [
@@ -41,6 +42,12 @@ const mainNavItems = [
     // Covers both the listing (/results) and the per-series detail
     // (/results/:seriesId) so the icon stays selected while drilling in.
     isActive: (pathname) => pathname.startsWith("/results"),
+  },
+  {
+    text: "Plotting",
+    icon: InsightsRoundedIcon,
+    to: "/plotting",
+    isActive: (pathname) => pathname.startsWith("/plotting"),
   },
   //   {
   //     text: "DICOM Viewer",
