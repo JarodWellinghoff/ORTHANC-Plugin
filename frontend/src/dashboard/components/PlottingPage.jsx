@@ -12,7 +12,10 @@ import FiltersPanel, { FILTER_FIELDS } from "./FiltersPanel";
 import CustomizablePlotCard from "./plots/CustomizablePlotCard";
 import PlotStatsTable from "./plots/PlotStatsTable";
 import { useFilters } from "../../hooks/useFilters";
-import { UNGROUPED_KEY, fetchAggregateRecords } from "../utils/aggregateMetrics";
+import {
+  UNGROUPED_KEY,
+  fetchAggregateRecords,
+} from "../utils/aggregateMetrics";
 import {
   buildChoQueryParams,
   fetchJson,
@@ -43,7 +46,6 @@ const PLOTTING_VISIBLE_FIELDS = [
   FILTER_FIELDS.scannerStation,
   FILTER_FIELDS.studyDate,
   FILTER_FIELDS.age,
-  FILTER_FIELDS.pullSchedule,
 ];
 
 const DEFAULT_PLOT_CONFIGS = [
@@ -89,7 +91,9 @@ const fetchAllSummaryItems = async (filters) => {
       limit: String(PAGE_LIMIT),
     });
     const response = await fetchJson(`/cho-results?${searchParams.toString()}`);
-    const pageItems = Array.isArray(response) ? response : (response?.data ?? []);
+    const pageItems = Array.isArray(response)
+      ? response
+      : (response?.data ?? []);
     items.push(...pageItems);
 
     const total = Array.isArray(response)
@@ -134,9 +138,8 @@ const PlottingPage = () => {
       setSeriesCount(normalized.length);
       setSkippedCount(normalized.length - plottable.length);
 
-      const { records: fetched, failures } = await fetchAggregateRecords(
-        plottable,
-      );
+      const { records: fetched, failures } =
+        await fetchAggregateRecords(plottable);
       setRecords(fetched);
       setFailedCount(failures.length);
 
@@ -197,8 +200,8 @@ const PlottingPage = () => {
             color='text.secondary'
             sx={{ fontSize: "1.05rem", lineHeight: 1.65 }}>
             Filter the analyzed cohort by protocol, scanner, or institute and
-            plot every matching series' metrics against each other — no
-            per-case selection required.
+            plot every matching series' metrics against each other — no per-case
+            selection required.
           </Typography>
         </Stack>
       </Box>
