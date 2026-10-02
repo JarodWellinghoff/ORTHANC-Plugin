@@ -10,6 +10,7 @@ import ProtocolPlotCard from "./ProtocolPlotCard";
 import ProtocolPlotStatsTable from "./ProtocolPlotStatsTable";
 import {
   createInitialPlotState,
+  getPlotTitle,
   PLOT_COLUMNS,
   PROTOCOL_GROUP_KEY,
   protocolPlotReducer,
@@ -35,7 +36,7 @@ const PlottingWorkspace = ({ records, loading }) => {
         ...column,
         plots: state.columns[column.mode].map((plot, index) => ({
           ...plot,
-          title: `${column.plotLabel} ${index + 1}`,
+          title: getPlotTitle(plot, index),
         })),
       })),
     [state.columns],
