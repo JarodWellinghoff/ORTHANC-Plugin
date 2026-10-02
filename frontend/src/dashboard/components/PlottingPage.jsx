@@ -1,21 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
-import Divider from "@mui/material/Divider";
-import Paper from "@mui/material/Paper";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import { useSnackbar } from "notistack";
 import { alpha } from "@mui/material/styles";
 
 import FiltersPanel, { FILTER_FIELDS } from "./FiltersPanel";
-import CustomizablePlotCard from "./plots/CustomizablePlotCard";
-import PlotStatsTable from "./plots/PlotStatsTable";
+import PlottingWorkspace from "./plots/PlottingWorkspace";
 import { useFilters } from "../../hooks/useFilters";
-import {
-  UNGROUPED_KEY,
-  fetchAggregateRecords,
-} from "../utils/aggregateMetrics";
+import { fetchAggregateRecords } from "../utils/aggregateMetrics";
 import {
   buildChoQueryParams,
   fetchJson,
@@ -23,19 +17,9 @@ import {
   normalizeChoRow,
 } from "../utils/choResultsShared";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// PlottingPage
-//
-// Cohort-plotting counterpart to ResultsPage. Instead of selecting rows out of
-// a grid, every series matching the filters is pulled in and plotted — there
-// is no patient-level identification here, so the patient ID / name filters
-// are hidden. Four independently-configurable plots are embedded directly on
-// the page (no popup dialog), each backed by the same fetched cohort; their
-// generated summary tables live in a separate, scrollable section below.
-// ─────────────────────────────────────────────────────────────────────────────
-
-// `/cho-results` caps `limit` at 1000 server-side; page through it so a
-// filtered cohort larger than that still gets plotted in full.
+// Fetch the full filtered cohort once. The workspace limits protocols only
+// for individual charts; its results table always receives the entire cohort.
+// `/cho-results` caps `limit` at 1000 server-side, so page through all results.
 const PAGE_LIMIT = 1000;
 const EMPTY_SET = new Set();
 
@@ -46,37 +30,6 @@ const PLOTTING_VISIBLE_FIELDS = [
   FILTER_FIELDS.scannerStation,
   FILTER_FIELDS.studyDate,
   FILTER_FIELDS.age,
-];
-
-const DEFAULT_PLOT_CONFIGS = [
-  {
-    mode: "scatter",
-    xKey: "ssde",
-    yKey: "average_index_of_detectability",
-    groupKey: UNGROUPED_KEY,
-    showTrend: true,
-  },
-  {
-    mode: "histogram",
-    xKey: "average_index_of_detectability",
-    yKey: "average_index_of_detectability",
-    groupKey: UNGROUPED_KEY,
-    showTrend: true,
-  },
-  {
-    mode: "box",
-    xKey: "ssde",
-    yKey: "average_index_of_detectability",
-    groupKey: "protocol_name",
-    showTrend: true,
-  },
-  {
-    mode: "scatter",
-    xKey: "ctdivol_avg",
-    yKey: "ssde",
-    groupKey: UNGROUPED_KEY,
-    showTrend: true,
-  },
 ];
 
 const fetchAllSummaryItems = async (filters) => {
@@ -111,19 +64,12 @@ const PlottingPage = () => {
   const { enqueueSnackbar } = useSnackbar();
   const { filters, updateFilter, resetFilters } = useFilters();
 
-  const [plotConfigs, setPlotConfigs] = useState(DEFAULT_PLOT_CONFIGS);
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
   const [seriesCount, setSeriesCount] = useState(0);
   const [skippedCount, setSkippedCount] = useState(0);
   const [failedCount, setFailedCount] = useState(0);
-
-  const updatePlotConfig = useCallback((index, patch) => {
-    setPlotConfigs((prev) =>
-      prev.map((config, i) => (i === index ? { ...config, ...patch } : config)),
-    );
-  }, []);
 
   const handleQuery = useCallback(async () => {
     setLoading(true);
@@ -162,7 +108,7 @@ const PlottingPage = () => {
 
   useEffect(() => {
     handleQuery();
-    // Mount only — subsequent loads go through the "Query" button.
+    // Mount only; subsequent loads go through the "Query" button.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -200,8 +146,8 @@ const PlottingPage = () => {
             color='text.secondary'
             sx={{ fontSize: "1.05rem", lineHeight: 1.65 }}>
             Filter the analyzed cohort by protocol, scanner, or institute and
-            plot every matching series' metrics against each other — no per-case
-            selection required.
+            compare metric distributions by protocol using histograms and box
+            plots. Summary results include every protocol in the queried cohort.
           </Typography>
         </Stack>
       </Box>
@@ -218,58 +164,15 @@ const PlottingPage = () => {
 
       {!loading && !loadError && (
         <Typography variant='body2' color='text.secondary'>
-          {records.length} of {seriesCount} matching series plotted
+          {records.length} of {seriesCount} matching series available for plotting
           {skippedCount > 0
-            ? ` (${skippedCount} skipped — no stored results)`
+            ? ` (${skippedCount} skipped - no stored results)`
             : ""}
           {failedCount > 0 ? ` (${failedCount} failed to load)` : ""}.
         </Typography>
       )}
 
-      {/* Plots */}
-      <Stack spacing={2}>
-        <Typography variant='h5' component='h2' fontWeight={600}>
-          Plots
-        </Typography>
-        <Box
-          sx={{
-            display: "grid",
-            gridTemplateColumns: { xs: "1fr", lg: "1fr 1fr" },
-            gap: 3,
-          }}>
-          {plotConfigs.map((config, index) => (
-            <CustomizablePlotCard
-              key={index}
-              title={`Plot ${index + 1}`}
-              records={records}
-              config={config}
-              onConfigChange={(patch) => updatePlotConfig(index, patch)}
-              loading={loading}
-            />
-          ))}
-        </Box>
-      </Stack>
-
-      {/* Tables */}
-      <Stack spacing={2}>
-        <Typography variant='h5' component='h2' fontWeight={600}>
-          Tables
-        </Typography>
-        <Paper
-          variant='outlined'
-          sx={{ p: 2, maxHeight: 640, overflowY: "auto" }}>
-          <Stack spacing={3} divider={<Divider />}>
-            {plotConfigs.map((config, index) => (
-              <PlotStatsTable
-                key={index}
-                title={`Plot ${index + 1}`}
-                records={records}
-                config={config}
-              />
-            ))}
-          </Stack>
-        </Paper>
-      </Stack>
+      <PlottingWorkspace records={records} loading={loading} />
     </Stack>
   );
 };
