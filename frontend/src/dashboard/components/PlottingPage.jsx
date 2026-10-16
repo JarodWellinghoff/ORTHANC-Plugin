@@ -1,181 +1,74 @@
-import { useCallback, useEffect, useState } from "react";
-import Alert from "@mui/material/Alert";
-import Box from "@mui/material/Box";
-import Stack from "@mui/material/Stack";
-import Typography from "@mui/material/Typography";
-import { useSnackbar } from "notistack";
-import { alpha } from "@mui/material/styles";
-
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Alert, Stack, Typography } from "@mui/material";
 import FiltersPanel, { FILTER_FIELDS } from "./FiltersPanel";
 import PlottingWorkspace from "./plots/PlottingWorkspace";
+import { normalizeProtocolName } from "./plots/protocolPlotState";
+import { useDashboard } from "../context/DashboardContext";
 import { useFilters } from "../../hooks/useFilters";
 import { fetchAggregateRecords } from "../utils/aggregateMetrics";
-import {
-  buildChoQueryParams,
-  fetchJson,
-  hasStoredResults,
-  normalizeChoRow,
-} from "../utils/choResultsShared";
-
-// Fetch the full filtered cohort once. The workspace limits protocols only
-// for individual charts; its results table always receives the entire cohort.
-// `/cho-results` caps `limit` at 1000 server-side, so page through all results.
+import { buildChoQueryParams, fetchJson, hasStoredResults, normalizeChoRow } from "../utils/choResultsShared";
 const PAGE_LIMIT = 1000;
 const EMPTY_SET = new Set();
-
-const PLOTTING_VISIBLE_FIELDS = [
-  FILTER_FIELDS.institute,
-  FILTER_FIELDS.protocolName,
-  FILTER_FIELDS.scannerModel,
-  FILTER_FIELDS.scannerStation,
-  FILTER_FIELDS.studyDate,
-  FILTER_FIELDS.age,
-];
-
-const fetchAllSummaryItems = async (filters) => {
-  const baseParams = buildChoQueryParams(filters);
+const VISIBLE_FIELDS = [FILTER_FIELDS.institute, FILTER_FIELDS.protocolName, FILTER_FIELDS.scannerModel,
+  FILTER_FIELDS.scannerStation, FILTER_FIELDS.studyDate, FILTER_FIELDS.age];
+const fetchAllSummaryItems = async (filters, signal) => {
+  const params = buildChoQueryParams({ ...filters, protocolNameSearch: [] });
   const items = [];
-  let page = 1;
-
-  for (;;) {
-    const searchParams = new URLSearchParams({
-      ...baseParams,
-      page: String(page),
-      limit: String(PAGE_LIMIT),
-    });
-    const response = await fetchJson(`/cho-results?${searchParams.toString()}`);
-    const pageItems = Array.isArray(response)
-      ? response
-      : (response?.data ?? []);
-    items.push(...pageItems);
-
-    const total = Array.isArray(response)
-      ? pageItems.length
-      : (response?.total ?? pageItems.length);
-
-    if (pageItems.length === 0 || items.length >= total) break;
-    page += 1;
+  for (let page = 1; ; page += 1) {
+    const search = new URLSearchParams({ ...params, page: String(page), limit: String(PAGE_LIMIT) });
+    const response = await fetchJson(`/cho-results?${search}`, { signal });
+    const batch = Array.isArray(response) ? response : response?.data ?? [];
+    items.push(...batch);
+    const total = Array.isArray(response) ? batch.length : response?.total ?? batch.length;
+    if (!batch.length || items.length >= total) return items;
   }
-
-  return items;
 };
-
-const PlottingPage = () => {
-  const { enqueueSnackbar } = useSnackbar();
+export default function PlottingPage() {
   const { filters, updateFilter, resetFilters } = useFilters();
-
+  const { filterOptions } = useDashboard();
+  const protocolOptions = useMemo(() => [...new Set((filterOptions.protocol_names ?? []).map(normalizeProtocolName))]
+    .sort((a, b) => a.localeCompare(b)), [filterOptions.protocol_names]);
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState(null);
-  const [seriesCount, setSeriesCount] = useState(0);
-  const [skippedCount, setSkippedCount] = useState(0);
-  const [failedCount, setFailedCount] = useState(0);
-
-  const handleQuery = useCallback(async () => {
-    setLoading(true);
-    setLoadError(null);
+  const [error, setError] = useState(null);
+  const [failed, setFailed] = useState(0);
+  const currentRequest = useRef(null);
+  const lastQuery = useRef(filters);
+  const query = useCallback(async (queryFilters) => {
+    currentRequest.current?.abort();
+    const controller = new AbortController();
+    currentRequest.current = controller;
+    const { signal } = controller;
+    lastQuery.current = queryFilters;
+    setLoading(true); setError(null); setFailed(0);
     try {
-      const summaryItems = await fetchAllSummaryItems(filters);
-      const normalized = summaryItems.map((item, index) =>
-        normalizeChoRow(item, index, EMPTY_SET),
-      );
-      const plottable = normalized.filter(hasStoredResults);
-
-      setSeriesCount(normalized.length);
-      setSkippedCount(normalized.length - plottable.length);
-
-      const { records: fetched, failures } =
-        await fetchAggregateRecords(plottable);
-      setRecords(fetched);
-      setFailedCount(failures.length);
-
-      if (normalized.length === 0) {
-        enqueueSnackbar("No series match these filters.", {
-          variant: "warning",
-        });
-      }
-    } catch (error) {
-      console.error("Failed to load results for plotting", error);
-      setLoadError(error.message ?? "Failed to load results");
-      setRecords([]);
-      setSeriesCount(0);
-      setSkippedCount(0);
-      setFailedCount(0);
-    } finally {
-      setLoading(false);
-    }
-  }, [enqueueSnackbar, filters]);
-
-  useEffect(() => {
-    handleQuery();
-    // Mount only; subsequent loads go through the "Query" button.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+      const allItems = await fetchAllSummaryItems(queryFilters, signal);
+      if (signal.aborted) return;
+      const selected = new Set((queryFilters.protocolNameSearch ?? []).map(normalizeProtocolName));
+      const items = selected.size ? allItems.filter((item) => selected.has(normalizeProtocolName(item.protocol_name))) : allItems;
+      const rows = items.map((item, index) => normalizeChoRow(item, index, EMPTY_SET)).filter(hasStoredResults);
+      const result = await fetchAggregateRecords(rows, { signal });
+      if (signal.aborted) return;
+      setRecords(result.records); setFailed(result.failures.length);
+    } catch (reason) {
+      if (signal.aborted) return;
+      setError(reason.message ?? "Failed to load results"); setRecords([]);
+    } finally { if (!signal.aborted) setLoading(false); }
   }, []);
-
-  return (
-    <Stack spacing={3}>
-      {/* Hero */}
-      <Box
-        variant='outlined'
-        sx={(theme) => ({
-          position: "relative",
-          overflow: "hidden",
-          px: { xs: 3, md: 6 },
-          py: { xs: 4, md: 7 },
-          borderRadius: 1,
-          border: "1px solid",
-          borderColor: "divider",
-          backgroundImage: `linear-gradient(135deg, ${alpha(
-            theme.palette.secondary.main,
-            0.14,
-          )} 0%, ${alpha(theme.palette.primary.dark, 0.04)} 100%)`,
-        })}>
-        <Stack spacing={2.5} sx={{ maxWidth: 880, position: "relative" }}>
-          <Typography
-            variant='h3'
-            component='h1'
-            sx={{
-              fontWeight: 600,
-              letterSpacing: "-0.02em",
-              fontSize: { xs: "2rem", md: "2.75rem" },
-            }}>
-            Statistics Report
-          </Typography>
-          <Typography
-            variant='body1'
-            color='text.secondary'
-            sx={{ fontSize: "1.05rem", lineHeight: 1.65 }}>
-            Filter the analyzed cohort by protocol, scanner, or institute and
-            compare metric distributions by protocol using histograms and box
-            plots. Summary results include every protocol in the queried cohort.
-          </Typography>
-        </Stack>
-      </Box>
-
-      <FiltersPanel
-        filters={filters}
-        onChange={updateFilter}
-        onQuery={handleQuery}
-        onReset={resetFilters}
-        visibleFields={PLOTTING_VISIBLE_FIELDS}
-      />
-
-      {loadError && <Alert severity='error'>{loadError}</Alert>}
-
-      {!loading && !loadError && (
-        <Typography variant='body2' color='text.secondary'>
-          {records.length} of {seriesCount} matching series available for
-          plotting
-          {skippedCount > 0
-            ? ` (${skippedCount} skipped - no stored results)`
-            : ""}
-          {failedCount > 0 ? ` (${failedCount} failed to load)` : ""}.
-        </Typography>
-      )}
-
-      <PlottingWorkspace records={records} loading={loading} />
-    </Stack>
-  );
-};
-
-export default PlottingPage;
+  useEffect(() => {
+    query(lastQuery.current);
+    const onReviewed = (event) => { if (event.detail?.decision === "overwrite") query(lastQuery.current); };
+    window.addEventListener("ctpro-review-resolved", onReviewed);
+    return () => { currentRequest.current?.abort(); window.removeEventListener("ctpro-review-resolved", onReviewed); };
+  }, [query]);
+  return <Stack spacing={3}>
+    <Typography variant='h4' component='h1'>Statistics Report</Typography>
+    <FiltersPanel filters={{ ...filters, protocolNameSearch: [...new Set((filters.protocolNameSearch ?? []).map(normalizeProtocolName))] }}
+      filterOptions={{ ...filterOptions, protocol_names: protocolOptions }}
+      onChange={(name, value) => updateFilter(name, name === "protocolNameSearch" ? [...new Set(value.map(normalizeProtocolName))] : value)}
+      onQuery={() => query(filters)} onReset={resetFilters} visibleFields={VISIBLE_FIELDS} />
+    {error && <Alert severity='error'>{error}</Alert>}
+    {failed > 0 && <Alert severity='warning'>{failed} series could not be loaded and are not included.</Alert>}
+    <PlottingWorkspace records={records} loading={loading} />
+  </Stack>;
+}

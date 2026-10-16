@@ -1,99 +1,24 @@
-import * as React from "react";
 import { Link as RouterLink, useLocation } from "react-router-dom";
-import Box from "@mui/material/Box";
-import Stack from "@mui/material/Stack";
-import List from "@mui/material/List";
-import ListItem from "@mui/material/ListItem";
-import ListItemButton from "@mui/material/ListItemButton";
-import ListItemIcon from "@mui/material/ListItemIcon";
-import ListItemText from "@mui/material/ListItemText";
+import { Box, Stack, ListItem, ListItemButton, ListItemIcon, Tooltip } from "@mui/material";
 import HomeRoundedIcon from "@mui/icons-material/HomeRounded";
 import ContentPasteSearchIcon from "@mui/icons-material/ContentPasteSearch";
 import CloudDownloadRoundedIcon from "@mui/icons-material/CloudDownloadRounded";
 import ScienceRoundedIcon from "@mui/icons-material/ScienceRounded";
-import ViewInArRoundedIcon from "@mui/icons-material/ViewInArRounded";
 import InsightsRoundedIcon from "@mui/icons-material/InsightsRounded";
-import Tooltip from "@mui/material/Tooltip";
-
 const mainNavItems = [
-  {
-    text: "Home",
-    icon: HomeRoundedIcon,
-    to: "/home",
-    isActive: (pathname) => pathname === "/" || pathname.startsWith("/home"),
-  },
-  {
-    text: "DICOM Query and Pulls",
-    icon: CloudDownloadRoundedIcon,
-    to: "/dicom-pulls",
-    isActive: (pathname) => pathname.startsWith("/dicom-pulls"),
-  },
-  {
-    text: "Calculation in Local Server",
-    icon: ScienceRoundedIcon,
-    to: "/main-dashboard",
-    // Testing page only — Results has its own entry below.
-    isActive: (pathname) => pathname.startsWith("/main-dashboard"),
-  },
-  {
-    text: "Result View/Modification of Individual Exam",
-    icon: ContentPasteSearchIcon,
-    to: "/results",
-    // Covers both the listing (/results) and the per-series detail
-    // (/results/:seriesId) so the icon stays selected while drilling in.
-    isActive: (pathname) => pathname.startsWith("/results"),
-  },
-  {
-    text: "Statistics Report",
-    icon: InsightsRoundedIcon,
-    to: "/plotting",
-    isActive: (pathname) => pathname.startsWith("/plotting"),
-  },
-  //   {
-  //     text: "DICOM Viewer",
-  //     icon: ViewInArRoundedIcon,
-  //     to: "/dicom-viewer",
-  //     isActive: (pathname) => pathname.startsWith("/dicom-viewer"),
-  //   },
+  { text: "Home", icon: HomeRoundedIcon, to: "/home" },
+  { text: "DICOM Query and Pulls", icon: CloudDownloadRoundedIcon, to: "/dicom-pulls" },
+  { text: "Batch Analysis", icon: ScienceRoundedIcon, to: "/main-dashboard" },
+  { text: "Result View/Modification of Individual Exam", icon: ContentPasteSearchIcon, to: "/results" },
+  { text: "Statistics Report", icon: InsightsRoundedIcon, to: "/plotting" },
 ];
-
 export default function MenuContent() {
-  const location = useLocation();
-
-  return (
-    <Box>
-      <Stack spacing={0}>
-        {mainNavItems.map((item) => {
-          const Icon = item.icon;
-          const selected = item.isActive
-            ? item.isActive(location.pathname)
-            : location.pathname === item.to;
-          return (
-            <Tooltip key={item.to} title={item.text} placement='right'>
-              <ListItem key={item.to} sx={{ display: "block" }}>
-                <ListItemButton
-                  component={RouterLink}
-                  to={item.to}
-                  selected={selected}
-                  sx={{
-                    minHeight: 36,
-                    minWidth: 36,
-                    justifyContent: "center",
-                  }}>
-                  <ListItemIcon>
-                    <Icon
-                      sx={{
-                        minHeight: 30,
-                        minWidth: 30,
-                      }}
-                    />
-                  </ListItemIcon>
-                </ListItemButton>
-              </ListItem>
-            </Tooltip>
-          );
-        })}
-      </Stack>
-    </Box>
-  );
+  const { pathname } = useLocation();
+  return <Box><Stack spacing={0}>{mainNavItems.map(({ text, to, icon: Icon }) => <Tooltip key={to} title={text} placement='right'>
+    <ListItem sx={{ display: "block" }}><ListItemButton component={RouterLink} to={to} aria-label={text}
+      selected={pathname.startsWith(to) || (to === "/home" && pathname === "/")}
+      sx={{ minHeight: 36, minWidth: 36, justifyContent: "center" }}>
+      <ListItemIcon><Icon sx={{ minHeight: 30, minWidth: 30 }} /></ListItemIcon>
+    </ListItemButton></ListItem>
+  </Tooltip>)}</Stack></Box>;
 }

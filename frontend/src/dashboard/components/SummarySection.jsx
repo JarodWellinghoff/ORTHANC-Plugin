@@ -1,224 +1,49 @@
-import * as React from "react";
-import Box from "@mui/material/Box";
-import IconButton from "@mui/material/IconButton";
-import Paper from "@mui/material/Paper";
-import Tooltip from "@mui/material/Tooltip";
-import Typography from "@mui/material/Typography";
+import { useMemo } from "react";
+import { Box, IconButton, Tooltip, Typography } from "@mui/material";
 import DeleteIcon from "@mui/icons-material/Delete";
 import { DataGrid } from "@mui/x-data-grid";
 import { useNavigate } from "react-router-dom";
-
 import { useDashboard } from "../context/DashboardContext";
-
 const formatDateTime = (value) => {
   if (!value) return "N/A";
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 };
-
-const NoRowsOverlay = () => (
-  <Box sx={{ p: 2, textAlign: "center" }}>
-    <Typography variant='body2' color='text.secondary'>
-      No series found matching the filters.
-    </Typography>
-  </Box>
-);
-
-const LoadingOverlay = () => (
-  <Box sx={{ p: 2, textAlign: "center" }}>
-    <Typography variant='body2' color='text.secondary'>
-      Loading series summary...
-    </Typography>
-  </Box>
-);
-
-// Statuses that mean analysis results exist in the DB
+const NoRowsOverlay = () => <Box sx={{ p: 2, textAlign: "center" }}><Typography variant='body2'>No series found matching the filters.</Typography></Box>;
+const LoadingOverlay = () => <Box sx={{ p: 2, textAlign: "center" }}><Typography variant='body2'>Loading series summary...</Typography></Box>;
 const RESULT_STATUSES = new Set(["full", "partial"]);
-
-const SummarySection = () => {
+export default function SummarySection() {
   const { summary, actions } = useDashboard();
-  const navigate = useNavigate();
   const { items, loading, pagination, availableSeries } = summary;
-
-  // Build a set of Orthanc UUIDs that are currently available on the server
-  const availableSet = React.useMemo(
-    () => new Set((availableSeries ?? []).filter(Boolean).map(String)),
-    [availableSeries],
-  );
-
-  const openSeriesDetails = React.useCallback(
-    (series) => {
-      if (!series) return;
-      actions.openChoModal(series);
-      const targetId =
-        series.series_id ??
-        series.series_uuid ??
-        series.series_instance_uid ??
-        series.seriesId ??
-        series.seriesUuid ??
-        null;
-      if (targetId !== null && targetId !== undefined && targetId !== "") {
-        navigate(`/results/${encodeURIComponent(String(targetId))}`);
-      }
-    },
-    [actions, navigate],
-  );
-
-  const paginationModel = React.useMemo(
-    () => ({
-      page: Math.max(0, (pagination.page ?? 1) - 1),
-      pageSize: pagination.limit ?? 25,
-    }),
-    [pagination.page, pagination.limit],
-  );
-
-  const handlePaginationModelChange = React.useCallback(
-    (model) => {
-      if (model.page !== paginationModel.page) {
-        actions.changePage(model.page + 1);
-      }
-      if (model.pageSize !== paginationModel.pageSize) {
-        actions.changePageSize(model.pageSize);
-      }
-    },
-    [actions, paginationModel.page, paginationModel.pageSize],
-  );
-
-  const columns = React.useMemo(
-    () => [
-      {
-        field: "patient_name",
-        headerName: "Patient",
-        flex: 1,
-        minWidth: 180,
-        valueFormatter: (value) => value ?? "N/A",
-      },
-      {
-        field: "institution_name",
-        headerName: "Institute",
-        flex: 1,
-        minWidth: 180,
-        valueFormatter: (value) => value ?? "N/A",
-      },
-      {
-        field: "scanner_model",
-        headerName: "Scanner Model",
-        flex: 1,
-        minWidth: 180,
-        valueFormatter: (value) => value ?? "N/A",
-      },
-      {
-        field: "station_name",
-        headerName: "Station",
-        flex: 1,
-        minWidth: 160,
-        valueFormatter: (value) => value ?? "N/A",
-      },
-      {
-        field: "protocol_name",
-        headerName: "Protocol",
-        flex: 1,
-        minWidth: 180,
-        valueFormatter: (value) => value ?? "N/A",
-      },
-      {
-        field: "latest_analysis_date",
-        headerName: "Last Analysis",
-        flex: 1,
-        minWidth: 200,
-        valueFormatter: (value) => formatDateTime(value),
-      },
-      {
-        field: "actions",
-        headerName: "Actions",
-        sortable: false,
-        filterable: false,
-        disableColumnMenu: true,
-        width: 100,
-        align: "center",
-        renderCell: (params) => {
-          const row = params.row;
-          const seriesUuid = row.series_uuid ?? row.seriesUuid ?? null;
-          const hasResults = RESULT_STATUSES.has(
-            String(row.test_status ?? "none").toLowerCase(),
-          );
-          const hasDicom =
-            Boolean(seriesUuid) && availableSet.has(String(seriesUuid));
-
-          return (
-            <Tooltip title='Delete'>
-              <span>
-                <IconButton
-                  size='small'
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    actions.openDeleteDialog(row.series_id, {
-                      seriesUuid,
-                      patientName: row.patient_name,
-                      hasResults,
-                      hasDicom,
-                      // Default: delete results if they exist, otherwise offer DICOM
-                      initialDeleteResults: hasResults,
-                      initialDeleteDicom: !hasResults && hasDicom,
-                    });
-                  }}>
-                  <DeleteIcon fontSize='small' />
-                </IconButton>
-              </span>
-            </Tooltip>
-          );
-        },
-      },
-    ],
-    [actions, availableSet],
-  );
-
-  const getRowId = React.useCallback((row) => {
-    const baseId =
-      row.series_id ??
-      row.series_uuid ??
-      row.series_instance_uid ??
-      row.seriesId ??
-      row.seriesUuid ??
-      row.study_id ??
-      null;
-    if (baseId !== null && baseId !== undefined && baseId !== "") {
-      return String(baseId);
-    }
-    return `${row.patient_name ?? "patient"}-${
-      row.latest_analysis_date ?? "na"
-    }`;
-  }, []);
-
-  return (
-    <DataGrid
-      autoHeight
-      rows={loading ? [] : (items ?? [])}
-      columns={columns}
-      getRowId={getRowId}
-      rowCount={pagination.total ?? items?.length ?? 0}
-      paginationMode='server'
-      paginationModel={paginationModel}
-      onPaginationModelChange={handlePaginationModelChange}
-      loading={loading}
-      disableRowSelectionOnClick
-      disableColumnSelector
-      disableDensitySelector
-      pageSizeOptions={[10, 25, 50, 100]}
-      initialState={{
-        pagination: { paginationModel: { pageSize: 25 } },
-        sorting: {
-          sortModel: [{ field: "latest_analysis_date", sort: "desc" }],
-        },
-      }}
-      onRowClick={(params) => openSeriesDetails(params.row)}
-      showToolbar
-      slots={{
-        noRowsOverlay: NoRowsOverlay,
-        loadingOverlay: LoadingOverlay,
-      }}
-    />
-  );
-};
-
-export default SummarySection;
+  const navigate = useNavigate();
+  const available = useMemo(() => new Set((availableSeries ?? []).filter(Boolean).map(String)), [availableSeries]);
+  const paginationModel = { page: Math.max(0, (pagination.page ?? 1) - 1), pageSize: pagination.limit ?? 25 };
+  const columns = useMemo(() => [
+    ...[["patient_name", "Patient"], ["institution_name", "Institute"], ["scanner_model", "Scanner Model"],
+      ["station_name", "Station"], ["protocol_name", "Protocol"]].map(([field, headerName]) => ({
+        field, headerName, flex: 1, minWidth: 180, valueFormatter: (value) => value ?? "N/A" })),
+    { field: "latest_analysis_date", headerName: "Last Analysis", flex: 1, minWidth: 200, valueFormatter: formatDateTime },
+    { field: "actions", headerName: "Actions", sortable: false, filterable: false, disableColumnMenu: true, width: 100, align: "center",
+      renderCell: ({ row }) => {
+        const seriesUuid = row.series_uuid ?? row.seriesUuid ?? null;
+        const hasResults = RESULT_STATUSES.has(String(row.test_status ?? "none").toLowerCase());
+        const hasDicom = Boolean(seriesUuid) && available.has(String(seriesUuid));
+        return <Tooltip title='Delete'><IconButton size='small' aria-label='Delete series' onClick={(event) => {
+          event.stopPropagation();
+          actions.openDeleteDialog(row.series_id, { seriesUuid, patientName: row.patient_name, hasResults, hasDicom,
+            initialDeleteResults: hasResults, initialDeleteDicom: !hasResults && hasDicom });
+        }}><DeleteIcon fontSize='small' /></IconButton></Tooltip>;
+      } },
+  ], [actions, available]);
+  const getRowId = (row) => String(row.series_id ?? row.series_uuid ?? row.series_instance_uid ?? row.seriesId ?? row.seriesUuid ?? row.study_id ?? `${row.patient_name ?? "patient"}-${row.latest_analysis_date ?? "na"}`);
+  return <DataGrid autoHeight={false} rows={loading ? [] : items ?? []} columns={columns} getRowId={getRowId}
+    rowCount={pagination.total ?? items?.length ?? 0} paginationMode='server' paginationModel={paginationModel}
+    onPaginationModelChange={(model) => { if (model.page !== paginationModel.page) actions.changePage(model.page + 1); }}
+    loading={loading} disableRowSelectionOnClick disableColumnSelector disableDensitySelector pageSizeOptions={[]}
+    initialState={{ sorting: { sortModel: [{ field: "latest_analysis_date", sort: "desc" }] } }}
+    onRowClick={({ row }) => {
+      actions.openChoModal(row);
+      const target = row.series_id ?? row.series_uuid ?? row.series_instance_uid ?? row.seriesId ?? row.seriesUuid;
+      if (target != null && target !== "") navigate(`/results/${encodeURIComponent(String(target))}`);
+    }} showToolbar slots={{ noRowsOverlay: NoRowsOverlay, loadingOverlay: LoadingOverlay }} />;
+}
