@@ -1,127 +1,69 @@
+// Per-plot names were removed. Test the replacement report/CSV contract.
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  createInitialPlotState,
-  getAllPlotGroups,
-  getPlotTitle,
-  MAX_PLOT_NAME_LENGTH,
-  normalizePlotName,
-  PLOT_COLUMNS,
-  protocolPlotReducer,
-} from "../src/dashboard/components/plots/protocolPlotState.js";
-
-const configure = (state, mode, id, patch) =>
-  protocolPlotReducer(state, { type: "configure", mode, id, patch });
-const namedPlots = (state) => PLOT_COLUMNS.flatMap((column) =>
-  state.columns[column.mode].map((plot, index) => ({
-    ...plot,
-    title: getPlotTitle(plot, index),
-  })),
-);
-
-test("new and legacy plots retain their default titles until renamed", () => {
-  const state = createInitialPlotState();
-  assert.deepEqual(namedPlots(state).map((plot) => plot.title), ["Histogram 1", "Box plot 1"]);
-  assert.ok(namedPlots(state).every((plot) => plot.name === ""));
-  assert.equal(getPlotTitle({ mode: "histogram" }, 2), "Histogram 3");
+import { readFileSync } from "node:fs";
+import { buildProtocolTraces, buildReportRows, countPatients, csvCell, describeReportValues,
+  finiteNumber, getReportMetrics, PATIENT_COUNT_KEY, reportRowsToCsv } from "../src/dashboard/components/plots/protocolReport.js";
+import { withScrollableTables } from "../src/dashboard/theme/customizations/scrollableTables.js";
+const metrics = getReportMetrics([{ key: "ssde", label: "SSDE", unit: "mGy", decimals: 2 },
+  { key: "dlp", label: "DLP (CTDIvol)" }, { key: "dlp_ssde", label: "DLP (SSDE)" }, { key: "image_count" }, { key: "processing_time" }]);
+test("metrics add patients, remove timing/images, and rename both DLP labels", () => {
+  assert.deepEqual(metrics.map((item) => item.key), ["ssde", "dlp", "dlp_ssde", PATIENT_COUNT_KEY]);
+  assert.equal(metrics[1].label, "DLP"); assert.equal(metrics[2].label, "DLP_SSDE");
 });
-
-test("renaming one plot preserves other plots, identity, mode, and metric", () => {
-  const original = createInitialPlotState();
-  const plot = original.columns.histogram[0];
-  const state = configure(original, "histogram", plot.id, { name: "  Dose distribution  " });
-  const renamed = state.columns.histogram[0];
-  assert.equal(renamed.name, "Dose distribution");
-  assert.equal(getPlotTitle(renamed, 0), "Dose distribution");
-  assert.deepEqual({ ...renamed, name: "" }, plot);
-  assert.strictEqual(state.columns.box, original.columns.box);
-  assert.equal(original.columns.histogram[0].name, "");
+test("patients are distinct identifiers, not series or patient names", () => {
+  assert.deepEqual(countPatients([{ patient_id: "01" }, { patient_id: "01" }, { patient_id: "02" }, { patient_name: "same" }]), { count: 2, missing: 1 });
 });
-
-test("names survive metric and protocol changes and independent additions", () => {
-  let state = createInitialPlotState();
-  const id = state.columns.box[0].id;
-  state = configure(state, "box", id, { name: "Noise comparison" });
-  state = configure(state, "box", id, { xKey: "average_noise_level", protocols: ["Chest"] });
-  state = protocolPlotReducer(state, { type: "add", mode: "histogram" });
-  state = protocolPlotReducer(state, { type: "add", mode: "box" });
-  assert.equal(getPlotTitle(state.columns.box[0], 0), "Noise comparison");
-  assert.deepEqual(state.columns.box[0].protocols, ["Chest"]);
-  assert.equal(state.columns.box[0].xKey, "average_noise_level");
-  assert.equal(getPlotTitle(state.columns.box[1], 1), "Box plot 2");
-  assert.equal(state.columns.histogram.length, 2);
+test("patient identifiers preserve zero and distinguish issuers", () => {
+  assert.deepEqual(countPatients([{ patient_id: 0 }, { patient_id: "0" }, { patient_id: " x " },
+    { patient_id: "x", issuer_of_patient_id: "other" }, { patient_id: " " }]), { count: 3, missing: 1 });
 });
-
-test("custom names remain attached to stable IDs after a neighboring removal", () => {
-  let state = protocolPlotReducer(createInitialPlotState(), { type: "add", mode: "histogram" });
-  const [first, second] = state.columns.histogram;
-  state = configure(state, "histogram", second.id, { name: "Follow-up scans" });
-  state = protocolPlotReducer(state, { type: "remove", mode: "histogram", id: first.id });
-  assert.equal(state.columns.histogram[0].id, second.id);
-  assert.equal(getPlotTitle(state.columns.histogram[0], 0), "Follow-up scans");
+test("finite numbers exclude missing and invalid values, without losing real zero", () => {
+  for (const value of [null, undefined, true, false, [], "", " ", NaN, Infinity]) assert.equal(finiteNumber(value), null);
+  assert.equal(finiteNumber(0), 0); assert.equal(finiteNumber("2.5"), 2.5);
 });
-
-test("empty or whitespace-only names restore the appropriate default title", () => {
-  for (const mode of ["histogram", "box"]) {
-    let state = createInitialPlotState();
-    const id = state.columns[mode][0].id;
-    state = configure(state, mode, id, { name: "Custom" });
-    state = configure(state, mode, id, { name: " \t\n " });
-    assert.equal(state.columns[mode][0].name, "");
-    assert.equal(getPlotTitle(state.columns[mode][0], 0), mode === "box" ? "Box plot 1" : "Histogram 1");
-  }
+test("descriptive statistics use sample SD and handle empty/singleton distributions", () => {
+  assert.deepEqual(describeReportValues([1, 2, 3, null]), { n: 3, mean: 2, sd: 1, median: 2, min: 1, max: 3 });
+  assert.equal(describeReportValues([2]).sd, null);
+  assert.equal(describeReportValues([]).n, 0);
 });
-
-test("committed names are single-line, bounded, and reject non-string patches", () => {
-  assert.equal(normalizePlotName("  Chest\r\nCT\tcomparison  "), "Chest CT comparison");
-  assert.equal(normalizePlotName("N".repeat(500)).length, MAX_PLOT_NAME_LENGTH);
-  assert.equal(normalizePlotName(null), "");
-  assert.equal(normalizePlotName({}), "");
-  let state = createInitialPlotState();
-  const id = state.columns.histogram[0].id;
-  state = configure(state, "histogram", id, { name: "N".repeat(500) });
-  assert.equal(state.columns.histogram[0].name.length, MAX_PLOT_NAME_LENGTH);
-  for (const name of [null, 4, {}, [], undefined]) {
-    state = configure(state, "histogram", id, { name });
-    assert.equal(state.columns.histogram[0].name.length, MAX_PLOT_NAME_LENGTH);
-  }
+test("patient counts use honest aggregate bars rather than invented distributions", () => {
+  const traces = buildProtocolTraces([{ label: "A", records: [{ patient_id: "P" }, { patient_id: "P" }] }], { key: PATIENT_COUNT_KEY }, "box");
+  assert.equal(traces[0].type, "bar"); assert.deepEqual(traces[0].y, [1]);
 });
-
-test("renamed table rows retain every protocol and their stable row IDs", () => {
-  const groups = Array.from({ length: 15 }, (_, index) => ({
-    label: `Protocol ${index + 1}`,
-    records: [{ ssde: index + 1 }],
-  }));
-  const original = createInitialPlotState();
-  const before = getAllPlotGroups(namedPlots(original), groups);
-  const state = configure(original, "histogram", original.columns.histogram[0].id, {
-    name: "SSDE distribution", protocols: [],
-  });
-  const after = getAllPlotGroups(namedPlots(state), groups);
-  assert.equal(after.length, 30);
-  assert.deepEqual(after.map((row) => row.id), before.map((row) => row.id));
-  assert.equal(after.filter((row) => row.plotTitle === "SSDE distribution").length, 15);
-  assert.deepEqual(after.map((row) => row.records), before.map((row) => row.records));
-  assert.deepEqual(after.map((row) => row.metricKey), before.map((row) => row.metricKey));
+test("numeric box plots and histograms preserve every finite measurement", () => {
+  const groups = [{ label: "A", records: [{ ssde: 0 }, { ssde: 2 }, { ssde: null }] }];
+  assert.deepEqual(buildProtocolTraces(groups, metrics[0], "histogram")[0].x, [0, 2]);
+  assert.deepEqual(buildProtocolTraces(groups, metrics[0], "box")[0].y, [0, 2]);
 });
-
-test("duplicate display names do not collide with plot or table row identities", () => {
-  let state = createInitialPlotState();
-  for (const mode of ["histogram", "box"]) {
-    state = configure(state, mode, state.columns[mode][0].id, { name: "Comparison" });
-  }
-  const plots = namedPlots(state);
-  assert.deepEqual(plots.map((plot) => plot.title), ["Comparison", "Comparison"]);
-  assert.equal(new Set(plots.map((plot) => plot.id)).size, 2);
-  const rows = getAllPlotGroups(plots, [{ label: "Chest", records: [] }]);
-  assert.equal(new Set(rows.map((row) => row.id)).size, 2);
+test("CSV retains all protocols from the removed table independent of selections", () => {
+  const groups = [{ label: "A", records: [{ ssde: 2, patient_id: "P" }] }, { label: "B", records: [{ ssde: 4, patient_id: "Q" }] }];
+  const rows = buildReportRows([{ mode: "box", xKey: "ssde", protocols: ["A"] }], groups, metrics);
+  assert.equal(rows.length, 2); assert.equal(rows[1].mean, 4); assert.equal(rows[0].patientCount, 1);
 });
-
-test("display names remain plain text, separate from protocol and metric data", () => {
-  const original = createInitialPlotState();
-  const name = "CT <low-dose> & follow-up";
-  const state = configure(original, "box", original.columns.box[0].id, { name });
-  assert.equal(getPlotTitle(state.columns.box[0], 0), name);
-  assert.equal(state.columns.box[0].groupKey, "protocol_name");
-  assert.equal(state.columns.box[0].xKey, original.columns.box[0].xKey);
+test("patient-count export does not fabricate per-series summary statistics", () => {
+  const rows = buildReportRows([{ mode: "box", xKey: PATIENT_COUNT_KEY }], [{ label: "A", records: [{ patient_id: "P" }] }], metrics);
+  assert.equal(rows[0].value, 1); assert.equal(rows[0].n, null); assert.equal(rows[0].mean, null);
+});
+test("CSV handles quotes, newlines, formula-leading text and numeric negatives", () => {
+  assert.equal(csvCell('A,"B"\nC'), '"A,""B""\nC"');
+  assert.equal(csvCell("=1+1"), '"\'=1+1"');
+  assert.equal(csvCell(-2), '"-2"');
+  assert.ok(reportRowsToCsv([]).startsWith('\uFEFF"Report"'));
+  assert.ok(reportRowsToCsv([]).endsWith("\r\n"));
+});
+test("workspace exports CSV without named plots or a bottom table", () => {
+  const base = new URL("../src/dashboard/components/plots/", import.meta.url);
+  const workspace = readFileSync(new URL("PlottingWorkspace.jsx", base), "utf8");
+  const card = readFileSync(new URL("ProtocolPlotCard.jsx", base), "utf8");
+  assert.match(workspace, /Export CSV/); assert.doesNotMatch(workspace, /ProtocolPlotStatsTable/);
+  assert.doesNotMatch(card, /label=['"]Plot name/); assert.match(card, /multiple=\{multiple\}/);
+});
+test("scrollable table theme retains existing customizations and bounds all viewports", () => {
+  const result = withScrollableTables({ MuiDataGrid: { styleOverrides: { root: () => ({ borderWidth: 3 }) } } });
+  assert.equal(result.MuiDataGrid.defaultProps.autoHeight, false);
+  const root = result.MuiDataGrid.styleOverrides.root({});
+  assert.equal(root.borderWidth, 3); assert.equal(root.height, 560); assert.equal(root.maxHeight, 560);
+  assert.equal(result.MuiTableContainer.styleOverrides.root.overflow, "auto");
+  assert.equal(result.MuiTable.defaultProps.stickyHeader, true);
 });

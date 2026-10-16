@@ -1,182 +1,101 @@
 #!/usr/bin/env python3
-
-"""
-Updated wrapper for CHO calculation that supports custom parameters from modal
-"""
-
+"""Run CHO calculations and protect accepted results while reviewing reruns."""
 import io
+import json
 import threading
 import time
 import traceback
-import pydicom
 import orthanc
+import pydicom
 from progress_tracker import progress_tracker
 from patient_specific_calculation import main as unified_cho_main
-import json
+from analysis_review_api import review_manager
+
 
 def run_cho_calculation_with_progress(series_uuid, full_test, custom_params):
-    """
-    Run CHO calculation with progress tracking and custom parameters
-    
-    Parameters:
-    - series_uuid: The Orthanc series UUID
-    - slices: The DICOM slices
-    - full_test: False for global noise, True for full analysis
-    - custom_params: Dictionary with custom parameters from modal
-    
-    Returns:
-    - The calculation ID for tracking
-    """
-    
-    # Get metadata about the calculation
-    metadata = {
-        'full_test': full_test,
-        'calculation_type': 'full_analysis' if full_test else 'global_noise',
-        'custom_parameters': custom_params
-    }
-    
-    # Start tracking the calculation
-    if custom_params.get("report_progress", True):
-        progress_tracker.start_calculation(series_uuid, metadata)
-    
-    # Start the calculation in a separate thread
-    thread = threading.Thread(
-        target=_run_calculation_thread,
-        args=(series_uuid, full_test, custom_params)
-    )
-    thread.daemon = True
-    thread.start()
-    
+    series = json.loads(orthanc.RestApiGet(f"/series/{series_uuid}"))
+    series_uid = series.get("MainDicomTags", {}).get("SeriesInstanceUID")
+    if not series_uid:
+        raise ValueError("The series has no SeriesInstanceUID.")
+    run_id, needs_review = review_manager.begin(series_uuid, series_uid)
+    params = dict(custom_params or {})
+    params.setdefault("report_progress", True)
+    if needs_review:
+        # The scientific pipeline owns saving/deleting; disable both before it
+        # starts, including when called from the batch or automation endpoints.
+        params["saveResults"] = False
+        params["deleteAfterCompletion"] = False
+    metadata = {"full_test": full_test,
+                "calculation_type": "full_analysis" if full_test else "global_noise",
+                "custom_parameters": params, "run_id": run_id, "review_required": needs_review}
+    try:
+        if params["report_progress"]:
+            progress_tracker.start_calculation(series_uuid, metadata)
+        threading.Thread(target=_run_calculation_thread,
+                         args=(series_uuid, full_test, params, run_id), daemon=True).start()
+    except Exception:
+        review_manager.fail(run_id)
+        raise
     return series_uuid
 
-def _run_calculation_thread(series_uuid, full_test, params):
-    """
-    Run the calculation in a separate thread and report progress
-    """
+
+def _run_calculation_thread(series_uuid, full_test, params, run_id):
     try:
-        # Update progress to indicate we're starting
-        analysis_type = "Full CHO" if full_test else "Global Noise"
-        
-        # Create config for unified CHO module with custom parameters
-        config = {
-            'series_uuid': series_uuid,
-            'full_test': full_test,
-            'report_progress': params['report_progress'],
-            'custom_parameters': params
-        }
-        
-        if config['report_progress'] and config['series_uuid']:
-            progress_tracker.update_progress(
-                series_uuid, 5, 
-                f"Starting {analysis_type} calculation with custom parameters...", 
-                "initialization"
-            )
-        # Import and run the unified CHO calculation with progress reporting
-        # Load DICOM files
-        instances_res = orthanc.RestApiGet(f'/series/{series_uuid}/instances')
-        instances_json = json.loads(instances_res)
-
-        print(f"loading: {series_uuid}")
+        config = {"series_uuid": series_uuid, "full_test": full_test,
+                  "report_progress": params["report_progress"], "custom_parameters": params}
+        if config["report_progress"]:
+            progress_tracker.update_progress(series_uuid, 5, "Starting analysis...", "initialization")
+        instances = json.loads(orthanc.RestApiGet(f"/series/{series_uuid}/instances"))
         files = []
-        for i in range(len(instances_json)):
-            if config['report_progress'] and config['series_uuid'] and (i % 10 == 0 or i == len(instances_json) - 1):
-                # 5 = progress during analysis
-                # 15 = progress after analysis
-                progress_percentage = 5 + ((i / len(instances_json)) * (15 - 5))
-                progress_tracker.update_progress(   #type:ignore
-                    series_uuid, int(progress_percentage), 
-                    f"Loading slice {i+1}/{len(instances_json)}", 
-                    "loading"
-                )
-            instance_id = instances_json[i]['ID']
-            f = orthanc.GetDicomForInstance(instance_id)
-            files.append(pydicom.dcmread(io.BytesIO(f)))
-        
-        slices = [f for f in files if hasattr(f, "SliceLocation")]
-        slices = sorted(slices, key=lambda s: s.SliceLocation)
-
+        for index, instance in enumerate(instances):
+            if config["report_progress"] and (index % 10 == 0 or index == len(instances) - 1):
+                progress_tracker.update_progress(series_uuid, int(5 + 10 * index / len(instances)),
+                                                 f"Loading slice {index + 1}/{len(instances)}", "loading")
+            files.append(pydicom.dcmread(io.BytesIO(orthanc.GetDicomForInstance(instance["ID"]))))
+        slices = sorted((item for item in files if hasattr(item, "SliceLocation")), key=lambda item: item.SliceLocation)
+        if not slices:
+            raise ValueError("No slices with SliceLocation are available for analysis.")
         results = unified_cho_main(slices, config)
-        
-        # Add calculation type and parameters to results
-        if results:
-            results['full_test'] = full_test
-            results['calculation_type'] = 'full_analysis' if full_test else 'global_noise'
-            results['parameters_used'] = params
-        
-        # The unified module handles database saving internally
-        # Schedule cleanup after some time (5 minutes)
+        if not results:
+            raise ValueError("The analysis returned no results.")
+        results.update({"full_test": full_test,
+                        "calculation_type": "full_analysis" if full_test else "global_noise",
+                        "parameters_used": params})
+        review_manager.complete(run_id, results)
+
         def delayed_cleanup():
-            time.sleep(300)  # 5 minutes
-            progress_tracker.cleanup_calculation(series_uuid)
-            
-        cleanup_thread = threading.Thread(target=delayed_cleanup)
-        cleanup_thread.daemon = True
-        cleanup_thread.start()
-        
+            time.sleep(300)
+            current = progress_tracker.get_calculation_status(series_uuid)
+            # An old run's timer must not delete the new run's progress.
+            if current and current.get("metadata", {}).get("run_id") == run_id:
+                progress_tracker.cleanup_calculation(series_uuid)
+        threading.Thread(target=delayed_cleanup, daemon=True).start()
         return results
-        
-    except Exception as e:
-        error_msg = f"Error running CHO calculation: {str(e)}"
-        print(error_msg)
+    except Exception as exc:
+        review_manager.fail(run_id)
+        error = f"Error running CHO calculation: {exc}"
+        print(error)
         print(traceback.format_exc())
-        progress_tracker.fail_calculation(series_uuid, error_msg)
-        raise
+        progress_tracker.fail_calculation(series_uuid, error)
+        return None
+
 
 def apply_custom_parameters_to_analysis(config, custom_params):
-    """
-    Apply custom parameters to the analysis configuration
-    This function can be called from the unified CHO module to customize behavior
-    """
     if not custom_params:
         return config
-    
-    # Map modal parameters to internal configuration
-    parameter_mapping = {
-        'resamples': 'num_resample',
-        'internalNoise': 'internal_noise', 
-        'resamplingMethod': 'resampling_method',
-        'roiSize': 'roi_size_mm',
-        'thresholdLow': 'threshold_low',
-        'thresholdHigh': 'threshold_high',
-        'windowLength': 'window_length_cm',
-        'stepSize': 'step_size_cm',
-        'channelType': 'channel_type',
-        'lesionSet': 'lesion_configuration',
-        'spatialResolution': 'spatial_resolution',
-        'mtf50': 'mtf50',
-        'mtf10': 'mtf10'
-    }
-    
-    # Apply the mappings
-    for modal_param, internal_param in parameter_mapping.items():
-        if modal_param in custom_params:
-            config[internal_param] = custom_params[modal_param]
-    
+    mapping = {"resamples": "num_resample", "internalNoise": "internal_noise",
+               "resamplingMethod": "resampling_method", "roiSize": "roi_size_mm",
+               "thresholdLow": "threshold_low", "thresholdHigh": "threshold_high",
+               "windowLength": "window_length_cm", "stepSize": "step_size_cm",
+               "channelType": "channel_type", "lesionSet": "lesion_configuration",
+               "spatialResolution": "spatial_resolution", "mtf50": "mtf50", "mtf10": "mtf10"}
+    for source, target in mapping.items():
+        if source in custom_params:
+            config[target] = custom_params[source]
     return config
 
 
 def get_channel_configuration(channel_type):
-    """
-    Get CHO channel configuration based on type
-    """
-    if channel_type == 'Gabor':
-        return {
-            'type': 'Gabor',
-            'passband': '[[1/64,1/32], [1/32,1/16]]',
-            'theta': '[0, pi/2]',
-            'beta': '0'
-        }
-    elif channel_type == 'Laguerre-Gauss':
-        return {
-            'type': 'Laguerre-Gauss',
-            'order': 6,
-            'orientation': 3
-        }
-    else:
-        # Default to Gabor
-        return {
-            'type': 'Gabor',
-            'passband': '[[1/64,1/32], [1/32,1/16]]',
-            'theta': '[0, pi/2]',
-            'beta': '0'
-        }
+    if channel_type == "Laguerre-Gauss":
+        return {"type": "Laguerre-Gauss", "order": 6, "orientation": 3}
+    return {"type": "Gabor", "passband": "[[1/64,1/32], [1/32,1/16]]", "theta": "[0, pi/2]", "beta": "0"}
