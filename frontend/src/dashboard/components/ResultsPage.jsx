@@ -499,7 +499,7 @@ const ResultsPage = () => {
             0.14,
           )} 0%, ${alpha(theme.palette.primary.dark, 0.04)} 100%)`,
         })}>
-        <Stack spacing={2.5} sx={{ maxWidth: 880, position: "relative" }}>
+        <Stack spacing={2.5} sx={{ maxWidth: 900, position: "relative" }}>
           <Typography
             variant='h3'
             component='h1'
@@ -508,7 +508,7 @@ const ResultsPage = () => {
               letterSpacing: "-0.02em",
               fontSize: { xs: "2rem", md: "2.75rem" },
             }}>
-            Results
+            Result View/Modification of Individual Exam
           </Typography>
           <Typography
             variant='body1'

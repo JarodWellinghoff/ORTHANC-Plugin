@@ -139,7 +139,7 @@ const PlottingPage = () => {
               letterSpacing: "-0.02em",
               fontSize: { xs: "2rem", md: "2.75rem" },
             }}>
-            Plotting
+            Statistics Report
           </Typography>
           <Typography
             variant='body1'
@@ -164,7 +164,8 @@ const PlottingPage = () => {
 
       {!loading && !loadError && (
         <Typography variant='body2' color='text.secondary'>
-          {records.length} of {seriesCount} matching series available for plotting
+          {records.length} of {seriesCount} matching series available for
+          plotting
           {skippedCount > 0
             ? ` (${skippedCount} skipped - no stored results)`
             : ""}

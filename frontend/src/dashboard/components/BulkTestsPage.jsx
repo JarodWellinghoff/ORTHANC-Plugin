@@ -854,7 +854,7 @@ const BulkTestsPage = () => {
               letterSpacing: "-0.02em",
               fontSize: { xs: "2rem", md: "2.75rem" },
             }}>
-            Bulk Runs
+            Calculation in Local Server
           </Typography>
           <Typography
             variant='body1'

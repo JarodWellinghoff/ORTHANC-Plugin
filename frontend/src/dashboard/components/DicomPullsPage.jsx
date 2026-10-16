@@ -743,7 +743,7 @@ const DicomPullsPage = () => {
               letterSpacing: "-0.02em",
               fontSize: { xs: "2rem", md: "2.75rem" },
             }}>
-            DICOM Pulls
+            DICOM Query and Pulls
           </Typography>
           <Typography
             variant='body1'

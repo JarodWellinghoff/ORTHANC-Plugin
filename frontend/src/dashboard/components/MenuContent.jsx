@@ -23,20 +23,20 @@ const mainNavItems = [
     isActive: (pathname) => pathname === "/" || pathname.startsWith("/home"),
   },
   {
-    text: "DICOM Pulls",
+    text: "DICOM Query and Pulls",
     icon: CloudDownloadRoundedIcon,
     to: "/dicom-pulls",
     isActive: (pathname) => pathname.startsWith("/dicom-pulls"),
   },
   {
-    text: "Bulk Runs",
+    text: "Calculation in Local Server",
     icon: ScienceRoundedIcon,
     to: "/main-dashboard",
     // Testing page only — Results has its own entry below.
     isActive: (pathname) => pathname.startsWith("/main-dashboard"),
   },
   {
-    text: "Results",
+    text: "Result View/Modification of Individual Exam",
     icon: ContentPasteSearchIcon,
     to: "/results",
     // Covers both the listing (/results) and the per-series detail
@@ -44,7 +44,7 @@ const mainNavItems = [
     isActive: (pathname) => pathname.startsWith("/results"),
   },
   {
-    text: "Plotting",
+    text: "Statistics Report",
     icon: InsightsRoundedIcon,
     to: "/plotting",
     isActive: (pathname) => pathname.startsWith("/plotting"),
