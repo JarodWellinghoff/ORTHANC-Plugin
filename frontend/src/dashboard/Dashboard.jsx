@@ -26,8 +26,7 @@ export default function Dashboard(props) {
     <Box sx={{ display: "flex" }}><SideMenu /><AppNavbar />
       <Box component='main' sx={(theme) => ({ flexGrow: 1, minWidth: 0, overflow: "auto",
         backgroundColor: theme.vars ? `rgba(${theme.vars.palette.background.defaultChannel} / 1)` : alpha(theme.palette.background.default, 1) })}>
-        <DashboardProvider><Stack spacing={2} sx={{ alignItems: "center", mx: 3, pb: 5, mt: { xs: 8, md: 0 } }}>
-          <RerunReviewHost />
+        <DashboardProvider><RerunReviewHost><Stack spacing={2} sx={{ alignItems: "center", mx: 3, pb: 5, mt: { xs: 8, md: 0 } }}>
           <Container maxWidth={false} sx={{ py: 4, width: "100%" }}><Routes>
             <Route path='/' element={<Navigate to='/home' replace />} />
             <Route path='/home' element={<HomePage />} />
@@ -40,7 +39,7 @@ export default function Dashboard(props) {
             <Route path='/dicom-viewer/:seriesId' element={<DicomViewerRoute />} />
             <Route path='*' element={<Navigate to='/home' replace />} />
           </Routes></Container><ModalsHost />
-        </Stack></DashboardProvider>
+        </Stack></RerunReviewHost></DashboardProvider>
       </Box>
     </Box>
   </AppTheme>;

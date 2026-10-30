@@ -7,6 +7,7 @@
   useRef,
   useState,
 } from "react";
+import { applyChoProgress, backgroundChoRun } from "../utils/choResultFlow";
 const AGE_FILTER_MIN = 0;
 const AGE_FILTER_MAX = 200;
 const DashboardContext = createContext(null);
@@ -47,6 +48,10 @@ const createInitialChoState = () => ({
   params: { ...defaultChoParams },
   progress: { value: 0, message: "", stage: "initialization" },
   results: null,
+  runMode: null,
+  runId: null,
+  previousRunId: null,
+  reviewRequired: false,
   storedResults: { loading: false, data: null, error: null },
   pollError: null,
 });
@@ -192,6 +197,8 @@ export const DashboardProvider = ({ children }) => {
   const [calculationStates, setCalculationStates] = useState({});
 
   const pollingRef = useRef(null);
+  const storedResultsRequestRef = useRef(0);
+  const choStartLockRef = useRef(false);
   const mountedRef = useRef(true);
   const sseRef = useRef(null);
   const sseReconnectRef = useRef(null);
@@ -595,30 +602,18 @@ export const DashboardProvider = ({ children }) => {
           console.debug("Failed to parse snapshot event", error);
           return;
         }
-        setCalculationStates(() => {
-          const next = {};
-          const register = (entry, defaultEvent = "snapshot") => {
-            if (!entry || typeof entry !== "object") return;
-            const rawId =
-              entry.series_id ?? entry.series_uuid ?? entry.seriesId ?? null;
-            if (!rawId) return;
-            const id = String(rawId);
-            next[id] = { ...entry, _event: defaultEvent };
-          };
-
-          if (Array.isArray(payload)) {
-            payload.forEach((entry) => register(entry));
-          } else if (payload && typeof payload === "object") {
-            if (payload.calculations) {
-              Object.values(payload.calculations).forEach((entry) =>
-                register(entry),
-              );
-            } else {
-              register(payload);
-            }
-          }
-          return next;
-        });
+        const next = {};
+        const register = (entry) => {
+          if (!entry || typeof entry !== "object") return;
+          const id = entry.series_id ?? entry.series_uuid ?? entry.seriesId;
+          if (id) next[String(id)] = { ...entry, _event: "snapshot" };
+        };
+        if (Array.isArray(payload)) payload.forEach(register);
+        else if (payload?.calculations) Object.values(payload.calculations).forEach(register);
+        else register(payload);
+        setCalculationStates(next);
+        setChoModal((previous) => applyChoProgress(previous,
+          next[String(previous.seriesUuid)] ?? next[String(previous.seriesId)]));
       });
 
       source.addEventListener("cho-calculation", (event) => {
@@ -641,55 +636,9 @@ export const DashboardProvider = ({ children }) => {
           [id]: { ...(prev[id] ?? {}), ...entry, _event: eventType },
         }));
 
-        // Mirror into choModal when this event is for the currently open analysis
-        setChoModal((prev) => {
-          if (!prev.open) return prev;
-          const matchesOpen =
-            id === String(prev.seriesUuid ?? "") ||
-            id === String(prev.seriesId ?? "");
-          if (!matchesOpen) return prev;
-
-          if (eventType === "completed") {
-            return {
-              ...prev,
-              stage: "results",
-              results: entry.results ?? prev.results,
-              progress: {
-                value: 100,
-                message: entry.message ?? "Calculation completed",
-                stage: entry.current_stage ?? "completed",
-              },
-              pollError: null,
-            };
-          }
-          if (eventType === "failed") {
-            return {
-              ...prev,
-              stage: "config",
-              pollError: entry.error ?? entry.message ?? "Calculation failed",
-              progress: {
-                value: prev.progress?.value ?? 0,
-                message: entry.message ?? "Calculation failed",
-                stage: entry.current_stage ?? "error",
-              },
-            };
-          }
-          // start | progress
-          return {
-            ...prev,
-            stage: "running",
-            progress: {
-              value:
-                typeof entry.progress === "number"
-                  ? entry.progress
-                  : (prev.progress?.value ?? 0),
-              message:
-                entry.message ?? prev.progress?.message ?? "Processing...",
-              stage:
-                entry.current_stage ?? prev.progress?.stage ?? "initialization",
-            },
-          };
-        });
+        // Only a locally started run may update this page. Background results
+        // and staged reruns never become the visible result through SSE.
+        setChoModal((previous) => applyChoProgress(previous, entry));
       });
 
       source.onerror = () => {
@@ -748,46 +697,37 @@ export const DashboardProvider = ({ children }) => {
     choModalRef.current = choModal;
   }, [choModal]);
 
-  // Fix reloadStoredChoResults to read from the ref
-  const reloadStoredChoResults = useCallback(async () => {
+  const reloadStoredChoResults = useCallback(async ({ clearResults = false } = {}) => {
     const { seriesId } = choModalRef.current;
-    if (!seriesId) return;
-
-    setChoModal((prev) => ({
-      ...prev,
-      storedResults: { loading: true, data: null, error: null },
-    }));
-
+    if (!seriesId) return false;
+    const requestId = ++storedResultsRequestRef.current;
+    const isCurrent = (state) => mountedRef.current && state.seriesId === seriesId &&
+      storedResultsRequestRef.current === requestId;
+    setChoModal((previous) => isCurrent(previous) ? {
+      ...previous,
+      ...(clearResults ? { results: null, runMode: null, reviewRequired: false, stage: "config" } : {}),
+      storedResults: { ...previous.storedResults, loading: true, error: null },
+    } : previous);
     try {
-      const data = await fetchJson(`/cho-results/${seriesId}`);
-      setChoModal((prev) => {
-        const next = {
-          ...prev,
-          storedResults: { loading: false, data, error: null },
-        };
-        // If seriesUuid is missing OR equals seriesId (the URL-fallback case on
-        // refresh, where it's actually a SeriesInstanceUID, not the Orthanc UUID),
-        // correct it from the API response.
-        const responseUuid = data?.series_uuid;
-        if (
-          responseUuid &&
-          (!prev.seriesUuid || prev.seriesUuid === prev.seriesId)
-        ) {
-          next.seriesUuid = responseUuid;
+      const data = await fetchJson(`/cho-results/${encodeURIComponent(seriesId)}`, { cache: "no-store" });
+      if (!isCurrent(choModalRef.current)) return false;
+      setChoModal((previous) => {
+        if (!isCurrent(previous)) return previous;
+        const next = { ...previous, storedResults: { loading: false, data, error: null } };
+        if (data?.series_uuid && (!previous.seriesUuid || previous.seriesUuid === previous.seriesId)) {
+          next.seriesUuid = data.series_uuid;
         }
         return next;
       });
+      return true;
     } catch (error) {
-      setChoModal((prev) => ({
-        ...prev,
-        storedResults: {
-          loading: false,
-          data: null,
-          error: error.message ?? "Failed to load results",
-        },
-      }));
+      setChoModal((previous) => isCurrent(previous) ? {
+        ...previous,
+        storedResults: { ...previous.storedResults, loading: false, error: error.message ?? "Failed to load results" },
+      } : previous);
+      return false;
     }
-  }, []); // no stale dependency
+  }, []);
 
   // Auto-fetch stored results whenever seriesId is set
   useEffect(() => {
@@ -796,41 +736,42 @@ export const DashboardProvider = ({ children }) => {
     }
   }, [choModal.seriesId, reloadStoredChoResults]);
 
-  const startChoAnalysis = useCallback(async () => {
-    const { seriesUuid, params } = choModal;
+  const continueChoInBackground = useCallback(() => {
+    setChoModal(backgroundChoRun);
+  }, []);
+
+  const startChoAnalysis = useCallback(async ({ background = false } = {}) => {
+    const { seriesUuid, seriesId, params, stage } = choModalRef.current;
+    if (choStartLockRef.current || stage === "running") return;
     if (!seriesUuid) {
       setStatus("No series selected", "error");
       return;
     }
-
-    setChoModal((prev) => ({
-      ...prev,
-      stage: "running",
-      progress: {
-        value: 0,
-        message: "Starting analysis...",
-        stage: "initialization",
-      },
-      results: null,
-      pollError: null,
+    choStartLockRef.current = true;
+    const previousRunId = calculationStates[String(seriesUuid)]?.metadata?.run_id ?? null;
+    setChoModal((previous) => ({
+      ...previous, stage: "running", runMode: background ? "background" : "foreground",
+      runId: null, previousRunId, reviewRequired: false,
+      progress: { value: 0, message: "Starting analysis...", stage: "initialization" },
+      results: null, pollError: null,
     }));
-
     try {
-      const payload = serializeChoPayload(seriesUuid, params);
+      // First analyses save normally; the server stages reruns without overwriting.
+      const payload = serializeChoPayload(seriesUuid, { ...params, saveResults: true });
       await fetchJson("/cho-analysis-modal", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
       });
     } catch (error) {
-      setChoModal((prev) => ({
-        ...prev,
-        stage: "config",
+      if (!mountedRef.current) return;
+      setChoModal((previous) => previous.seriesId === seriesId && previous.seriesUuid === seriesUuid ? {
+        ...previous, stage: "config", runMode: null,
         pollError: error.message ?? "Failed to start analysis",
-      }));
+      } : previous);
       setStatus(`Failed to start analysis: ${error.message}`, "error");
+    } finally {
+      choStartLockRef.current = false;
     }
-  }, [choModal, setStatus]);
+  }, [calculationStates, setStatus]);
 
   const discardChoResults = useCallback(async () => {
     if (!choModal.seriesUuid) return;
@@ -955,6 +896,7 @@ export const DashboardProvider = ({ children }) => {
         closeChoModal,
         updateChoParam,
         startChoAnalysis,
+        continueChoInBackground,
         discardChoResults,
         loadFilterOptions,
         loadSummary,
@@ -992,6 +934,7 @@ export const DashboardProvider = ({ children }) => {
     closeChoModal,
     updateChoParam,
     startChoAnalysis,
+    continueChoInBackground,
     discardChoResults,
     loadFilterOptions,
     loadSummary,

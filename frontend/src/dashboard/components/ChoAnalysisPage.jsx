@@ -48,6 +48,9 @@ import MetadataSections from "./metadata/MetadataSections";
 import buildMetadataSections from "./metadata/metadataSections.utils";
 import CornerstoneViewport from "./dicom/CornerstoneViewport";
 import ResultsComparison from "./ResultsComparison";
+import RerunReviewControls from "./RerunReviewControls";
+import useSeriesReview from "../hooks/useSeriesReview";
+import { candidatePlotData } from "../utils/choResultFlow";
 import DicomTable from "./DicomTable";
 import { Icon, Tooltip } from "@mui/material";
 import { alpha } from "@mui/material/styles";
@@ -332,10 +335,13 @@ const ChoAnalysisPage = () => {
   };
   const [mtfc10Data, setMtfc10Data] = React.useState(defaultMtfc10Data);
   const [currentContrast, setCurrentContrast] = React.useState("10HU");
-  const displayedResults = results ?? storedResults?.data ?? null;
-  const hasComparison = Boolean(results && storedResults?.data);
-  const baselineResults = hasComparison ? storedResults.data : null;
-  const comparisonCurrent = hasComparison ? results : null;
+  const reviewFlow = useSeriesReview();
+  const displayedResults = reviewFlow.review?.candidate ?? results ?? storedResults?.data ?? null;
+  const baselineResults = reviewFlow.review?.baseline ?? null;
+  const plotResults = React.useMemo(
+    () => reviewFlow.review ? candidatePlotData(reviewFlow.review.candidate) : displayedResults,
+    [reviewFlow.review, displayedResults],
+  );
   const isStoredLoading = Boolean(storedResults?.loading);
   const storedError = storedResults?.error;
   console.log("availableSeries:", availableSeries);
@@ -641,7 +647,8 @@ const ChoAnalysisPage = () => {
     ? normalizedProgressMessage || progressStageLabel || "Processing..."
     : "Start CHO analysis";
   const startButtonDisabled =
-    !seriesId || isAnalysisRunning || !isAvailableSeries;
+    !seriesId || isAnalysisRunning || !isAvailableSeries ||
+    Boolean(reviewFlow.pendingReview || reviewFlow.requested || reviewFlow.saving);
   console.log("!seriesId", !seriesId);
   console.log("isAnalysisRunning", isAnalysisRunning);
   console.log("isAvailableSeries", isAvailableSeries);
@@ -1129,11 +1136,18 @@ const ChoAnalysisPage = () => {
                 width: "100%",
               }}>
               <Stack spacing={2}>
-                <Box>
+                <Box id='analysis-results' sx={{ scrollMarginTop: 96 }}>
                   <Typography variant='subtitle1' sx={{ fontWeight: 600 }}>
                     Analysis Results
                   </Typography>
                 </Box>
+                <RerunReviewControls
+                  flow={reviewFlow}
+                  awaitingReview={choModal.runMode === "foreground" && choModal.reviewRequired && stage === "results"}
+                  running={isAnalysisRunning}
+                  background={choModal.runMode === "background"}
+                  onBackground={actions.continueChoInBackground}
+                />
 
                 {pollError && <Alert severity='error'>{pollError}</Alert>}
                 {storedError && !results && !isStoredLoading && (
@@ -1142,8 +1156,7 @@ const ChoAnalysisPage = () => {
 
                 {isAnalysisRunning && !displayedResults && !isStoredLoading && (
                   <Typography variant='body2' color='text.secondary'>
-                    An analysis is currently running. Open the Start Analysis
-                    dialog to monitor progress.
+                    An analysis is currently running. Its progress is shown on the Start Analysis button.
                   </Typography>
                 )}
 
@@ -1160,7 +1173,7 @@ const ChoAnalysisPage = () => {
                   <Grid container spacing={3}>
                     <Grid item size={12}>
                       <ChoPlots
-                        data={displayedResults}
+                        data={plotResults}
                         comparison={baselineResults}
                         direction={"row"}>
                         {/* <Box
@@ -1171,10 +1184,13 @@ const ChoAnalysisPage = () => {
                             p: 2,
                             height: "100%",
                           }}> */}
-                        <MetadataSections
-                          data={displayedResults}
-                          visibleSections={["Results"]}
-                        />
+                        {reviewFlow.review ? (
+                          <Box sx={{ width: "100%", overflowX: "auto" }}>
+                            <ResultsComparison baseline={baselineResults} current={reviewFlow.review.candidate} />
+                          </Box>
+                        ) : (
+                          <MetadataSections data={displayedResults} visibleSections={["Results"]} />
+                        )}
                         {/* </Box> */}
                       </ChoPlots>
                     </Grid>

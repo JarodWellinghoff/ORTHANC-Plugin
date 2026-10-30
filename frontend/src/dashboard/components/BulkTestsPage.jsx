@@ -254,10 +254,12 @@ export default function BulkTestsPage() {
         if (mounted.current)
           setBulkRun((old) => ({ ...old, done: old.done + 1 }));
       }
-      if (mounted.current)
+      // Successful first analyses save silently. The review provider sends a
+      // linked toast only for reruns; keep warnings for incomplete batches.
+      if (mounted.current && completed !== runnable.length)
         enqueueSnackbar(
-          `${completed} of ${runnable.length} analyses completed. Reruns require review before saving.`,
-          { variant: completed === runnable.length ? "success" : "warning" },
+          `${completed} of ${runnable.length} analyses completed. Check the unsuccessful runs.`,
+          { variant: "warning" },
         );
     } finally {
       bulkLock.current = false;
@@ -371,40 +373,40 @@ export default function BulkTestsPage() {
       minWidth: 180,
       valueFormatter: formatDateTime,
     },
-    {
-      field: "actions",
-      headerName: "Actions",
-      width: 150,
-      sortable: false,
-      filterable: false,
-      renderCell: ({ row }) =>
-        row.hasDicom ? (
-          <Tooltip title='Run analysis'>
-            <span>
-              <IconButton
-                aria-label='Run analysis'
-                disabled={runningBulk || activeRows.current.has(row.id)}
-                onClick={() => runSingle(row)}>
-                <PlayArrowRoundedIcon />
-              </IconButton>
-            </span>
-          </Tooltip>
-        ) : (
-          <Button
-            size='small'
-            startIcon={
-              recovering[row.id] ? (
-                <CircularProgress size={14} />
-              ) : (
-                <CloudDownloadRoundedIcon />
-              )
-            }
-            disabled={recovering[row.id] || !selectedModality}
-            onClick={() => recover(row)}>
-            Pull DICOM
-          </Button>
-        ),
-    },
+    // {
+    //   field: "actions",
+    //   headerName: "Actions",
+    //   width: 150,
+    //   sortable: false,
+    //   filterable: false,
+    //   renderCell: ({ row }) =>
+    //     row.hasDicom ? (
+    //       <Tooltip title='Run analysis'>
+    //         <span>
+    //           <IconButton
+    //             aria-label='Run analysis'
+    //             disabled={runningBulk || activeRows.current.has(row.id)}
+    //             onClick={() => runSingle(row)}>
+    //             <PlayArrowRoundedIcon />
+    //           </IconButton>
+    //         </span>
+    //       </Tooltip>
+    //     ) : (
+    //       <Button
+    //         size='small'
+    //         startIcon={
+    //           recovering[row.id] ? (
+    //             <CircularProgress size={14} />
+    //           ) : (
+    //             <CloudDownloadRoundedIcon />
+    //           )
+    //         }
+    //         disabled={recovering[row.id] || !selectedModality}
+    //         onClick={() => recover(row)}>
+    //         Pull DICOM
+    //       </Button>
+    //     ),
+    // },
   ];
   return (
     <Stack spacing={3}>
@@ -469,7 +471,7 @@ export default function BulkTestsPage() {
             }>
             {runningBulk
               ? "Running..."
-              : `Run Selected (${selectedRows.length})`}
+              : `Run Selected in Background (${selectedRows.length})`}
           </Button>
           {runningBulk && (
             <Typography variant='body2'>
@@ -478,7 +480,7 @@ export default function BulkTestsPage() {
             </Typography>
           )}
         </Stack>
-        <FormControl
+        {/* <FormControl
           size='small'
           sx={{ minWidth: 220 }}
           disabled={!modalities.length}>
@@ -494,7 +496,7 @@ export default function BulkTestsPage() {
               </MenuItem>
             ))}
           </Select>
-        </FormControl>
+        </FormControl> */}
       </Stack>
       <Box sx={{ height: 560, minWidth: 0 }}>
         <DataGrid

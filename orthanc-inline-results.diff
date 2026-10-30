@@ -1,0 +1,1134 @@
+diff --git a/frontend/src/dashboard/Dashboard.jsx b/frontend/src/dashboard/Dashboard.jsx
+index c21ab27b02d57e8e58843c10bbf32bad28629b22..b4ddeb024fd51d10c8bb9af47773e208b6afc687 100644
+--- a/frontend/src/dashboard/Dashboard.jsx
++++ b/frontend/src/dashboard/Dashboard.jsx
+@@ -26,8 +26,7 @@ export default function Dashboard(props) {
+     <Box sx={{ display: "flex" }}><SideMenu /><AppNavbar />
+       <Box component='main' sx={(theme) => ({ flexGrow: 1, minWidth: 0, overflow: "auto",
+         backgroundColor: theme.vars ? `rgba(${theme.vars.palette.background.defaultChannel} / 1)` : alpha(theme.palette.background.default, 1) })}>
+-        <DashboardProvider><Stack spacing={2} sx={{ alignItems: "center", mx: 3, pb: 5, mt: { xs: 8, md: 0 } }}>
+-          <RerunReviewHost />
++        <DashboardProvider><RerunReviewHost><Stack spacing={2} sx={{ alignItems: "center", mx: 3, pb: 5, mt: { xs: 8, md: 0 } }}>
+           <Container maxWidth={false} sx={{ py: 4, width: "100%" }}><Routes>
+             <Route path='/' element={<Navigate to='/home' replace />} />
+             <Route path='/home' element={<HomePage />} />
+@@ -40,7 +39,7 @@ export default function Dashboard(props) {
+             <Route path='/dicom-viewer/:seriesId' element={<DicomViewerRoute />} />
+             <Route path='*' element={<Navigate to='/home' replace />} />
+           </Routes></Container><ModalsHost />
+-        </Stack></DashboardProvider>
++        </Stack></RerunReviewHost></DashboardProvider>
+       </Box>
+     </Box>
+   </AppTheme>;
+diff --git a/frontend/src/dashboard/components/BulkTestsPage.jsx b/frontend/src/dashboard/components/BulkTestsPage.jsx
+index 3b50c3469f4945d053778974e5765875105cde71..2bd1566889dc5381c50087e6404d7388354223b4 100644
+--- a/frontend/src/dashboard/components/BulkTestsPage.jsx
++++ b/frontend/src/dashboard/components/BulkTestsPage.jsx
+@@ -254,10 +254,12 @@ export default function BulkTestsPage() {
+         if (mounted.current)
+           setBulkRun((old) => ({ ...old, done: old.done + 1 }));
+       }
+-      if (mounted.current)
++      // Successful first analyses save silently. The review provider sends a
++      // linked toast only for reruns; keep warnings for incomplete batches.
++      if (mounted.current && completed !== runnable.length)
+         enqueueSnackbar(
+-          `${completed} of ${runnable.length} analyses completed. Reruns require review before saving.`,
+-          { variant: completed === runnable.length ? "success" : "warning" },
++          `${completed} of ${runnable.length} analyses completed. Check the unsuccessful runs.`,
++          { variant: "warning" },
+         );
+     } finally {
+       bulkLock.current = false;
+diff --git a/frontend/src/dashboard/components/ChoAnalysisPage.jsx b/frontend/src/dashboard/components/ChoAnalysisPage.jsx
+index 7305f29f53fddc63134a25c6fab785dbd402d99b..c3675357622f117a8c17d024c355ccfde4d6a7d0 100644
+--- a/frontend/src/dashboard/components/ChoAnalysisPage.jsx
++++ b/frontend/src/dashboard/components/ChoAnalysisPage.jsx
+@@ -48,6 +48,9 @@ import MetadataSections from "./metadata/MetadataSections";
+ import buildMetadataSections from "./metadata/metadataSections.utils";
+ import CornerstoneViewport from "./dicom/CornerstoneViewport";
+ import ResultsComparison from "./ResultsComparison";
++import RerunReviewControls from "./RerunReviewControls";
++import useSeriesReview from "../hooks/useSeriesReview";
++import { candidatePlotData } from "../utils/choResultFlow";
+ import DicomTable from "./DicomTable";
+ import { Icon, Tooltip } from "@mui/material";
+ import { alpha } from "@mui/material/styles";
+@@ -332,10 +335,13 @@ const ChoAnalysisPage = () => {
+   };
+   const [mtfc10Data, setMtfc10Data] = React.useState(defaultMtfc10Data);
+   const [currentContrast, setCurrentContrast] = React.useState("10HU");
+-  const displayedResults = results ?? storedResults?.data ?? null;
+-  const hasComparison = Boolean(results && storedResults?.data);
+-  const baselineResults = hasComparison ? storedResults.data : null;
+-  const comparisonCurrent = hasComparison ? results : null;
++  const reviewFlow = useSeriesReview();
++  const displayedResults = reviewFlow.review?.candidate ?? results ?? storedResults?.data ?? null;
++  const baselineResults = reviewFlow.review?.baseline ?? null;
++  const plotResults = React.useMemo(
++    () => reviewFlow.review ? candidatePlotData(reviewFlow.review.candidate) : displayedResults,
++    [reviewFlow.review, displayedResults],
++  );
+   const isStoredLoading = Boolean(storedResults?.loading);
+   const storedError = storedResults?.error;
+   console.log("availableSeries:", availableSeries);
+@@ -641,7 +647,8 @@ const ChoAnalysisPage = () => {
+     ? normalizedProgressMessage || progressStageLabel || "Processing..."
+     : "Start CHO analysis";
+   const startButtonDisabled =
+-    !seriesId || isAnalysisRunning || !isAvailableSeries;
++    !seriesId || isAnalysisRunning || !isAvailableSeries ||
++    Boolean(reviewFlow.pendingReview || reviewFlow.requested || reviewFlow.saving);
+   console.log("!seriesId", !seriesId);
+   console.log("isAnalysisRunning", isAnalysisRunning);
+   console.log("isAvailableSeries", isAvailableSeries);
+@@ -1129,11 +1136,18 @@ const ChoAnalysisPage = () => {
+                 width: "100%",
+               }}>
+               <Stack spacing={2}>
+-                <Box>
++                <Box id='analysis-results' sx={{ scrollMarginTop: 96 }}>
+                   <Typography variant='subtitle1' sx={{ fontWeight: 600 }}>
+                     Analysis Results
+                   </Typography>
+                 </Box>
++                <RerunReviewControls
++                  flow={reviewFlow}
++                  awaitingReview={choModal.runMode === "foreground" && choModal.reviewRequired && stage === "results"}
++                  running={isAnalysisRunning}
++                  background={choModal.runMode === "background"}
++                  onBackground={actions.continueChoInBackground}
++                />
+ 
+                 {pollError && <Alert severity='error'>{pollError}</Alert>}
+                 {storedError && !results && !isStoredLoading && (
+@@ -1142,8 +1156,7 @@ const ChoAnalysisPage = () => {
+ 
+                 {isAnalysisRunning && !displayedResults && !isStoredLoading && (
+                   <Typography variant='body2' color='text.secondary'>
+-                    An analysis is currently running. Open the Start Analysis
+-                    dialog to monitor progress.
++                    An analysis is currently running. Its progress is shown on the Start Analysis button.
+                   </Typography>
+                 )}
+ 
+@@ -1160,7 +1173,7 @@ const ChoAnalysisPage = () => {
+                   <Grid container spacing={3}>
+                     <Grid item size={12}>
+                       <ChoPlots
+-                        data={displayedResults}
++                        data={plotResults}
+                         comparison={baselineResults}
+                         direction={"row"}>
+                         {/* <Box
+@@ -1171,10 +1184,13 @@ const ChoAnalysisPage = () => {
+                             p: 2,
+                             height: "100%",
+                           }}> */}
+-                        <MetadataSections
+-                          data={displayedResults}
+-                          visibleSections={["Results"]}
+-                        />
++                        {reviewFlow.review ? (
++                          <Box sx={{ width: "100%", overflowX: "auto" }}>
++                            <ResultsComparison baseline={baselineResults} current={reviewFlow.review.candidate} />
++                          </Box>
++                        ) : (
++                          <MetadataSections data={displayedResults} visibleSections={["Results"]} />
++                        )}
+                         {/* </Box> */}
+                       </ChoPlots>
+                     </Grid>
+diff --git a/frontend/src/dashboard/components/RerunReviewControls.jsx b/frontend/src/dashboard/components/RerunReviewControls.jsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..d082e9a0c1bc5945f3df3cedada3842f3a93c451
+--- /dev/null
++++ b/frontend/src/dashboard/components/RerunReviewControls.jsx
+@@ -0,0 +1,50 @@
++import { Alert, Button, LinearProgress, Stack, Typography } from "@mui/material";
++
++export default function RerunReviewControls({ flow, awaitingReview, running, background, onBackground }) {
++  const { review, pendingReview, loading, error, saving, pollError, requested, openReview, decide, retry } = flow;
++  return (
++    <Stack spacing={2}>
++      {running && (
++        <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ sm: "center" }}>
++          <Typography variant='body2' color='text.secondary'>
++            {background ? "Analysis is running in the background. Results will not open automatically." : "Analysis is running."}
++          </Typography>
++          {!background && <Button onClick={onBackground}>Run in background</Button>}
++        </Stack>
++      )}
++      {pendingReview && !requested && (
++        <Alert severity='info' action={<Button color='inherit' onClick={openReview}>Review results</Button>}>
++          New results are awaiting review. The saved results below are unchanged.
++        </Alert>
++      )}
++      {(loading || (awaitingReview && !requested && !pollError)) && (
++        <Stack spacing={1} role='status' aria-live='polite'>
++          <LinearProgress />
++          <Typography variant='body2'>Loading new results for inline review...</Typography>
++        </Stack>
++      )}
++      {pollError && (awaitingReview || requested) && (
++        <Alert severity='warning'>Review availability could not be checked. Retrying automatically.</Alert>
++      )}
++      {error && (
++        <Alert severity='error' action={<Button color='inherit' disabled={saving} onClick={retry}>Retry</Button>}>
++          {error}
++        </Alert>
++      )}
++      {review && (
++        <Stack spacing={1.5}>
++          <Alert severity='info'>
++            You are reviewing new results alongside the saved results. Nothing is replaced until you choose Overwrite saved results.
++            The saved coronal image is not displayed behind the new curves.
++          </Alert>
++          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
++            <Button variant='contained' disabled={saving} onClick={() => decide("overwrite")}>
++              {saving ? "Applying decision..." : "Overwrite saved results"}
++            </Button>
++            <Button variant='outlined' disabled={saving} onClick={() => decide("discard")}>Discard new results</Button>
++          </Stack>
++        </Stack>
++      )}
++    </Stack>
++  );
++}
+diff --git a/frontend/src/dashboard/components/RerunReviewHost.jsx b/frontend/src/dashboard/components/RerunReviewHost.jsx
+index 82360ae79e1dcc02aae10391a6ea603d0bcf4e54..dcfe1dad6c622934b21ce6edd352429e4eebceff 100644
+--- a/frontend/src/dashboard/components/RerunReviewHost.jsx
++++ b/frontend/src/dashboard/components/RerunReviewHost.jsx
+@@ -1,131 +1,99 @@
+-import { useEffect, useMemo, useRef, useState } from "react";
+-import { Alert, Box, Button, CircularProgress, Dialog, DialogActions, DialogContent,
+-  DialogTitle, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Typography } from "@mui/material";
++import { useCallback, useEffect, useMemo, useRef, useState } from "react";
++import { Button, Stack } from "@mui/material";
++import { Link, useLocation } from "react-router-dom";
+ import { useSnackbar } from "notistack";
+ import { useDashboard } from "../context/DashboardContext";
+-import { SCALAR_METRICS } from "../utils/aggregateMetrics";
+-import { finiteNumber, getReportMetrics, PATIENT_COUNT_KEY } from "./plots/protocolReport";
+-import ChoPlots from "./plots/ChoPlots";
+-const apiBase = (import.meta.env.VITE_API_URL ?? "").replace(/\/$/, "");
+-const request = async (path, options = {}) => {
+-  const response = await fetch(`${apiBase}/cho-result-reviews${path}`, {
+-    credentials: "include", cache: "no-store", ...options,
+-    headers: { "Content-Type": "application/json", ...options.headers },
+-  });
+-  let payload;
+-  try { payload = await response.json(); } catch { throw new Error(`Invalid review response (${response.status}).`); }
+-  if (!response.ok) throw new Error(payload.error || `Review request failed (${response.status}).`);
+-  return payload;
+-};
+-const metrics = getReportMetrics(SCALAR_METRICS).filter((item) => item.key !== PATIENT_COUNT_KEY);
+-const display = (value, decimals) => {
+-  const number = finiteNumber(value);
+-  return number === null ? "Not available" : number.toFixed(decimals ?? 2);
+-};
+-export default function RerunReviewHost() {
+-  const dashboard = useDashboard();
+-  const dashboardRef = useRef(dashboard);
+-  dashboardRef.current = dashboard;
+-  const { enqueueSnackbar } = useSnackbar();
++import { RerunReviewContext } from "../context/RerunReviewContext";
++import { requestReview } from "../utils/reviewApi";
++import { reviewResultsUrl, shouldNotifyReview } from "../utils/choResultFlow";
++
++// A queue and notification provider, not a modal or automatic navigation host.
++export default function RerunReviewHost({ children }) {
++  const { choModal } = useDashboard();
++  const location = useLocation();
++  const { enqueueSnackbar, closeSnackbar } = useSnackbar();
+   const [pending, setPending] = useState([]);
+-  const [selectedId, setSelectedId] = useState(null);
+-  const [review, setReview] = useState(null);
+-  const [error, setError] = useState("");
+   const [pollError, setPollError] = useState("");
+-  const [saving, setSaving] = useState(false);
+-  const [reload, setReload] = useState(0);
+-  const deferred = useRef(new Set());
+   const resolved = useRef(new Set());
+-  const decisionLock = useRef(false);
++  const notified = useRef(new Map());
++  const errorNotified = useRef(false);
++  const current = useRef(null);
++  current.current = { choModal, search: location.search, enqueueSnackbar, closeSnackbar };
++
+   useEffect(() => {
+     const controller = new AbortController();
+     let timer;
+     const poll = async () => {
+       try {
+-        const data = await request("", { signal: controller.signal });
++        const payload = await requestReview("", { signal: controller.signal });
+         if (controller.signal.aborted) return;
+-        const reviews = (data.reviews ?? []).filter((item) => !resolved.current.has(item.id));
+-        setPending(reviews); setPollError("");
+-        setSelectedId((current) => current ?? reviews.find((item) => !deferred.current.has(item.id))?.id ?? null);
+-      } catch (err) { if (!controller.signal.aborted) setPollError(err.message); }
+-      finally { if (!controller.signal.aborted) timer = setTimeout(poll, 4000); }
++        if (!Array.isArray(payload?.reviews)) throw new Error("Invalid pending-review response.");
++        const reviews = payload.reviews.filter((item) => !resolved.current.has(item.id));
++        setPending(reviews);
++        setPollError("");
++        const active = new Set(reviews.map((review) => review.id));
++        const ui = current.current;
++        if (errorNotified.current) {
++          ui.closeSnackbar("ctpro-review-unavailable");
++          errorNotified.current = false;
++        }
++        for (const [id, key] of notified.current) {
++          if (!active.has(id)) {
++            ui.closeSnackbar(key);
++            notified.current.delete(id);
++          }
++        }
++        const requestedId = new URLSearchParams(ui.search).get("review");
++        for (const review of reviews) {
++          if (notified.current.has(review.id) || !shouldNotifyReview(review, ui.choModal, requestedId)) continue;
++          const href = reviewResultsUrl(review);
++          const key = `ctpro-review-${review.id}`;
++          notified.current.set(review.id, key);
++          ui.enqueueSnackbar("New results are ready. Review them before replacing the saved results.", {
++            key, variant: "info", persist: true, preventDuplicate: true,
++            action: (snackbarKey) => (
++              <Stack direction='row' spacing={1}>
++                <Button color='inherit' component={Link} to={href}
++                  onClick={() => ui.closeSnackbar(snackbarKey)}>Review results</Button>
++                <Button color='inherit' aria-label='Dismiss review notification'
++                  onClick={() => ui.closeSnackbar(snackbarKey)}>Dismiss</Button>
++              </Stack>
++            ),
++          });
++        }
++      } catch (error) {
++        if (!controller.signal.aborted) {
++          setPollError(error.message);
++          if (!errorNotified.current) {
++            errorNotified.current = true;
++            current.current.enqueueSnackbar("Result review is temporarily unavailable. Retrying automatically.", {
++              key: "ctpro-review-unavailable", variant: "warning", preventDuplicate: true,
++            });
++          }
++        }
++      } finally {
++        if (!controller.signal.aborted) timer = setTimeout(poll, 4000);
++      }
+     };
+     poll();
+-    return () => { controller.abort(); clearTimeout(timer); };
++    return () => {
++      controller.abort();
++      clearTimeout(timer);
++      for (const key of notified.current.values()) current.current.closeSnackbar(key);
++      notified.current.clear();
++      current.current.closeSnackbar("ctpro-review-unavailable");
++    };
+   }, []);
+-  useEffect(() => {
+-    if (!selectedId) { setReview(null); setError(""); return undefined; }
+-    const controller = new AbortController();
+-    setReview(null); setError("");
+-    request(`/${selectedId}`, { signal: controller.signal }).then((data) => {
+-      if (!data.candidate?.results || !data.baseline || data.state !== "ready") throw new Error("The rerun is not ready for review.");
+-      if (!controller.signal.aborted) setReview(data);
+-    }).catch((err) => { if (!controller.signal.aborted) setError(err.message); });
+-    return () => controller.abort();
+-  }, [selectedId, reload]);
+-  const close = () => {
+-    if (decisionLock.current) return;
+-    deferred.current.add(selectedId); setSelectedId(null);
+-  };
+-  const decide = async (decision) => {
+-    if (!review || decisionLock.current) return;
+-    decisionLock.current = true;
+-    setSaving(true); setError("");
+-    try {
+-      await request(`/${review.id}`, { method: "POST", body: JSON.stringify({ decision }) });
+-      resolved.current.add(review.id);
+-      setPending((items) => items.filter((item) => item.id !== review.id));
+-      setSelectedId(null);
+-      enqueueSnackbar(decision === "overwrite" ? "Saved results replaced with the reviewed rerun." : "New results discarded. Saved results were kept.", { variant: "success" });
+-      window.dispatchEvent(new CustomEvent("ctpro-review-resolved", { detail: { seriesUuid: review.series_uuid, decision } }));
+-      const { choModal, actions } = dashboardRef.current;
+-      if (choModal.seriesUuid === review.series_uuid || choModal.seriesId === review.series_uid) {
+-        // Clear the unsaved in-page result as well, especially after discard.
+-        actions.openChoModal({ ...choModal.seriesSummary, series_uuid: review.series_uuid, series_id: review.series_uid });
+-        try { await actions.reloadStoredChoResults(); }
+-        catch { enqueueSnackbar("Decision applied. Refresh the exam to reload its saved results.", { variant: "warning" }); }
+-      }
+-    } catch (err) { setError(err.message); }
+-    finally { decisionLock.current = false; setSaving(false); }
+-  };
+-  const newPlotData = useMemo(() => review ? ({ ...review.candidate,
+-    // The stored MinIO image still belongs to the accepted result. Do not put
+-    // it behind an unsaved candidate's curves and imply it is a new image.
+-    series: { ...review.candidate.series, series_instance_uid: undefined },
+-  }) : null, [review]);
+-  return <>
+-    {pollError && <Alert severity='warning' sx={{ width: "100%" }}>Rerun review is unavailable: {pollError}</Alert>}
+-    {pending.length > 0 && <Alert severity='info' sx={{ width: "100%" }}
+-      action={<Button color='inherit' onClick={() => setSelectedId(pending[0].id)}>Review</Button>}>
+-      {pending.length} rerun{pending.length === 1 ? "" : "s"} awaiting review.
+-    </Alert>}
+-    <Dialog open={Boolean(selectedId)} maxWidth='lg' fullWidth onClose={close}>
+-      <DialogTitle>Review rerun results</DialogTitle>
+-      <DialogContent dividers>
+-        {error && <Alert severity='error' action={!review && <Button onClick={() => setReload((value) => value + 1)}>Retry</Button>}>{error}</Alert>}
+-        {!review && !error && <Box sx={{ p: 4, textAlign: "center" }}><CircularProgress aria-label='Loading new results' /></Box>}
+-        {review && <Stack spacing={2}>
+-          <Typography>Would you like to overwrite the saved results with this rerun, or discard the new results?</Typography>
+-          <Typography variant='body2' color='text.secondary'>
+-            {review.baseline.patient_name || "Patient"} / {review.baseline.protocol_name || "Protocol unspecified"}
+-            {" "}(series {review.series_uid}). Saved results remain unchanged until you choose Overwrite.
+-          </Typography>
+-          <TableContainer sx={{ maxHeight: 360, overflow: "auto" }}><Table size='small' stickyHeader aria-label='Saved and new analysis results'>
+-            <TableHead><TableRow><TableCell>Metric</TableCell><TableCell align='right'>Saved</TableCell><TableCell align='right'>New</TableCell></TableRow></TableHead>
+-            <TableBody>{metrics.map((metric) => <TableRow key={metric.key}>
+-              <TableCell>{metric.label}{metric.unit ? ` (${metric.unit})` : ""}</TableCell>
+-              <TableCell align='right'>{display(review.baseline[metric.key], metric.decimals)}</TableCell>
+-              <TableCell align='right'>{display(review.candidate.results[metric.key] ?? review.candidate.series[metric.key], metric.decimals)}</TableCell>
+-            </TableRow>)}</TableBody>
+-          </Table></TableContainer>
+-          <ChoPlots data={newPlotData} comparison={review.baseline} />
+-        </Stack>}
+-      </DialogContent>
+-      <DialogActions>
+-        <Button disabled={saving} onClick={close}>Review later</Button>
+-        <Button disabled={!review || saving} onClick={() => decide("discard")}>Discard new results</Button>
+-        <Button variant='contained' disabled={!review || saving} onClick={() => decide("overwrite")}>{saving ? "Applying decision..." : "Overwrite saved results"}</Button>
+-      </DialogActions>
+-    </Dialog>
+-  </>;
++
++  const resolveReview = useCallback((id) => {
++    // A poll started before the decision must not resurrect the resolved review.
++    resolved.current.add(id);
++    setPending((reviews) => reviews.filter((review) => review.id !== id));
++    const key = notified.current.get(id);
++    if (key) current.current.closeSnackbar(key);
++    notified.current.delete(id);
++  }, []);
++
++  const value = useMemo(() => ({ pending, pollError, resolveReview }), [pending, pollError, resolveReview]);
++  return <RerunReviewContext.Provider value={value}>{children}</RerunReviewContext.Provider>;
+ }
+diff --git a/frontend/src/dashboard/context/DashboardContext.jsx b/frontend/src/dashboard/context/DashboardContext.jsx
+index f70da25559f15fa6292e591e62decb03dc26c7d3..d555e8c9a4c555784edbcfaf80f9323747881600 100644
+--- a/frontend/src/dashboard/context/DashboardContext.jsx
++++ b/frontend/src/dashboard/context/DashboardContext.jsx
+@@ -7,6 +7,7 @@
+   useRef,
+   useState,
+ } from "react";
++import { applyChoProgress, backgroundChoRun } from "../utils/choResultFlow";
+ const AGE_FILTER_MIN = 0;
+ const AGE_FILTER_MAX = 200;
+ const DashboardContext = createContext(null);
+@@ -47,6 +48,10 @@ const createInitialChoState = () => ({
+   params: { ...defaultChoParams },
+   progress: { value: 0, message: "", stage: "initialization" },
+   results: null,
++  runMode: null,
++  runId: null,
++  previousRunId: null,
++  reviewRequired: false,
+   storedResults: { loading: false, data: null, error: null },
+   pollError: null,
+ });
+@@ -192,6 +197,8 @@ export const DashboardProvider = ({ children }) => {
+   const [calculationStates, setCalculationStates] = useState({});
+ 
+   const pollingRef = useRef(null);
++  const storedResultsRequestRef = useRef(0);
++  const choStartLockRef = useRef(false);
+   const mountedRef = useRef(true);
+   const sseRef = useRef(null);
+   const sseReconnectRef = useRef(null);
+@@ -595,30 +602,18 @@ export const DashboardProvider = ({ children }) => {
+           console.debug("Failed to parse snapshot event", error);
+           return;
+         }
+-        setCalculationStates(() => {
+-          const next = {};
+-          const register = (entry, defaultEvent = "snapshot") => {
+-            if (!entry || typeof entry !== "object") return;
+-            const rawId =
+-              entry.series_id ?? entry.series_uuid ?? entry.seriesId ?? null;
+-            if (!rawId) return;
+-            const id = String(rawId);
+-            next[id] = { ...entry, _event: defaultEvent };
+-          };
+-
+-          if (Array.isArray(payload)) {
+-            payload.forEach((entry) => register(entry));
+-          } else if (payload && typeof payload === "object") {
+-            if (payload.calculations) {
+-              Object.values(payload.calculations).forEach((entry) =>
+-                register(entry),
+-              );
+-            } else {
+-              register(payload);
+-            }
+-          }
+-          return next;
+-        });
++        const next = {};
++        const register = (entry) => {
++          if (!entry || typeof entry !== "object") return;
++          const id = entry.series_id ?? entry.series_uuid ?? entry.seriesId;
++          if (id) next[String(id)] = { ...entry, _event: "snapshot" };
++        };
++        if (Array.isArray(payload)) payload.forEach(register);
++        else if (payload?.calculations) Object.values(payload.calculations).forEach(register);
++        else register(payload);
++        setCalculationStates(next);
++        setChoModal((previous) => applyChoProgress(previous,
++          next[String(previous.seriesUuid)] ?? next[String(previous.seriesId)]));
+       });
+ 
+       source.addEventListener("cho-calculation", (event) => {
+@@ -641,55 +636,9 @@ export const DashboardProvider = ({ children }) => {
+           [id]: { ...(prev[id] ?? {}), ...entry, _event: eventType },
+         }));
+ 
+-        // Mirror into choModal when this event is for the currently open analysis
+-        setChoModal((prev) => {
+-          if (!prev.open) return prev;
+-          const matchesOpen =
+-            id === String(prev.seriesUuid ?? "") ||
+-            id === String(prev.seriesId ?? "");
+-          if (!matchesOpen) return prev;
+-
+-          if (eventType === "completed") {
+-            return {
+-              ...prev,
+-              stage: "results",
+-              results: entry.results ?? prev.results,
+-              progress: {
+-                value: 100,
+-                message: entry.message ?? "Calculation completed",
+-                stage: entry.current_stage ?? "completed",
+-              },
+-              pollError: null,
+-            };
+-          }
+-          if (eventType === "failed") {
+-            return {
+-              ...prev,
+-              stage: "config",
+-              pollError: entry.error ?? entry.message ?? "Calculation failed",
+-              progress: {
+-                value: prev.progress?.value ?? 0,
+-                message: entry.message ?? "Calculation failed",
+-                stage: entry.current_stage ?? "error",
+-              },
+-            };
+-          }
+-          // start | progress
+-          return {
+-            ...prev,
+-            stage: "running",
+-            progress: {
+-              value:
+-                typeof entry.progress === "number"
+-                  ? entry.progress
+-                  : (prev.progress?.value ?? 0),
+-              message:
+-                entry.message ?? prev.progress?.message ?? "Processing...",
+-              stage:
+-                entry.current_stage ?? prev.progress?.stage ?? "initialization",
+-            },
+-          };
+-        });
++        // Only a locally started run may update this page. Background results
++        // and staged reruns never become the visible result through SSE.
++        setChoModal((previous) => applyChoProgress(previous, entry));
+       });
+ 
+       source.onerror = () => {
+@@ -748,46 +697,37 @@ export const DashboardProvider = ({ children }) => {
+     choModalRef.current = choModal;
+   }, [choModal]);
+ 
+-  // Fix reloadStoredChoResults to read from the ref
+-  const reloadStoredChoResults = useCallback(async () => {
++  const reloadStoredChoResults = useCallback(async ({ clearResults = false } = {}) => {
+     const { seriesId } = choModalRef.current;
+-    if (!seriesId) return;
+-
+-    setChoModal((prev) => ({
+-      ...prev,
+-      storedResults: { loading: true, data: null, error: null },
+-    }));
+-
++    if (!seriesId) return false;
++    const requestId = ++storedResultsRequestRef.current;
++    const isCurrent = (state) => mountedRef.current && state.seriesId === seriesId &&
++      storedResultsRequestRef.current === requestId;
++    setChoModal((previous) => isCurrent(previous) ? {
++      ...previous,
++      ...(clearResults ? { results: null, runMode: null, reviewRequired: false, stage: "config" } : {}),
++      storedResults: { ...previous.storedResults, loading: true, error: null },
++    } : previous);
+     try {
+-      const data = await fetchJson(`/cho-results/${seriesId}`);
+-      setChoModal((prev) => {
+-        const next = {
+-          ...prev,
+-          storedResults: { loading: false, data, error: null },
+-        };
+-        // If seriesUuid is missing OR equals seriesId (the URL-fallback case on
+-        // refresh, where it's actually a SeriesInstanceUID, not the Orthanc UUID),
+-        // correct it from the API response.
+-        const responseUuid = data?.series_uuid;
+-        if (
+-          responseUuid &&
+-          (!prev.seriesUuid || prev.seriesUuid === prev.seriesId)
+-        ) {
+-          next.seriesUuid = responseUuid;
++      const data = await fetchJson(`/cho-results/${encodeURIComponent(seriesId)}`, { cache: "no-store" });
++      if (!isCurrent(choModalRef.current)) return false;
++      setChoModal((previous) => {
++        if (!isCurrent(previous)) return previous;
++        const next = { ...previous, storedResults: { loading: false, data, error: null } };
++        if (data?.series_uuid && (!previous.seriesUuid || previous.seriesUuid === previous.seriesId)) {
++          next.seriesUuid = data.series_uuid;
+         }
+         return next;
+       });
++      return true;
+     } catch (error) {
+-      setChoModal((prev) => ({
+-        ...prev,
+-        storedResults: {
+-          loading: false,
+-          data: null,
+-          error: error.message ?? "Failed to load results",
+-        },
+-      }));
++      setChoModal((previous) => isCurrent(previous) ? {
++        ...previous,
++        storedResults: { ...previous.storedResults, loading: false, error: error.message ?? "Failed to load results" },
++      } : previous);
++      return false;
+     }
+-  }, []); // no stale dependency
++  }, []);
+ 
+   // Auto-fetch stored results whenever seriesId is set
+   useEffect(() => {
+@@ -796,41 +736,42 @@ export const DashboardProvider = ({ children }) => {
+     }
+   }, [choModal.seriesId, reloadStoredChoResults]);
+ 
+-  const startChoAnalysis = useCallback(async () => {
+-    const { seriesUuid, params } = choModal;
++  const continueChoInBackground = useCallback(() => {
++    setChoModal(backgroundChoRun);
++  }, []);
++
++  const startChoAnalysis = useCallback(async ({ background = false } = {}) => {
++    const { seriesUuid, seriesId, params, stage } = choModalRef.current;
++    if (choStartLockRef.current || stage === "running") return;
+     if (!seriesUuid) {
+       setStatus("No series selected", "error");
+       return;
+     }
+-
+-    setChoModal((prev) => ({
+-      ...prev,
+-      stage: "running",
+-      progress: {
+-        value: 0,
+-        message: "Starting analysis...",
+-        stage: "initialization",
+-      },
+-      results: null,
+-      pollError: null,
++    choStartLockRef.current = true;
++    const previousRunId = calculationStates[String(seriesUuid)]?.metadata?.run_id ?? null;
++    setChoModal((previous) => ({
++      ...previous, stage: "running", runMode: background ? "background" : "foreground",
++      runId: null, previousRunId, reviewRequired: false,
++      progress: { value: 0, message: "Starting analysis...", stage: "initialization" },
++      results: null, pollError: null,
+     }));
+-
+     try {
+-      const payload = serializeChoPayload(seriesUuid, params);
++      // First analyses save normally; the server stages reruns without overwriting.
++      const payload = serializeChoPayload(seriesUuid, { ...params, saveResults: true });
+       await fetchJson("/cho-analysis-modal", {
+-        method: "POST",
+-        headers: { "Content-Type": "application/json" },
+-        body: JSON.stringify(payload),
++        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+       });
+     } catch (error) {
+-      setChoModal((prev) => ({
+-        ...prev,
+-        stage: "config",
++      if (!mountedRef.current) return;
++      setChoModal((previous) => previous.seriesId === seriesId && previous.seriesUuid === seriesUuid ? {
++        ...previous, stage: "config", runMode: null,
+         pollError: error.message ?? "Failed to start analysis",
+-      }));
++      } : previous);
+       setStatus(`Failed to start analysis: ${error.message}`, "error");
++    } finally {
++      choStartLockRef.current = false;
+     }
+-  }, [choModal, setStatus]);
++  }, [calculationStates, setStatus]);
+ 
+   const discardChoResults = useCallback(async () => {
+     if (!choModal.seriesUuid) return;
+@@ -955,6 +896,7 @@ export const DashboardProvider = ({ children }) => {
+         closeChoModal,
+         updateChoParam,
+         startChoAnalysis,
++        continueChoInBackground,
+         discardChoResults,
+         loadFilterOptions,
+         loadSummary,
+@@ -992,6 +934,7 @@ export const DashboardProvider = ({ children }) => {
+     closeChoModal,
+     updateChoParam,
+     startChoAnalysis,
++    continueChoInBackground,
+     discardChoResults,
+     loadFilterOptions,
+     loadSummary,
+diff --git a/frontend/src/dashboard/context/RerunReviewContext.js b/frontend/src/dashboard/context/RerunReviewContext.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..5b65da9914e54255b14a7a6e43c63d5fb17e4981
+--- /dev/null
++++ b/frontend/src/dashboard/context/RerunReviewContext.js
+@@ -0,0 +1,9 @@
++import { createContext, useContext } from "react";
++
++export const RerunReviewContext = createContext(null);
++
++export function useRerunReviewQueue() {
++  const context = useContext(RerunReviewContext);
++  if (!context) throw new Error("Rerun review requires RerunReviewHost.");
++  return context;
++}
+diff --git a/frontend/src/dashboard/hooks/useSeriesReview.js b/frontend/src/dashboard/hooks/useSeriesReview.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..136c98dc34fcb66634ab5019b961ca744a9311d3
+--- /dev/null
++++ b/frontend/src/dashboard/hooks/useSeriesReview.js
+@@ -0,0 +1,113 @@
++import { useCallback, useEffect, useRef, useState } from "react";
++import { useSearchParams } from "react-router-dom";
++import { useSnackbar } from "notistack";
++import { useDashboard } from "../context/DashboardContext";
++import { useRerunReviewQueue } from "../context/RerunReviewContext";
++import { requestReview } from "../utils/reviewApi";
++import { reviewMatchesSeries, selectReviewId } from "../utils/choResultFlow";
++
++export default function useSeriesReview() {
++  const { choModal, actions } = useDashboard();
++  const { pending, pollError, resolveReview } = useRerunReviewQueue();
++  const { enqueueSnackbar } = useSnackbar();
++  const [searchParams, setSearchParams] = useSearchParams();
++  const pendingReview = pending.find((item) => reviewMatchesSeries(item, choModal)) ?? null;
++  const requestedId = searchParams.get("review");
++  const id = selectReviewId({ pending, series: choModal, requestedId });
++  const key = JSON.stringify([choModal.seriesId, choModal.seriesUuid, id]);
++  const [state, setState] = useState({ key: null, review: null, error: "" });
++  const [reload, setReload] = useState(0);
++  const [saving, setSaving] = useState(false);
++  const lock = useRef(false);
++  const mounted = useRef(false);
++  const selection = useRef(key);
++  selection.current = key;
++  const matchingState = state.key === key ? state : null;
++  const review = matchingState?.review ?? null;
++  const error = matchingState?.error ?? "";
++  const loading = Boolean(id && !review && !error);
++
++  useEffect(() => {
++    mounted.current = true;
++    return () => { mounted.current = false; };
++  }, []);
++
++  useEffect(() => {
++    if (!id || !choModal.seriesId) return undefined;
++    const controller = new AbortController();
++    const load = async () => {
++      setState({ key, review: null, error: "" });
++      try {
++        const data = await requestReview(`/${encodeURIComponent(id)}`, { signal: controller.signal });
++        if (data?.id !== id || data.state !== "ready" || !data.candidate?.results || !data.baseline) {
++          throw new Error("The rerun is not ready for review.");
++        }
++        if (!reviewMatchesSeries(data, { seriesId: choModal.seriesId, seriesUuid: choModal.seriesUuid })) {
++          throw new Error("This review does not belong to the selected series.");
++        }
++        if (!controller.signal.aborted) setState({ key, review: data, error: "" });
++      } catch (failure) {
++        if (!controller.signal.aborted) setState({ key, review: null, error: failure.message });
++      }
++    };
++    load();
++    return () => controller.abort();
++  }, [id, key, choModal.seriesId, choModal.seriesUuid, reload]);
++
++  const openReview = useCallback(() => {
++    if (!pendingReview) return;
++    setSearchParams((previous) => {
++      const next = new URLSearchParams(previous);
++      next.set("review", pendingReview.id);
++      return next;
++    });
++  }, [pendingReview, setSearchParams]);
++
++  const decide = useCallback(async (decision) => {
++    if (!review || lock.current || !["overwrite", "discard"].includes(decision)) return;
++    lock.current = true;
++    setSaving(true);
++    setState({ key, review, error: "" });
++    try {
++      await requestReview(`/${encodeURIComponent(review.id)}`, {
++        method: "POST", body: JSON.stringify({ decision }),
++      });
++    } catch (failure) {
++      // Keep the candidate available on conflicts, network errors, and save failures.
++      if (mounted.current && selection.current === key) setState({ key, review, error: failure.message });
++      lock.current = false;
++      if (mounted.current) setSaving(false);
++      return;
++    }
++
++    resolveReview(review.id);
++    window.dispatchEvent(new CustomEvent("ctpro-review-resolved", {
++      detail: { seriesUuid: review.series_uuid, decision },
++    }));
++    enqueueSnackbar(decision === "overwrite" ? "Reviewed results saved." : "New results discarded. Saved results were kept.", { variant: "success" });
++    try {
++      // A POST continues if the user leaves; its completion must not reset another exam.
++      if (mounted.current && selection.current === key) {
++        setState({ key: null, review: null, error: "" });
++        setSearchParams((previous) => {
++          const next = new URLSearchParams(previous);
++          if (next.get("review") === review.id) next.delete("review");
++          return next;
++        }, { replace: true });
++        const refreshed = await actions.reloadStoredChoResults({ clearResults: true });
++        if (refreshed === false && mounted.current) {
++          enqueueSnackbar("Decision applied. Reload the saved results to refresh this page.", { variant: "warning" });
++        }
++      }
++    } finally {
++      lock.current = false;
++      if (mounted.current) setSaving(false);
++    }
++  }, [review, key, resolveReview, enqueueSnackbar, setSearchParams, actions]);
++
++  return {
++    review, pendingReview, loading, error, saving, pollError,
++    requested: Boolean(id), openReview, decide,
++    retry: () => setReload((value) => value + 1),
++  };
++}
+diff --git a/frontend/src/dashboard/utils/choResultFlow.js b/frontend/src/dashboard/utils/choResultFlow.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..a263d2937a3412a6b6876b8563ecc22ee451c42c
+--- /dev/null
++++ b/frontend/src/dashboard/utils/choResultFlow.js
+@@ -0,0 +1,88 @@
++// Presentation policy only. The server remains authoritative for saving/review.
++const present = (value) => value !== null && value !== undefined && value !== "";
++const same = (left, right) => present(left) && present(right) && String(left) === String(right);
++
++export const reviewMatchesSeries = (review, series) => {
++  if (!review || !series) return false;
++  // Prefer the DICOM UID when both sides have one; do not match conflicting UIDs.
++  if (present(review.series_uid) && present(series.seriesId)) {
++    return same(review.series_uid, series.seriesId);
++  }
++  return same(review.series_uuid, series.seriesUuid);
++};
++
++export const reviewResultsUrl = (review) => {
++  if (!present(review?.series_uid) || !present(review?.id)) {
++    throw new Error("The review has no series UID or review ID.");
++  }
++  return `/results/${encodeURIComponent(review.series_uid)}?review=${encodeURIComponent(review.id)}#analysis-results`;
++};
++
++export const selectReviewId = ({ pending, series, requestedId }) => {
++  if (requestedId) return requestedId;
++  if (series?.runMode !== "foreground") return null;
++  return pending.find((review) => reviewMatchesSeries(review, series))?.id ?? null;
++};
++
++export const shouldNotifyReview = (review, series, requestedId) => {
++  if (!series?.open || !reviewMatchesSeries(review, series)) return true;
++  return series.runMode !== "foreground" && requestedId !== review.id;
++};
++
++export const candidatePlotData = (candidate) => candidate ? ({
++  ...candidate,
++  // The accepted MinIO image must not be represented as a candidate image.
++  series_instance_uid: undefined,
++  series: { ...candidate.series, series_instance_uid: undefined },
++}) : null;
++
++export const applyChoProgress = (previous, entry) => {
++  if (!previous.open || !previous.runMode || previous.stage !== "running" || !entry) {
++    return previous;
++  }
++  const id = entry.series_id ?? entry.series_uuid ?? entry.seriesId;
++  if (!same(id, previous.seriesUuid) && !same(id, previous.seriesId)) return previous;
++  const event = entry.eventType ?? (
++    entry.status === "completed" ? "completed" :
++    ["failed", "error", "cancelled"].includes(entry.status) ? "failed" : "progress"
++  );
++  if (!["start", "progress", "completed", "failed"].includes(event)) return previous;
++
++  const runId = entry.metadata?.run_id;
++  if (runId && (runId === previous.previousRunId || (previous.runId && runId !== previous.runId))) {
++    return previous;
++  }
++  const reviewRequired = entry.metadata?.review_required ?? previous.reviewRequired ?? false;
++  const common = { ...previous, runId: runId ?? previous.runId, reviewRequired };
++  if (event === "completed") {
++    return {
++      ...common,
++      stage: previous.runMode === "foreground" ? "results" : "config",
++      // Reruns are read from the review endpoint only, after staging completes.
++      // Never inject a background completion's payload into the visible page.
++      results: previous.runMode === "foreground" && !reviewRequired ? entry.results ?? null : null,
++      progress: { value: 100, message: entry.message ?? "Calculation completed", stage: "completed" },
++      pollError: null,
++    };
++  }
++  if (event === "failed") {
++    return {
++      ...common, stage: "config", runMode: null, results: null,
++      pollError: entry.error ?? entry.message ?? "Calculation failed",
++      progress: { ...previous.progress, message: entry.message ?? "Calculation failed", stage: "error" },
++    };
++  }
++  return {
++    ...common,
++    progress: {
++      value: typeof entry.progress === "number" ? entry.progress : previous.progress?.value ?? 0,
++      message: entry.message ?? previous.progress?.message ?? "Processing...",
++      stage: entry.current_stage ?? previous.progress?.stage ?? "initialization",
++    },
++  };
++};
++
++export const backgroundChoRun = (previous) => previous.runMode === "foreground" ? ({
++  ...previous, runMode: "background", results: null,
++  stage: previous.stage === "running" ? "running" : "config",
++}) : previous;
+diff --git a/frontend/src/dashboard/utils/reviewApi.js b/frontend/src/dashboard/utils/reviewApi.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..5cba1500635b54350f20362f3fefa6e672cdb1ee
+--- /dev/null
++++ b/frontend/src/dashboard/utils/reviewApi.js
+@@ -0,0 +1,22 @@
++const apiBase = (import.meta.env?.VITE_API_URL ?? "").replace(/\/$/, "");
++
++export async function requestReview(path = "", options = {}) {
++  const response = await fetch(`${apiBase}/cho-result-reviews${path}`, {
++    credentials: "include", cache: "no-store", ...options,
++    headers: { ...(options.body ? { "Content-Type": "application/json" } : {}), ...options.headers },
++  });
++  let payload;
++  try {
++    payload = await response.json();
++  } catch {
++    const error = new Error(`Invalid review response (${response.status}).`);
++    error.status = response.status;
++    throw error;
++  }
++  if (!response.ok) {
++    const error = new Error(payload?.error || `Review request failed (${response.status}).`);
++    error.status = response.status;
++    throw error;
++  }
++  return payload;
++}
+diff --git a/frontend/tests/choResultFlow.test.mjs b/frontend/tests/choResultFlow.test.mjs
+new file mode 100644
+index 0000000000000000000000000000000000000000..7554594644151d7999c30b3a53902289a9c3b5ae
+--- /dev/null
++++ b/frontend/tests/choResultFlow.test.mjs
+@@ -0,0 +1,128 @@
++import test from "node:test";
++import assert from "node:assert/strict";
++import { applyChoProgress, backgroundChoRun, candidatePlotData, reviewMatchesSeries,
++  reviewResultsUrl, selectReviewId, shouldNotifyReview } from "../src/dashboard/utils/choResultFlow.js";
++
++const saved = { average_noise_level: 8 };
++const candidate = { results: { average_noise_level: 9 }, series: { series_instance_uid: "1.2.3" } };
++const series = { open: true, seriesId: "1.2.3", seriesUuid: "uuid-1", stage: "running",
++  runMode: "foreground", results: null, runId: "run-new", previousRunId: "run-old",
++  storedResults: { data: saved }, progress: { value: 25 } };
++const review = { id: "review-1", series_uid: "1.2.3", series_uuid: "uuid-1" };
++const completion = { series_id: "uuid-1", eventType: "completed", results: candidate,
++  metadata: { run_id: "run-new", review_required: false } };
++
++test("foreground first analysis renders its completed result in the page", () => {
++  const next = applyChoProgress(series, completion);
++  assert.equal(next.stage, "results");
++  assert.equal(next.results, candidate);
++  assert.equal(next.storedResults.data, saved);
++});
++test("foreground rerun waits for the staged review, never treats the SSE payload as saved", () => {
++  const next = applyChoProgress(series, { ...completion, metadata: { run_id: "run-new", review_required: true } });
++  assert.equal(next.results, null);
++  assert.equal(next.reviewRequired, true);
++  assert.equal(next.storedResults.data, saved);
++});
++test("background first completion does not replace the displayed saved data", () => {
++  const next = applyChoProgress({ ...series, runMode: "background" }, completion);
++  assert.equal(next.stage, "config");
++  assert.equal(next.results, null);
++  assert.equal(next.storedResults.data, saved);
++});
++test("background rerun keeps accepted data and is eligible for a review toast", () => {
++  const next = applyChoProgress({ ...series, runMode: "background" }, {
++    ...completion, metadata: { run_id: "run-new", review_required: true },
++  });
++  assert.equal(next.results, null);
++  assert.equal(next.storedResults.data, saved);
++  assert.equal(shouldNotifyReview(review, next, null), true);
++});
++test("external or batch work cannot update an open series with no local run", () => {
++  const previous = { ...series, runMode: null };
++  assert.equal(applyChoProgress(previous, completion), previous);
++});
++test("completion for another series is ignored", () => {
++  assert.equal(applyChoProgress(series, { ...completion, series_id: "uuid-2" }), series);
++});
++test("closed analysis is not reopened by completion", () => {
++  const previous = { ...series, open: false };
++  assert.equal(applyChoProgress(previous, completion), previous);
++});
++test("previous run completion cannot complete a newly started run", () => {
++  assert.equal(applyChoProgress(series, { ...completion, metadata: { run_id: "run-old" } }), series);
++});
++test("a different run ID cannot replace the active run", () => {
++  assert.equal(applyChoProgress(series, { ...completion, metadata: { run_id: "other" } }), series);
++});
++test("duplicate completion after review does not resurrect discarded results", () => {
++  const previous = { ...series, stage: "config", runMode: null };
++  assert.equal(applyChoProgress(previous, completion), previous);
++});
++test("cleanup events do not restart progress", () => {
++  assert.equal(applyChoProgress(series, { ...completion, eventType: "cleanup" }), series);
++});
++test("SSE reconnect snapshots obey foreground/background policy", () => {
++  const snapshot = { ...completion, eventType: undefined, status: "completed" };
++  assert.equal(applyChoProgress(series, snapshot).results, candidate);
++  assert.equal(applyChoProgress({ ...series, runMode: "background" }, snapshot).results, null);
++});
++test("errors remain visible without displaying results", () => {
++  const next = applyChoProgress(series, { ...completion, eventType: "failed", error: "Failed" });
++  assert.equal(next.stage, "config");
++  assert.equal(next.runMode, null);
++  assert.equal(next.pollError, "Failed");
++  assert.equal(next.results, null);
++});
++test("progress binds a fresh server run ID", () => {
++  const next = applyChoProgress({ ...series, runId: null }, {
++    series_id: "uuid-1", eventType: "start", progress: 5,
++    metadata: { run_id: "newest", review_required: true },
++  });
++  assert.equal(next.runId, "newest");
++  assert.equal(next.reviewRequired, true);
++  assert.equal(next.progress.value, 5);
++});
++test("switching to background clears results without cancelling progress", () => {
++  const next = backgroundChoRun({ ...series, results: candidate });
++  assert.equal(next.runMode, "background");
++  assert.equal(next.stage, "running");
++  assert.equal(next.results, null);
++  assert.equal(next.progress, series.progress);
++});
++test("background click racing completion still hides the results", () => {
++  const next = backgroundChoRun({ ...series, stage: "results", results: candidate });
++  assert.equal(next.stage, "config");
++  assert.equal(next.results, null);
++});
++test("foreground reruns select the matching review, not the first unrelated one", () => {
++  assert.equal(selectReviewId({ pending: [{ ...review, id: "other", series_uid: "2" }, review], series }), review.id);
++});
++test("background reruns require an explicit request to show the candidate", () => {
++  assert.equal(selectReviewId({ pending: [review], series: { ...series, runMode: "background" } }), null);
++  assert.equal(selectReviewId({ pending: [review], series: { ...series, runMode: "background" }, requestedId: review.id }), review.id);
++});
++test("empty review list is silent, including first-time saves", () => {
++  assert.equal(selectReviewId({ pending: [], series }), null);
++  assert.equal([].filter((item) => shouldNotifyReview(item, series, null)).length, 0);
++});
++test("foreground and explicitly requested reviews do not generate redundant notifications", () => {
++  assert.equal(shouldNotifyReview(review, series, null), false);
++  assert.equal(shouldNotifyReview(review, { ...series, runMode: null }, review.id), false);
++  assert.equal(shouldNotifyReview(review, { ...series, open: false }, null), true);
++});
++test("UID mismatches and missing identifiers never match by accident", () => {
++  assert.equal(reviewMatchesSeries(review, { seriesId: "other", seriesUuid: "uuid-1" }), false);
++  assert.equal(reviewMatchesSeries({}, {}), false);
++  assert.equal(reviewMatchesSeries(review, { seriesUuid: "uuid-1" }), true);
++});
++test("review links contain both encoded series and review IDs", () => {
++  assert.equal(reviewResultsUrl({ id: "a&b", series_uid: "1/2" }), "/results/1%2F2?review=a%26b#analysis-results");
++  assert.throws(() => reviewResultsUrl({ id: "missing-series" }));
++});
++test("candidate plots cannot load the accepted MinIO image, without mutating metadata", () => {
++  const plot = candidatePlotData(candidate);
++  assert.equal(plot.series.series_instance_uid, undefined);
++  assert.equal(candidate.series.series_instance_uid, "1.2.3");
++  assert.equal(plot.results, candidate.results);
++});
+diff --git a/frontend/tests/reviewApi.test.mjs b/frontend/tests/reviewApi.test.mjs
+new file mode 100644
+index 0000000000000000000000000000000000000000..6747d41764127827b62ee08a794df7b07eb47fef
+--- /dev/null
++++ b/frontend/tests/reviewApi.test.mjs
+@@ -0,0 +1,33 @@
++import test from "node:test";
++import assert from "node:assert/strict";
++import { requestReview } from "../src/dashboard/utils/reviewApi.js";
++
++test("review requests include credentials, avoid cache, and encode decisions as JSON", async (t) => {
++  t.mock.method(globalThis, "fetch", async (url, options) => {
++    assert.equal(url, "/cho-result-reviews/review-1");
++    assert.equal(options.credentials, "include");
++    assert.equal(options.cache, "no-store");
++    assert.equal(options.headers["Content-Type"], "application/json");
++    assert.deepEqual(JSON.parse(options.body), { decision: "discard" });
++    return { ok: true, status: 200, json: async () => ({ decision: "discard" }) };
++  });
++  assert.deepEqual(await requestReview("/review-1", { method: "POST", body: JSON.stringify({ decision: "discard" }) }), { decision: "discard" });
++});
++test("save conflicts retain the server's status and message", async (t) => {
++  t.mock.method(globalThis, "fetch", async () => ({ ok: false, status: 409, json: async () => ({ error: "Saved results changed" }) }));
++  await assert.rejects(requestReview("/review-1"), { status: 409, message: "Saved results changed" });
++});
++test("malformed server responses fail rather than resolving a review", async (t) => {
++  t.mock.method(globalThis, "fetch", async () => ({ ok: true, status: 200, json: async () => { throw new Error("bad json"); } }));
++  await assert.rejects(requestReview("/review-1"), { message: "Invalid review response (200)." });
++});
++test("GET polling passes its abort signal through", async (t) => {
++  const controller = new AbortController();
++  t.mock.method(globalThis, "fetch", async (url, options) => {
++    assert.equal(url, "/cho-result-reviews");
++    assert.equal(options.signal, controller.signal);
++    assert.equal(options.headers["Content-Type"], undefined);
++    return { ok: true, status: 200, json: async () => ({ reviews: [] }) };
++  });
++  assert.deepEqual(await requestReview("", { signal: controller.signal }), { reviews: [] });
++});
