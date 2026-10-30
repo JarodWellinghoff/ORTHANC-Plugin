@@ -1,19 +1,10 @@
 import * as React from "react";
 import Box from "@mui/material/Box";
-import Divider from "@mui/material/Divider";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
-import Paper from "@mui/material/Paper";
-import {
-  formatNumber,
-  RESULT_METRICS,
-} from "./metadata/metadataSections.utils";
-
-const toNumeric = (value) => {
-  if (value === null || value === undefined) return null;
-  const num = Number(value);
-  return Number.isFinite(num) ? num : null;
-};
+import { RESULT_METRICS } from "./metadata/metadataSections.utils";
+import FormattedMetricText from "./metadata/FormattedMetricText";
+import { buildComparisonRows } from "../utils/resultComparison";
 
 const formatDelta = (value, decimals = 2) => {
   if (!Number.isFinite(value)) return "N/A";
@@ -46,31 +37,10 @@ const ResultsComparison = ({ baseline, current }) => {
     [current]
   );
 
-  const metricRows = React.useMemo(() => {
-    if (!baselineMetrics && !currentMetrics) return [];
-    return RESULT_METRICS.map(({ key, label, unit, decimals = 2 }) => {
-      const baselineRaw = baselineMetrics?.[key];
-      const currentRaw = currentMetrics?.[key];
-      const baselineDisplay = formatNumber(baselineRaw, decimals);
-      const currentDisplay = formatNumber(currentRaw, decimals);
-      if (baselineDisplay === "N/A" && currentDisplay === "N/A") {
-        return null;
-      }
-      const baselineNumeric = toNumeric(baselineRaw);
-      const currentNumeric = toNumeric(currentRaw);
-      const delta =
-        baselineNumeric !== null && currentNumeric !== null
-          ? formatDelta(currentNumeric - baselineNumeric, decimals)
-          : "N/A";
-      return {
-        label,
-        unit,
-        baseline: baselineDisplay,
-        current: currentDisplay,
-        delta,
-      };
-    }).filter(Boolean);
-  }, [baselineMetrics, currentMetrics]);
+  const metricRows = React.useMemo(
+    () => buildComparisonRows(baselineMetrics, currentMetrics, RESULT_METRICS),
+    [baselineMetrics, currentMetrics],
+  );
 
   const densityRows = React.useMemo(() => {
     return DATA_DENSITY_FIELDS.map(({ key, label }) => {
@@ -144,17 +114,17 @@ const ResultsComparison = ({ baseline, current }) => {
             <Typography variant='body2' sx={{ fontWeight: 600 }}>
               Δ
             </Typography>
-            {metricRows.map(({ label, unit, baseline, current, delta }) => (
-              <React.Fragment key={label}>
+            {metricRows.map(({ key, label, unit, baseline, current, delta }) => (
+              <React.Fragment key={key}>
                 <Typography variant='body2' color='text.secondary'>
-                  {label}
+                  <FormattedMetricText value={label} />
                 </Typography>
 
                 <Stack direction='row' spacing={1}>
                   <Typography variant='body2'>{baseline}</Typography>
                   {unit ? (
                     <Typography variant='body2' color='text.secondary'>
-                      {unit}
+                      <FormattedMetricText value={unit} />
                     </Typography>
                   ) : null}
                 </Stack>
@@ -163,7 +133,7 @@ const ResultsComparison = ({ baseline, current }) => {
                   <Typography variant='body2'>{current}</Typography>
                   {unit ? (
                     <Typography variant='body2' color='text.secondary'>
-                      {unit}
+                      <FormattedMetricText value={unit} />
                     </Typography>
                   ) : null}
                 </Stack>
@@ -183,7 +153,7 @@ const ResultsComparison = ({ baseline, current }) => {
                   </Typography>
                   {unit ? (
                     <Typography variant='body2' color='text.secondary'>
-                      {unit}
+                      <FormattedMetricText value={unit} />
                     </Typography>
                   ) : null}
                 </Stack>

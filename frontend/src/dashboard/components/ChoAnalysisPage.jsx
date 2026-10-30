@@ -776,9 +776,9 @@ const ChoAnalysisPage = () => {
   };
 
   const handleBackToDashboard = React.useCallback(() => {
-    actions.closeChoModal();
+    // ChoAnalysisRoute clears state only after navigation is accepted.
     navigate("/results");
-  }, [actions, navigate]);
+  }, [navigate]);
 
   const activeDetailsTab = detailsTabs.find(
     (tab) => tab.value === detailsTab && tab.available,

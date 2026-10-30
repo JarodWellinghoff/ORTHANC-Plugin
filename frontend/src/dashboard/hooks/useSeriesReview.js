@@ -1,24 +1,28 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useSnackbar } from "notistack";
 import { useDashboard } from "../context/DashboardContext";
 import { useRerunReviewQueue } from "../context/RerunReviewContext";
 import { requestReview } from "../utils/reviewApi";
 import { reviewMatchesSeries, selectReviewId } from "../utils/choResultFlow";
+import { createReviewSession } from "../utils/reviewSession";
+import useUnsavedReviewGuard from "./useUnsavedReviewGuard";
 
 export default function useSeriesReview() {
   const { choModal, actions } = useDashboard();
   const { pending, pollError, resolveReview } = useRerunReviewQueue();
   const { enqueueSnackbar } = useSnackbar();
   const [searchParams, setSearchParams] = useSearchParams();
-  const pendingReview = pending.find((item) => reviewMatchesSeries(item, choModal)) ?? null;
+  const resolvedIds = useRef(new Set());
+  const pendingReview = pending.find((item) =>
+    !resolvedIds.current.has(item.id) && reviewMatchesSeries(item, choModal)) ?? null;
   const requestedId = searchParams.get("review");
-  const id = selectReviewId({ pending, series: choModal, requestedId });
+  const selectedId = selectReviewId({ pending, series: choModal, requestedId });
+  const id = resolvedIds.current.has(selectedId) ? null : selectedId;
   const key = JSON.stringify([choModal.seriesId, choModal.seriesUuid, id]);
   const [state, setState] = useState({ key: null, review: null, error: "" });
   const [reload, setReload] = useState(0);
-  const [saving, setSaving] = useState(false);
-  const lock = useRef(false);
+  const [operation, setOperation] = useState(null);
   const mounted = useRef(false);
   const selection = useRef(key);
   selection.current = key;
@@ -26,6 +30,11 @@ export default function useSeriesReview() {
   const review = matchingState?.review ?? null;
   const error = matchingState?.error ?? "";
   const loading = Boolean(id && !review && !error);
+  const reviewId = review?.id;
+  const session = useMemo(() => reviewId
+    ? createReviewSession(reviewId, requestReview) : null, [reviewId]);
+  const busy = operation !== null;
+  const saving = operation === "overwrite";
 
   useEffect(() => {
     mounted.current = true;
@@ -63,51 +72,73 @@ export default function useSeriesReview() {
     });
   }, [pendingReview, setSearchParams]);
 
-  const decide = useCallback(async (decision) => {
-    if (!review || lock.current || !["overwrite", "discard"].includes(decision)) return;
-    lock.current = true;
-    setSaving(true);
-    setState({ key, review, error: "" });
+  const applyDecision = useCallback(async (decision, { keepalive = false } = {}) => {
+    if (!review || !session || session.busy || session.resolved) return false;
+    setOperation(decision);
     try {
-      await requestReview(`/${encodeURIComponent(review.id)}`, {
-        method: "POST", body: JSON.stringify({ decision }),
+      const applied = await session.decide(decision, {
+        // Only the small decision payload is sent, never imaging data.
+        keepalive: keepalive || decision === "overwrite",
       });
-    } catch (failure) {
-      // Keep the candidate available on conflicts, network errors, and save failures.
-      if (mounted.current && selection.current === key) setState({ key, review, error: failure.message });
-      lock.current = false;
-      if (mounted.current) setSaving(false);
-      return;
-    }
-
-    resolveReview(review.id);
-    window.dispatchEvent(new CustomEvent("ctpro-review-resolved", {
-      detail: { seriesUuid: review.series_uuid, decision },
-    }));
-    enqueueSnackbar(decision === "overwrite" ? "Reviewed results saved." : "New results discarded. Saved results were kept.", { variant: "success" });
-    try {
-      // A POST continues if the user leaves; its completion must not reset another exam.
+      if (!applied) return false;
+      // Mark clean synchronously, before URL cleanup can invoke the blocker.
+      resolvedIds.current.add(review.id);
+      resolveReview(review.id);
+      window.dispatchEvent(new CustomEvent("ctpro-review-resolved", {
+        detail: { seriesUuid: review.series_uuid, decision },
+      }));
+      if (decision === "overwrite") {
+        enqueueSnackbar("Reviewed results saved.", { variant: "success" });
+      }
+      // A completed request must not reset a different exam.
       if (mounted.current && selection.current === key) {
         setState({ key: null, review: null, error: "" });
-        setSearchParams((previous) => {
-          const next = new URLSearchParams(previous);
-          if (next.get("review") === review.id) next.delete("review");
-          return next;
-        }, { replace: true });
-        const refreshed = await actions.reloadStoredChoResults({ clearResults: true });
-        if (refreshed === false && mounted.current) {
-          enqueueSnackbar("Decision applied. Reload the saved results to refresh this page.", { variant: "warning" });
+        if (decision === "overwrite" || keepalive) {
+          // An in-app departure uses blocker.proceed() instead; do not replace
+          // its intended destination with our own query-string navigation.
+          setSearchParams((previous) => {
+            const next = new URLSearchParams(previous);
+            if (next.get("review") === review.id) next.delete("review");
+            return next;
+          }, { replace: true });
+        }
+        // Clear foreground/review flags for both decisions, including leaving
+        // a review by removing its query parameter without unmounting the page.
+        try {
+          const refreshed = await actions.reloadStoredChoResults({ clearResults: true });
+          if (refreshed === false) throw new Error("Saved results could not be refreshed.");
+        } catch {
+          if (mounted.current && decision === "overwrite") {
+            enqueueSnackbar("Results were saved, but the display could not refresh. Reload the page.", { variant: "warning" });
+          }
         }
       }
+      return true;
     } finally {
-      lock.current = false;
-      if (mounted.current) setSaving(false);
+      if (mounted.current) setOperation(null);
     }
-  }, [review, key, resolveReview, enqueueSnackbar, setSearchParams, actions]);
+  }, [review, session, key, resolveReview, enqueueSnackbar, setSearchParams, actions]);
+
+  const save = useCallback(async () => {
+    if (!review || session?.busy || session?.resolved) return;
+    setState({ key, review, error: "" });
+    try {
+      await applyDecision("overwrite");
+    } catch (failure) {
+      // No reload/reset on failure: the same candidate remains unsaved and
+      // guarded, and the user can press Save results again.
+      if (mounted.current && selection.current === key) {
+        setState({ key, review, error: failure.message || "Unable to save results. Please try again." });
+      }
+    }
+  }, [review, session, key, applyDecision]);
+
+  const discardOnLeave = useCallback((options) => applyDecision("discard", options), [applyDecision]);
+  const navigation = useUnsavedReviewGuard({ session, busy, discard: discardOnLeave });
 
   return {
-    review, pendingReview, loading, error, saving, pollError,
-    requested: Boolean(id), openReview, decide,
-    retry: () => setReload((value) => value + 1),
+    review, pendingReview, loading, error, saving, busy, pollError, navigation,
+    requested: Boolean(id), openReview, save,
+    retry: () => { if (!review && !busy) setReload((value) => value + 1); },
   };
 }
