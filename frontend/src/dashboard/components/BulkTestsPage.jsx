@@ -436,14 +436,6 @@ export default function BulkTestsPage() {
             }}>
             Batch Analysis
           </Typography>
-          <Typography
-            variant='body1'
-            color='text.secondary'
-            sx={{ fontSize: "1.05rem", lineHeight: 1.65 }}>
-            {/* Read-only view of analyzed series. Filter by patient, protocol, or
-            institute and drill into any series' CHO, NPS, MTF, and dose
-            metrics. */}
-          </Typography>
         </Stack>
       </Box>
       <FiltersPanel

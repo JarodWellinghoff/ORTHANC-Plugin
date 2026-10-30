@@ -510,105 +510,97 @@ const ResultsPage = () => {
             }}>
             Result View/Modification of Individual Exam
           </Typography>
-          <Typography
-            variant='body1'
-            color='text.secondary'
-            sx={{ fontSize: "1.05rem", lineHeight: 1.65 }}>
-            Read-only view of analyzed series. Filter by patient, protocol, or
-            institute and drill into any series' CHO, NPS, MTF, and dose
-            metrics.
-          </Typography>
         </Stack>
       </Box>
       <FiltersPanel
         filters={filters}
         onChange={updateFilter}
         onQuery={handleQuery}
-        onReset={resetFilters}>
-        {/* Bulk action bar lives inside the FiltersPanel children slot, the
-            same way BulkTestsPage hosts its "Run Selected" button. Keeping it
-            here means the action sits visually adjacent to the filters that
-            shape the selection. */}
-        <Stack direction='row' spacing={1.5} alignItems='center'>
+        onReset={resetFilters}
+      />
+
+      <Stack
+        direction={{ xs: "column", sm: "row" }}
+        spacing={2}
+        alignItems={{ sm: "center" }}
+        justifyContent='space-between'>
+        <Stack direction='row' spacing={2} alignItems='center'>
           <Tooltip
             title={
               selectedCount === 0
                 ? "Select one or more series to export"
                 : "Export the selected series as a single XLS with one sheet per case"
             }>
-            <span>
-              <Button
-                variant='contained'
-                startIcon={
-                  exporting ? (
-                    <CircularProgress size={16} color='inherit' />
-                  ) : (
-                    <FileDownloadIcon />
-                  )
-                }
-                disabled={exporting || selectedCount === 0}
-                onClick={handleExportSelected}>
-                {exporting
-                  ? "Exporting…"
-                  : `Export Selected${
-                      selectedCount ? ` (${selectedCount})` : ""
-                    }`}
-              </Button>
-            </span>
+            <Button
+              variant='contained'
+              startIcon={
+                exporting ? (
+                  <CircularProgress size={16} color='inherit' />
+                ) : (
+                  <FileDownloadIcon />
+                )
+              }
+              disabled={exporting || selectedCount === 0}
+              onClick={handleExportSelected}>
+              {exporting
+                ? "Exporting…"
+                : `Export Selected${selectedCount ? ` (${selectedCount})` : ""}`}
+            </Button>
           </Tooltip>
         </Stack>
-      </FiltersPanel>
-
-      <DataGrid
-        rows={loading ? [] : (normalizedResults ?? [])}
-        columns={columns}
-        getRowId={getRowId}
-        rowCount={pagination.total ?? normalizedResults?.length ?? 0}
-        paginationMode='server'
-        filterMode='client'
-        disableColumnFilter
-        filterModel={filterModel}
-        onFilterModelChange={setFilterModel}
-        paginationModel={paginationModel}
-        onPaginationModelChange={handlePaginationModelChange}
-        sortingMode='server'
-        sortModel={sortModel}
-        onSortModelChange={handleSortModelChange}
-        checkboxSelection
-        disableRowSelectionOnClick
-        loading={loading}
-        pageSizeOptions={[25, 50, 100]}
-        slots={{ toolbar: GridToolbar }}
-        showToolbar
-        initialState={{
-          filter: {
-            filterModel: {
-              items: [
-                { field: "testStatus", operator: "is", value: "Complete" },
-              ],
+      </Stack>
+      <Box sx={{ height: 560, minWidth: 0 }}>
+        <DataGrid
+          rows={loading ? [] : (normalizedResults ?? [])}
+          columns={columns}
+          getRowId={getRowId}
+          rowCount={pagination.total ?? normalizedResults?.length ?? 0}
+          paginationMode='server'
+          filterMode='client'
+          disableColumnFilter
+          filterModel={filterModel}
+          onFilterModelChange={setFilterModel}
+          paginationModel={paginationModel}
+          onPaginationModelChange={handlePaginationModelChange}
+          sortingMode='server'
+          sortModel={sortModel}
+          onSortModelChange={handleSortModelChange}
+          checkboxSelection
+          disableRowSelectionOnClick
+          loading={loading}
+          pageSizeOptions={[25, 50, 100]}
+          slots={{ toolbar: GridToolbar }}
+          showToolbar
+          initialState={{
+            filter: {
+              filterModel: {
+                items: [
+                  { field: "testStatus", operator: "is", value: "Complete" },
+                ],
+              },
             },
-          },
-          pagination: { paginationModel: paginationModel },
-          columns: {
-            columnVisibilityModel: {
-              latestAnalysis: false,
-              pullScheduleName: false,
-              studyDate: false,
-              stationName: false,
-              patientId: false,
-              testStatus: false,
+            pagination: { paginationModel: paginationModel },
+            columns: {
+              columnVisibilityModel: {
+                latestAnalysis: false,
+                pullScheduleName: false,
+                studyDate: false,
+                stationName: false,
+                patientId: false,
+                testStatus: false,
+              },
             },
-          },
-        }}
-        onRowSelectionModelChange={(model) => setSelectionModel(model)}
-        rowSelectionModel={selectionModel}
-        slotProps={{
-          toolbar: {
-            showQuickFilter: true,
-            quickFilterProps: { debounceMs: 500 },
-          },
-        }}
-      />
+          }}
+          onRowSelectionModelChange={(model) => setSelectionModel(model)}
+          rowSelectionModel={selectionModel}
+          slotProps={{
+            toolbar: {
+              showQuickFilter: true,
+              quickFilterProps: { debounceMs: 500 },
+            },
+          }}
+        />
+      </Box>
     </Stack>
   );
 };

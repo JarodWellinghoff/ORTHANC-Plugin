@@ -33,7 +33,7 @@ export default function MenuContent() {
     <Box>
       <Stack spacing={0}>
         {mainNavItems.map(({ text, to, icon: Icon }) => (
-          <Tooltip key={to} title={text} placement='right'>
+          <Tooltip key={to} title={text} placement='right' arrow sx={{}}>
             <ListItem sx={{ display: "block" }}>
               <ListItemButton
                 component={RouterLink}

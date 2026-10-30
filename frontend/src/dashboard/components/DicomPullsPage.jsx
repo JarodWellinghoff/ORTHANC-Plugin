@@ -745,13 +745,6 @@ const DicomPullsPage = () => {
             }}>
             DICOM Query and Pulls
           </Typography>
-          <Typography
-            variant='body1'
-            color='text.secondary'
-            sx={{ fontSize: "1.05rem", lineHeight: 1.65 }}>
-            Query remote PACS modalities via C-FIND and retrieve studies with
-            C-MOVE. Schedule pull batches and monitor their progress.
-          </Typography>
         </Stack>
       </Box>
       {/* Modality picker — lives right above the filters so it's clear the

@@ -528,7 +528,7 @@ const FiltersPanel = ({
           </Grid>
         )}
 
-        <Grid item size={12}>
+        <Grid size={ITEM_GRID_SIZE} offset={{ md: "auto" }}>
           <Stack
             direction='row'
             spacing={3}
@@ -541,6 +541,7 @@ const FiltersPanel = ({
               onClick={onQuery}>
               Query
             </Button>
+
             <Button
               startIcon={<ClearIcon />}
               variant='contained'
@@ -548,6 +549,7 @@ const FiltersPanel = ({
               onClick={onReset}>
               Clear Filters
             </Button>
+
             {children}
           </Stack>
         </Grid>
