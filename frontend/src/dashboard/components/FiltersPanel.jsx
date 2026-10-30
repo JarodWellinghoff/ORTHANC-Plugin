@@ -191,42 +191,6 @@ const FiltersPanel = ({
           </Grid>
         )}
 
-        {isVisible(FILTER_FIELDS.institute) && (
-          <Grid item size={ITEM_GRID_SIZE}>
-            <Autocomplete
-              multiple
-              autoSelect
-              fullWidth
-              id='institutions'
-              options={showOptions ? (filterOptions.institutes ?? []) : []}
-              freeSolo
-              sx={AUTOCOMPLETE_SX}
-              value={filters?.instituteSearch ?? []}
-              onChange={(_, newValue) => onChange("instituteSearch", newValue)}
-              renderValue={renderChips}
-              renderInput={(params) => (
-                <TextField
-                  {...params}
-                  name='instituteSearch'
-                  placeholder='Institutes'
-                  slotProps={{
-                    input: {
-                      ...params.InputProps,
-                      startAdornment: !filters?.instituteSearch?.length ? (
-                        <InputAdornment position='start'>
-                          <LocationCityIcon />
-                        </InputAdornment>
-                      ) : (
-                        params.InputProps.startAdornment
-                      ),
-                    },
-                  }}
-                />
-              )}
-            />
-          </Grid>
-        )}
-
         {isVisible(FILTER_FIELDS.protocolName) && (
           <Grid item size={ITEM_GRID_SIZE}>
             <Autocomplete
@@ -349,7 +313,41 @@ const FiltersPanel = ({
             />
           </Grid>
         )}
-
+        {isVisible(FILTER_FIELDS.institute) && (
+          <Grid item size={ITEM_GRID_SIZE}>
+            <Autocomplete
+              multiple
+              autoSelect
+              fullWidth
+              id='institutions'
+              options={showOptions ? (filterOptions.institutes ?? []) : []}
+              freeSolo
+              sx={AUTOCOMPLETE_SX}
+              value={filters?.instituteSearch ?? []}
+              onChange={(_, newValue) => onChange("instituteSearch", newValue)}
+              renderValue={renderChips}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  name='instituteSearch'
+                  placeholder='Institutes'
+                  slotProps={{
+                    input: {
+                      ...params.InputProps,
+                      startAdornment: !filters?.instituteSearch?.length ? (
+                        <InputAdornment position='start'>
+                          <LocationCityIcon />
+                        </InputAdornment>
+                      ) : (
+                        params.InputProps.startAdornment
+                      ),
+                    },
+                  }}
+                />
+              )}
+            />
+          </Grid>
+        )}
         {isVisible(FILTER_FIELDS.studyDate) && (
           <Grid item size={ITEM_GRID_SIZE}>
             <LocalizationProvider dateAdapter={AdapterDayjs}>
