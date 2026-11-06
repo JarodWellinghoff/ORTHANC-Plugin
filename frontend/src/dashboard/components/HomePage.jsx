@@ -103,11 +103,6 @@ export default function HomePage() {
               sx={{ fontWeight: 600 }}>
               What this platform measures
             </Typography>
-
-            <Typography variant='body1' color='text.secondary'>
-              Explore an example of the image-quality plots and scan
-              measurements available in the results view.
-            </Typography>
           </Stack>
 
           <Box
